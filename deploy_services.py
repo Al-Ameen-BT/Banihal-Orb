@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
-🛡️ Tech Platform — Linux systemd Service Deployment Utility
-This utility automates the creation, installation, and management of systemd services 
-for running both the frontend (Next.js client) and backend (Express API server) on Linux hosts.
+🛡️ Tech Platform Unified Deployer & Supervisor Wizard
+This single, self-contained Python program operates in two modes:
+1. Installer Mode (Default/--install): Generates, writes, enables, and starts a systemd 
+   service ('b2bweb.service') on Linux that executes *this same file* in Supervisor mode.
+2. Supervisor Mode (--run): Concurrently launches, streams logs for, and supervises the 
+   Express backend API (port 3001) and Next.js frontend client (port 3000).
 """
 
 import os
@@ -11,105 +14,168 @@ import shutil
 import subprocess
 import argparse
 import getpass
+import signal
+import threading
+import time
 
-# ─── Service configuration defaults ──────────────────────────────────────────
-DEFAULT_USER = getpass.getuser()
 SYSTEMD_PATH = "/etc/systemd/system"
+SERVICE_NAME = "b2bweb.service"
 
-SERVER_SERVICE_TEMPLATE = """[Unit]
-Description=Tech B2B SaaS Backend API Server
-After=network.target postgresql.service
-Documentation=https://github.com/Al-Ameen-BT/B2B-Site
+# ==============================================================================
+# ─── PART 1: SUPERVISOR & PROCESS ORCHESTRATOR MODE (--run) ──────────────────
+# ==============================================================================
 
-[Service]
-Type=simple
-User={user}
-WorkingDirectory={work_dir}
-ExecStart={npm_cmd} run {run_mode}
-Restart=always
-RestartSec=5
-Environment=NODE_ENV={env_mode} PORT={port}
-StandardOutput=syslog
-StandardError=syslog
-SyslogIdentifier=tech-server
+processes = []
+shutting_down = False
 
-[Install]
-WantedBy=multi-user.target
-"""
+def log(prefix, text):
+    """Outputs a formatted, timestamped log line with a clean prefix."""
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {prefix} {text}", flush=True)
 
-CLIENT_SERVICE_TEMPLATE = """[Unit]
-Description=Tech B2B SaaS Frontend Client Web App
-After=network.target tech-server.service
-Documentation=https://github.com/Al-Ameen-BT/B2B-Site
+def stream_output(pipe, prefix):
+    """Streams stdout/stderr of a child process directly to parent output."""
+    try:
+        with pipe:
+            for line in iter(pipe.readline, ""):
+                clean_line = line.strip()
+                if clean_line:
+                    log(prefix, clean_line)
+    except Exception as e:
+        log("[Monitor]", f"Stream monitoring exception for {prefix}: {e}")
 
-[Service]
-Type=simple
-User={user}
-WorkingDirectory={work_dir}
-ExecStart={npm_cmd} run {run_mode}
-Restart=always
-RestartSec=5
-Environment=NODE_ENV={env_mode} PORT={port}
-StandardOutput=syslog
-StandardError=syslog
-SyslogIdentifier=tech-client
+def kill_child_processes():
+    """Forces child processes to shut down gracefully, then kills them if needed."""
+    global shutting_down
+    if shutting_down:
+        return
+    shutting_down = True
+    
+    log("[Orchestrator]", "Shutting down supervised B2B applications...")
+    for p in processes:
+        if p.poll() is None:
+            log("[Orchestrator]", f"Sending termination signal (SIGTERM) to subprocess {p.pid}...")
+            try:
+                if os.name != 'nt':
+                    os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+                else:
+                    p.terminate()
+            except Exception as e:
+                log("[Orchestrator]", f"Error terminating process {p.pid}: {e}")
 
-[Install]
-WantedBy=multi-user.target
-"""
+    # Wait briefly for graceful shutdown, then force kill survivors
+    time.sleep(2)
+    for p in processes:
+        if p.poll() is None:
+            log("[Orchestrator]", f"Force killing unresponsive process {p.pid}...")
+            try:
+                if os.name != 'nt':
+                    os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+                else:
+                    p.kill()
+            except Exception:
+                pass
+
+def signal_handler(signum, frame):
+    """Signal handler callback to intercept systemd kill signals (SIGTERM/SIGINT)."""
+    log("[Orchestrator]", f"Received system signal: {signal.Signals(signum).name}")
+    kill_child_processes()
+    sys.exit(0)
+
+def launch_subprocess(cwd, run_mode, port, prefix, env_mode):
+    """Spins up a Node subprocess in the designated directory."""
+    npm_bin = "npm.cmd" if os.name == "nt" else "npm"
+    cmd = [npm_bin, "run", run_mode]
+    
+    env = os.environ.copy()
+    env["PORT"] = str(port)
+    env["NODE_ENV"] = env_mode
+
+    log("[Orchestrator]", f"Launching {prefix} ({' '.join(cmd)}) on port {port}...")
+    
+    kwargs = {}
+    if os.name != 'nt':
+        kwargs['preexec_fn'] = os.setsid
+
+    try:
+        p = subprocess.Popen(
+            cmd,
+            cwd=cwd,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+            **kwargs
+        )
+        processes.append(p)
+        
+        # Start background threads to stream outputs
+        threading.Thread(target=stream_output, args=(p.stdout, prefix), daemon=True).start()
+        threading.Thread(target=stream_output, args=(p.stderr, f"{prefix}-Err"), daemon=True).start()
+        return p
+    except Exception as e:
+        log("[Orchestrator]", f"Failed to start {prefix}: {e}")
+        kill_child_processes()
+        sys.exit(1)
+
+def run_supervisor(project_dir, is_dev):
+    """Spins up, supervises, and maintains both the server and client processes."""
+    # Setup signal listeners for Linux systemd management
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    server_dir = os.path.join(project_dir, "server")
+    client_dir = os.path.join(project_dir, "client")
+
+    run_mode = "dev" if is_dev else "start"
+    env_mode = "development" if is_dev else "production"
+
+    log("[Orchestrator]", f"Platform booting in {env_mode.upper()} mode...")
+    
+    # 1. Start Server on port 3001
+    server_process = launch_subprocess(server_dir, run_mode, 3001, "[Server]", env_mode)
+    
+    # Wait briefly for database validation and server setup
+    time.sleep(1.5)
+    
+    # 2. Start Client on port 3000
+    client_process = launch_subprocess(client_dir, run_mode, 3000, "[Client]", env_mode)
+
+    # 3. Supervise processes
+    while not shutting_down:
+        server_exit = server_process.poll()
+        client_exit = client_process.poll()
+
+        if server_exit is not None:
+            log("[Orchestrator]", f"Backend Server terminated unexpectedly with exit code: {server_exit}")
+            break
+        if client_exit is not None:
+            log("[Orchestrator]", f"Frontend Client terminated unexpectedly with exit code: {client_exit}")
+            break
+            
+        time.sleep(1)
+
+    # Clean up and exit
+    kill_child_processes()
+    sys.exit(1)
+
+
+# ==============================================================================
+# ─── PART 2: DYNAMIC INSTALLER & WIZARD MODE (--install) ─────────────────────
+# ==============================================================================
 
 def check_privileges():
     """Verify script is run with sudo/root privileges for file writing."""
     return os.geteuid() == 0
 
-def locate_npm():
-    """Locate the path of the npm executable on the system."""
-    npm_path = shutil.which("npm")
-    if not npm_path:
-        print("❌ Error: 'npm' command could not be located in your system PATH.")
-        print("   Please ensure Node.js is installed and npm is available before deploying.")
+def locate_python():
+    """Locate the path of the python3 executable on the system."""
+    py_path = shutil.which("python3")
+    if not py_path:
+        print("❌ Error: 'python3' command could not be located in your system PATH.")
         sys.exit(1)
-    return npm_path
-
-def generate_services(project_dir, user, npm_cmd, is_dev):
-    """Generate configuration strings for both server and client systemd services."""
-    server_dir = os.path.join(project_dir, "server")
-    client_dir = os.path.join(project_dir, "client")
-
-    env_mode = "development" if is_dev else "production"
-    run_mode = "dev" if is_dev else "start"
-
-    server_service = SERVER_SERVICE_TEMPLATE.format(
-        user=user,
-        work_dir=server_dir,
-        npm_cmd=npm_cmd,
-        run_mode=run_mode,
-        env_mode=env_mode,
-        port=3001
-    )
-
-    client_service = CLIENT_SERVICE_TEMPLATE.format(
-        user=user,
-        work_dir=client_dir,
-        npm_cmd=npm_cmd,
-        run_mode=run_mode,
-        env_mode=env_mode,
-        port=3000
-    )
-
-    return server_service, client_service
-
-def install_service(name, content):
-    """Write the systemd service file configuration to /etc/systemd/system/."""
-    file_path = os.path.join(SYSTEMD_PATH, name)
-    try:
-        with open(file_path, "w") as f:
-            f.write(content)
-        os.chmod(file_path, 0o644)
-        print(f"✅ Created service file: {file_path}")
-    except IOError as e:
-        print(f"❌ Failed to write service file {file_path}: {e}")
-        sys.exit(1)
+    return py_path
 
 def run_sysctl(args):
     """Execute systemctl operations."""
@@ -120,77 +186,133 @@ def run_sysctl(args):
         print(f"❌ systemctl failed on args {args}: {e.stderr.decode().strip()}")
         sys.exit(1)
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Deploy Tech SaaS Client & Server as systemd services on Linux."
-    )
-    parser.add_argument(
-        "--dev", action="store_true",
-        help="Configure services to run in development mode (npm run dev) instead of production."
-    )
-    parser.add_argument(
-        "--user", default=DEFAULT_USER,
-        help=f"User account that should execute the services (defaults to: {DEFAULT_USER})."
-    )
-    parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Generate and display the service configurations to stdout without writing them to disk."
-    )
+def run_installer(project_dir, user, py_cmd, script_path, is_dev, dry_run):
+    """Generates, installs, and registers the unified b2bweb.service unit on Linux."""
     
-    args = parser.parse_args()
-    
-    # ─── Locate active directory structure ────────────────────────────────────
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    server_path = os.path.join(script_dir, "server")
-    client_path = os.path.join(script_dir, "client")
-    
-    if not os.path.exists(server_path) or not os.path.exists(client_path):
-        print(f"❌ Error: Could not locate 'server/' or 'client/' directories at: {script_dir}")
-        print("   Please execute this script from the root workspace directory.")
-        sys.exit(1)
+    env_mode = "development" if is_dev else "production"
+    dev_flag = " --dev" if is_dev else ""
 
-    npm_cmd = locate_npm()
-    server_conf, client_conf = generate_services(script_dir, args.user, npm_cmd, args.dev)
+    # Dynamically generate service content pointing back to THIS script with --run
+    service_content = f"""[Unit]
+Description=Tech B2B SaaS Unified Platform Service (Client & Server)
+After=network.target postgresql.service
+Documentation=https://github.com/Al-Ameen-BT/B2B-Site
 
-    if args.dry_run:
-        print("🔍 --- DRY RUN MODE (Printing generated configurations) ---")
-        print("\n=== tech-server.service ===")
-        print(server_conf)
-        print("\n=== tech-client.service ===")
-        print(client_conf)
-        print("===========================")
+[Service]
+Type=simple
+User={user}
+WorkingDirectory={project_dir}
+ExecStart={py_cmd} {script_path} --run{dev_flag}
+Restart=always
+RestartSec=5
+Environment=NODE_ENV={env_mode}
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=b2bweb
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+    if dry_run:
+        print("🔍 --- DRY RUN MODE (Printing dynamically resolved configuration) ---")
+        print(f"\n=== {SERVICE_NAME} ===")
+        print(service_content)
+        print("==========================")
         sys.exit(0)
 
-    # ─── Check root permissions ───────────────────────────────────────────────
+    # Check root privileges
     if not check_privileges():
         print("🔒 Privilege Check Failed!")
-        print("   Writing configurations to /etc/systemd/system/ requires elevated privileges.")
-        print(f"   Please run this script with sudo:\n   sudo python3 {os.path.basename(__file__)} " + " ".join(sys.argv[1:]))
+        print("   Registering systemd services requires root privileges.")
+        print(f"   Please run this script with sudo:\n   sudo python3 {os.path.basename(script_path)} " + " ".join(sys.argv[1:]))
         sys.exit(1)
 
-    print("🚀 Installing systemd services...")
-    install_service("tech-server.service", server_conf)
-    install_service("tech-client.service", client_conf)
+    print(f"🚀 Deploying Tech SaaS platform as {SERVICE_NAME}...")
+
+    # Write service file to /etc/systemd/system/
+    dest_path = os.path.join(SYSTEMD_PATH, SERVICE_NAME)
+    try:
+        with open(dest_path, "w") as f:
+            f.write(service_content)
+        os.chmod(dest_path, 0o644)
+        print(f"✅ Installed service unit file: {dest_path}")
+    except IOError as e:
+        print(f"❌ Failed to write systemd service file: {e}")
+        sys.exit(1)
 
     print("🔄 Reloading systemd daemon...")
     run_sysctl(["daemon-reload"])
 
-    print("🔌 Enabling services to start on boot...")
-    run_sysctl(["enable", "tech-server.service"])
-    run_sysctl(["enable", "tech-client.service"])
+    print("🔌 Enabling service to start on boot...")
+    run_sysctl(["enable", SERVICE_NAME])
 
-    print("🟢 Starting services...")
-    run_sysctl(["start", "tech-server.service"])
-    run_sysctl(["start", "tech-client.service"])
+    print("🟢 Starting service...")
+    run_sysctl(["start", SERVICE_NAME])
 
     print("\n🎉 Deployment Successful!")
     print("----------------------------------------------------------------------")
-    print("Both client and server services are fully active and enabled on boot!")
+    print(f"The unified platform is now active and running under systemd!")
     print("\nUseful monitoring commands:")
-    print("  * Monitor backend logs:   journalctl -u tech-server.service -f -n 50")
-    print("  * Monitor frontend logs:  journalctl -u tech-client.service -f -n 50")
-    print("  * Check service status:   systemctl status tech-server.service tech-client.service")
+    print("  * Monitor logs:           journalctl -u b2bweb.service -f -n 100")
+    print("  * Check service status:   systemctl status b2bweb.service")
+    print("  * Restart service:        systemctl restart b2bweb.service")
     print("----------------------------------------------------------------------")
+
+
+# ==============================================================================
+# ─── PART 3: MAIN ROUTER / ARGUMENT PARSING ──────────────────────────────────
+# ==============================================================================
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Unified Deployer & Supervisor for the Tech B2B SaaS platform."
+    )
+    
+    # Execution mode toggles
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--run", action="store_true",
+        help="Supervisor Mode: Launch and monitor both client and server subprocesses (used by systemd)."
+    )
+    group.add_argument(
+        "--install", action="store_true",
+        help="Installer Mode (Default): Generate and install b2bweb.service in systemd."
+    )
+
+    # Configuration flags
+    parser.add_argument(
+        "--dev", action="store_true",
+        help="Configure services/subprocesses to run in development mode (npm run dev) instead of production."
+    )
+    parser.add_argument(
+        "--user", default="root",
+        help="Installer Mode: User account that systemd should use to run the applications (defaults to: root)."
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Installer Mode: Print the dynamically generated service configurations without executing system writes."
+    )
+    
+    args = parser.parse_args()
+
+    # ─── Locate Workspace Details ─────────────────────────────────────────────
+    script_path = os.path.abspath(__file__)
+    project_dir = os.path.dirname(script_path)
+    
+    # Basic directory check
+    server_path = os.path.join(project_dir, "server")
+    client_path = os.path.join(project_dir, "client")
+    if not os.path.exists(server_path) or not os.path.exists(client_path):
+        print(f"❌ Error: Could not locate 'server/' or 'client/' directories relative to: {project_dir}")
+        sys.exit(1)
+
+    # ─── Route to Supervisor vs Installer ────────────────────────────────────
+    if args.run:
+        run_supervisor(project_dir, args.dev)
+    else:
+        py_cmd = locate_python()
+        run_installer(project_dir, args.user, py_cmd, script_path, args.dev, args.dry_run)
 
 if __name__ == "__main__":
     main()
