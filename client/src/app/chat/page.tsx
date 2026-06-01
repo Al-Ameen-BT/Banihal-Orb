@@ -1,0 +1,54 @@
+'use client';
+
+import { useQuery } from '@tanstack/react-query';
+import { motion } from 'framer-motion';
+import { orgsApi } from '@/lib/api';
+import RoleGuard from '@/components/guards/RoleGuard';
+import Sidebar from '@/components/ui/Sidebar';
+import Chatbot from '@/components/ui/Chatbot';
+import { useAuth } from '@/contexts/AuthContext';
+import type { Organization } from '@/lib/schemas';
+
+export default function ChatPage() {
+  const { user } = useAuth();
+
+  const { data: org } = useQuery<Organization>({
+    queryKey: ['org'],
+    queryFn: () => orgsApi.getMe().then((r) => r.data as Organization),
+    staleTime: 60_000,
+  });
+
+  return (
+    <RoleGuard allowedRoles={['USER', 'ORG_ADMIN', 'SAAS_ADMIN']}>
+      <div className="flex h-screen overflow-hidden bg-canvas">
+        <Sidebar />
+        <main className="flex-1 flex flex-col overflow-hidden">
+          {/* Header */}
+          <div className="px-8 pt-8 pb-4 flex-shrink-0">
+            <div className="max-w-[900px] mx-auto w-full">
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.25 }}>
+                <p className="text-sm text-slate-500 mb-1">AI Assistant</p>
+                <h1 className="text-2xl font-bold tracking-tight text-slate-900">Tech Assistant</h1>
+                <p className="mt-1 text-sm text-slate-500">
+                  Ask quick questions, get pointed to the right team, or be guided to file a ticket.
+                </p>
+              </motion.div>
+            </div>
+          </div>
+
+          {/* Chatbot fills remaining height */}
+          <div className="flex-1 overflow-hidden px-8 pb-8">
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.25, delay: 0.04 }}
+              className="max-w-[900px] mx-auto w-full h-full"
+            >
+              <Chatbot userName={user?.name} orgName={org?.name} className="h-full" />
+            </motion.div>
+          </div>
+        </main>
+      </div>
+    </RoleGuard>
+  );
+}

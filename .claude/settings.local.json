@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find \"c:/Users/admin/Desktop\" -maxdepth 2 -type f 2>/dev/null | head -20)",
+      "Read(//c/Users/admin/Desktop/**)"
+    ]
+  }
+}
