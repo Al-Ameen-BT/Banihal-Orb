@@ -7,7 +7,7 @@ Documentation=https://github.com/Al-Ameen-BT/B2B-Site
 Type=simple
 User=root
 WorkingDirectory=/opt/B2B-Site
-ExecStart=/usr/bin/python3 /opt/B2B-Site/run_app.py
+ExecStart=/usr/bin/python3 /opt/B2B-Site/deploy_services.py --run
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
