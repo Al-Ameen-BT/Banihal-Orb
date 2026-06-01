@@ -119,6 +119,90 @@ def launch_subprocess(cwd, run_mode, port, prefix, env_mode):
         kill_child_processes()
         sys.exit(1)
 
+def prepare_applications(project_dir, is_dev):
+    """
+    Ensures dependencies are installed, database is migrated/pushed/seeded via Prisma,
+    and both backend and frontend applications are built/compiled for production.
+    """
+    server_dir = os.path.join(project_dir, "server")
+    client_dir = os.path.join(project_dir, "client")
+    npm_bin = "npm.cmd" if os.name == "nt" else "npm"
+
+    log("[Preparer]", "Starting application preparation and build pipeline...")
+
+    # Helper function to run commands with streaming output
+    def run_preparer_command(cmd, cwd, step_name):
+        log("[Preparer]", f"Executing: {' '.join(cmd)} (cwd: {cwd})")
+        try:
+            p = subprocess.Popen(
+                cmd,
+                cwd=cwd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1
+            )
+            for line in iter(p.stdout.readline, ""):
+                clean_line = line.strip()
+                if clean_line:
+                    log(f"[{step_name}]", clean_line)
+            p.wait()
+            if p.returncode != 0:
+                raise subprocess.CalledProcessError(p.returncode, cmd)
+        except Exception as e:
+            log("[Preparer]", f"❌ Error during step '{step_name}': {e}")
+            raise e
+
+    # --- 1. SERVER PREPARATION ---
+    # Dependencies
+    log("[Preparer]", "Checking server dependencies...")
+    node_modules_server = os.path.join(server_dir, "node_modules")
+    if not os.path.exists(node_modules_server):
+        run_preparer_command([npm_bin, "install"], server_dir, "Server-Install")
+    else:
+        log("[Preparer]", "server/node_modules already exists. Skipping npm install.")
+
+    # Prisma Client Generation
+    run_preparer_command([npm_bin, "run", "db:generate"], server_dir, "Server-Prisma-Gen")
+
+    # Sync DB Schema
+    log("[Preparer]", "Syncing database schema (prisma db push)...")
+    try:
+        run_preparer_command([npm_bin, "run", "db:push"], server_dir, "Server-Prisma-Push")
+        log("[Preparer]", "Database schema synced successfully.")
+    except Exception as e:
+        log("[Preparer]", f"⚠️ Warning: Database schema sync failed. Ensure your Postgres database is running and DATABASE_URL in server/.env is correct: {e}")
+
+    # Seed Database
+    log("[Preparer]", "Seeding database...")
+    try:
+        run_preparer_command([npm_bin, "run", "db:seed"], server_dir, "Server-Prisma-Seed")
+        log("[Preparer]", "Database seeded successfully.")
+    except Exception as e:
+        log("[Preparer]", f"⚠️ Warning: Database seeding failed (might be because seed data already exists or DB connection issue): {e}")
+
+    # Build Server (Production mode only)
+    if not is_dev:
+        run_preparer_command([npm_bin, "run", "build"], server_dir, "Server-Build")
+        log("[Preparer]", "Server compiled successfully.")
+
+    # --- 2. CLIENT PREPARATION ---
+    # Dependencies
+    log("[Preparer]", "Checking client dependencies...")
+    node_modules_client = os.path.join(client_dir, "node_modules")
+    if not os.path.exists(node_modules_client):
+        run_preparer_command([npm_bin, "install"], client_dir, "Client-Install")
+    else:
+        log("[Preparer]", "client/node_modules already exists. Skipping npm install.")
+
+    # Build Client (Production mode only)
+    if not is_dev:
+        run_preparer_command([npm_bin, "run", "build"], client_dir, "Client-Build")
+        log("[Preparer]", "Client compiled successfully.")
+
+    log("[Preparer]", "Application preparation and build pipeline completed successfully! ✨")
+
+
 def run_supervisor(project_dir, is_dev):
     """Spins up, supervises, and maintains both the server and client processes."""
     # Setup signal listeners for Linux systemd management
@@ -127,6 +211,26 @@ def run_supervisor(project_dir, is_dev):
 
     server_dir = os.path.join(project_dir, "server")
     client_dir = os.path.join(project_dir, "client")
+
+    # Auto-prepare if build folders or node_modules are missing
+    server_dist = os.path.join(server_dir, "dist")
+    client_next = os.path.join(client_dir, ".next")
+    
+    needs_prep = False
+    if not is_dev:
+        if not os.path.exists(os.path.join(server_dist, "server.js")) or not os.path.exists(client_next):
+            needs_prep = True
+    else:
+        if not os.path.exists(os.path.join(server_dir, "node_modules")) or not os.path.exists(os.path.join(client_dir, "node_modules")):
+            needs_prep = True
+
+    if needs_prep:
+        log("[Orchestrator]", "Detected missing build outputs or dependencies. Running auto-preparation/build flow...")
+        try:
+            prepare_applications(project_dir, is_dev)
+        except Exception as e:
+            log("[Orchestrator]", f"❌ Fatal: Auto-preparation failed: {e}")
+            sys.exit(1)
 
     run_mode = "dev" if is_dev else "start"
     env_mode = "development" if is_dev else "production"
@@ -167,6 +271,12 @@ def run_supervisor(project_dir, is_dev):
 
 def check_privileges():
     """Verify script is run with sudo/root privileges for file writing."""
+    if os.name == 'nt':
+        try:
+            import ctypes
+            return ctypes.windll.shell32.IsUserAnAdmin() != 0
+        except Exception:
+            return False
     return os.geteuid() == 0
 
 def locate_python():
@@ -241,6 +351,15 @@ WantedBy=multi-user.target
         print(f"❌ Failed to write systemd service file: {e}")
         sys.exit(1)
 
+    # Compile and prepare application files so they are ready BEFORE systemd starts the service
+    print("\n📦 Preparing applications (installing dependencies, database sync/seeding, and compiling code)...")
+    try:
+        prepare_applications(project_dir, is_dev)
+    except Exception as e:
+        print(f"❌ Error preparing applications: {e}")
+        print("   Service was installed but could not be built. Please fix the build error and re-run installation.")
+        sys.exit(1)
+
     print("🔄 Reloading systemd daemon...")
     run_sysctl(["daemon-reload"])
 
@@ -265,6 +384,18 @@ WantedBy=multi-user.target
 # ==============================================================================
 
 def main():
+    # Reconfigure stdout/stderr to use UTF-8 if possible to prevent emoji/unicode encoding crashes on legacy consoles (e.g., Windows CP1252)
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+    if hasattr(sys.stderr, "reconfigure"):
+        try:
+            sys.stderr.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
     parser = argparse.ArgumentParser(
         description="Unified Deployer & Supervisor for the Tech B2B SaaS platform."
     )
