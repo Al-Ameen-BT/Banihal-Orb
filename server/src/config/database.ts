@@ -1,7 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { AsyncLocalStorage } from 'async_hooks';
 
-export const orgContext = new AsyncLocalStorage<{ orgId: string }>();
+export const customerContext = new AsyncLocalStorage<{ customerId: string }>();
 
 const globalForPrisma = globalThis as unknown as { prisma: ReturnType<typeof buildPrisma> };
 
@@ -19,17 +19,17 @@ function buildPrisma() {
           model: string;
           operation: string;
         }) {
-          const store = orgContext.getStore();
+          const store = customerContext.getStore();
 
           // Only inject on data-reading/mutating ops; skip raw/aggregate where clause injection isn't applicable
           const scopedOps = ['findFirst', 'findMany', 'findUnique', 'update', 'updateMany', 'delete', 'deleteMany', 'count'];
 
-          // Models without organizationId (global tables or tables without organizationId relation)
-          const globalModels = ['FeatureFlag', 'Organization', 'RefreshToken'];
+          // Models without customerId (global tables or tables without customerId relation)
+          const globalModels = ['FeatureFlag', 'Customer', 'RefreshToken', 'Service'];
 
-          if (store?.orgId && scopedOps.includes(operation) && !globalModels.includes(model)) {
+          if (store?.customerId && scopedOps.includes(operation) && !globalModels.includes(model)) {
             const existingWhere = (args['where'] as Record<string, unknown>) ?? {};
-            args = { ...args, where: { ...existingWhere, organizationId: store.orgId } };
+            args = { ...args, where: { ...existingWhere, customerId: store.customerId } };
           }
 
           return query(args);

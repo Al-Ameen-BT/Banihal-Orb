@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
-import { orgContext } from '../config/database';
+import { customerContext } from '../config/database';
 
 export function tenantMiddleware(req: Request, _res: Response, next: NextFunction): void {
-  orgContext.run({ orgId: req.user.orgId }, next);
+  customerContext.run({ customerId: req.user.customerId }, next);
 }

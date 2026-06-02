@@ -26,6 +26,7 @@ export default function RegisterPage() {
       email: fd.get('email') as string,
       password: fd.get('password') as string,
       organizationName: fd.get('organizationName') as string,
+      contactNumber: fd.get('contactNumber') as string,
     };
 
     const result = RegisterSchema.safeParse(data);
@@ -51,6 +52,7 @@ export default function RegisterPage() {
     { id: 'organizationName', label: 'Organization name', placeholder: 'Acme Corp' },
     { id: 'name', label: 'Your full name', placeholder: 'Jane Smith' },
     { id: 'email', label: 'Work email', type: 'email', autoComplete: 'email', placeholder: 'jane@acme.com' },
+    { id: 'contactNumber', label: 'Contact number', type: 'tel', autoComplete: 'tel', placeholder: '+1 555 012 3456' },
     { id: 'password', label: 'Password', type: 'password', autoComplete: 'new-password', placeholder: '12+ chars, mixed case, symbol' },
   ];
 

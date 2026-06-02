@@ -2,7 +2,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { Role } from '@prisma/client';
-import { prisma, orgContext } from '../../config/database';
+import { prisma, customerContext } from '../../config/database';
 import { env } from '../../config/env';
 import type { RegisterInput, LoginInput } from './auth.schema';
 
@@ -21,10 +21,17 @@ function generateSlug(name: string): string {
     .slice(0, 50) + '-' + crypto.randomBytes(3).toString('hex');
 }
 
-function signAccessToken(userId: string, orgId: string, role: Role): string {
-  return jwt.sign({ userId, orgId, role, type: 'access' }, env.JWT_ACCESS_SECRET, {
+function signAccessToken(userId: string, customerId: string, role: Role): string {
+  return jwt.sign({ userId, customerId, role, type: 'access' }, env.JWT_ACCESS_SECRET, {
     expiresIn: env.JWT_ACCESS_EXPIRES_IN as jwt.SignOptions['expiresIn'],
   });
+}
+
+// Derive the domain from a contact email, ignoring generic gmail addresses.
+export function deriveDomain(email: string): string | null {
+  const domain = email.split('@')[1]?.toLowerCase().trim();
+  if (!domain || domain === 'gmail.com') return null;
+  return domain;
 }
 
 async function createRefreshToken(userId: string): Promise<string> {
@@ -42,10 +49,14 @@ export async function register(input: RegisterInput): Promise<TokenPair> {
   const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
   const slug = generateSlug(input.organizationName);
 
-  const org = await prisma.organization.create({
+  const customer = await prisma.customer.create({
     data: {
       name: input.organizationName,
       slug,
+      mailId: input.email,
+      contactPerson: input.name,
+      contactNumber: input.contactNumber,
+      domain: deriveDomain(input.email),
       users: {
         create: {
           email: input.email,
@@ -58,8 +69,8 @@ export async function register(input: RegisterInput): Promise<TokenPair> {
     include: { users: true },
   });
 
-  const user = org.users[0]!;
-  const accessToken = signAccessToken(user.id, org.id, user.role);
+  const user = customer.users[0]!;
+  const accessToken = signAccessToken(user.id, customer.id, user.role);
   const refreshToken = await createRefreshToken(user.id);
   return { accessToken, refreshToken };
 }
@@ -67,7 +78,7 @@ export async function register(input: RegisterInput): Promise<TokenPair> {
 export async function login(input: LoginInput): Promise<TokenPair> {
   const user = await prisma.user.findUnique({
     where: { email: input.email },
-    select: { id: true, organizationId: true, role: true, passwordHash: true },
+    select: { id: true, customerId: true, role: true, passwordHash: true },
   });
 
   if (!user) {
@@ -81,7 +92,7 @@ export async function login(input: LoginInput): Promise<TokenPair> {
 
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
 
-  const accessToken = signAccessToken(user.id, user.organizationId, user.role);
+  const accessToken = signAccessToken(user.id, user.customerId, user.role);
   const refreshToken = await createRefreshToken(user.id);
   return { accessToken, refreshToken };
 }
@@ -90,7 +101,7 @@ export async function refreshTokens(rawRefreshToken: string): Promise<TokenPair>
   // Find all non-expired tokens and check against each
   const tokens = await prisma.refreshToken.findMany({
     where: { expiresAt: { gt: new Date() } },
-    include: { user: { select: { id: true, organizationId: true, role: true } } },
+    include: { user: { select: { id: true, customerId: true, role: true } } },
     orderBy: { createdAt: 'desc' },
     take: 500,
   });
@@ -109,7 +120,7 @@ export async function refreshTokens(rawRefreshToken: string): Promise<TokenPair>
   await prisma.refreshToken.delete({ where: { id: matched.id } });
 
   const { user } = matched;
-  const accessToken = signAccessToken(user.id, user.organizationId, user.role);
+  const accessToken = signAccessToken(user.id, user.customerId, user.role);
   const refreshToken = await createRefreshToken(user.id);
   return { accessToken, refreshToken };
 }
@@ -130,13 +141,13 @@ export async function logout(rawRefreshToken: string): Promise<void> {
   }
 }
 
-export function signImpersonationToken(userId: string, orgId: string, role: Role): string {
-  return jwt.sign({ userId, orgId, role, type: 'impersonation' }, env.IMPERSONATION_SECRET, {
+export function signImpersonationToken(userId: string, customerId: string, role: Role): string {
+  return jwt.sign({ userId, customerId, role, type: 'impersonation' }, env.IMPERSONATION_SECRET, {
     expiresIn: '5m',
   });
 }
 
 // Run a callback outside tenant scope (for SAAS_ADMIN global queries)
 export async function withoutTenantScope<T>(fn: () => Promise<T>): Promise<T> {
-  return orgContext.run({} as { orgId: string }, fn);
+  return customerContext.run({} as { customerId: string }, fn);
 }

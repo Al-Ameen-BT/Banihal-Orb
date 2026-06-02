@@ -11,7 +11,7 @@ const userSelect = {
   mfaEnabled: true,
   lastLoginAt: true,
   createdAt: true,
-  organizationId: true,
+  customerId: true,
   // passwordHash intentionally omitted
 } as const;
 
@@ -40,7 +40,7 @@ export async function listUsers(input: PaginationInput) {
   return { users, total, page: input.page, limit: input.limit, pages: Math.ceil(total / input.limit) };
 }
 
-export async function inviteUser(input: InviteUserInput, organizationId: string) {
+export async function inviteUser(input: InviteUserInput, customerId: string) {
   const tempPassword = crypto.randomBytes(16).toString('hex') + 'A1!';
   const passwordHash = await bcrypt.hash(tempPassword, 12);
 
@@ -50,7 +50,7 @@ export async function inviteUser(input: InviteUserInput, organizationId: string)
       name: input.name,
       role: input.role,
       passwordHash,
-      organizationId,
+      customerId,
     },
     select: userSelect,
   });

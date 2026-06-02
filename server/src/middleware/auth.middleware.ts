@@ -6,7 +6,7 @@ import { prisma } from '../config/database';
 
 interface AccessTokenPayload {
   userId: string;
-  orgId: string;
+  customerId: string;
   role: Role;
   type: 'access' | 'impersonation';
 }
@@ -27,22 +27,22 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     return;
   }
 
-  // Verify org is not suspended
-  const org = await prisma.organization.findUnique({
-    where: { id: payload.orgId },
+  // Verify customer is not suspended
+  const customer = await prisma.customer.findUnique({
+    where: { id: payload.customerId },
     select: { suspended: true },
   });
 
-  if (!org) {
-    res.status(401).json({ error: 'Organization not found', code: 'ORG_NOT_FOUND' });
+  if (!customer) {
+    res.status(401).json({ error: 'Customer not found', code: 'CUSTOMER_NOT_FOUND' });
     return;
   }
 
-  if (org.suspended) {
-    res.status(403).json({ error: 'Organization is suspended', code: 'ORG_SUSPENDED' });
+  if (customer.suspended) {
+    res.status(403).json({ error: 'Customer is suspended', code: 'CUSTOMER_SUSPENDED' });
     return;
   }
 
-  req.user = { userId: payload.userId, orgId: payload.orgId, role: payload.role };
+  req.user = { userId: payload.userId, customerId: payload.customerId, role: payload.role };
   next();
 }

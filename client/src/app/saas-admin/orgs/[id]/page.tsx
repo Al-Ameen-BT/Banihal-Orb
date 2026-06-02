@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { saasAdminApi } from '@/lib/api';
+import type { CatalogMain } from '@/lib/schemas';
 import RoleGuard from '@/components/guards/RoleGuard';
 import Sidebar from '@/components/ui/Sidebar';
 import GlowButton from '@/components/ui/GlowButton';
@@ -20,8 +21,8 @@ interface OrgUser {
 }
 interface OrgService {
   id: string; name: string; description: string | null;
-  status: 'ACTIVE' | 'EXPIRING' | 'EXPIRED' | 'SUSPENDED'; enabled: boolean;
-  monthlyPrice: number; purchasedAt: string; renewsAt: string; lastBilledAt: string | null;
+  status: 'ACTIVE' | 'EXPIRING' | 'EXPIRED';
+  monthlyPrice: number; purchaseDate: string; endDate: string; notes: string | null;
 }
 interface OpenRequest {
   id: string; type: string; subject: string; status: string; priority: string;
@@ -329,14 +330,26 @@ export default function OrgDetailPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['org-detail'] }),
   });
 
-  const serviceToggleMutation = useMutation({
-    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
-      saasAdminApi.updateService(id, { enabled, status: enabled ? 'ACTIVE' : 'SUSPENDED' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['org-detail'] }),
-  });
   const serviceRenewMutation = useMutation({
     mutationFn: (id: string) => saasAdminApi.renewService(id, { months: 12 }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['org-detail'] }),
+  });
+  const serviceRemoveMutation = useMutation({
+    mutationFn: (id: string) => saasAdminApi.removeService(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['org-detail'] }),
+  });
+
+  // Catalog for the "assign service" picker
+  const { data: catalog } = useQuery<{ catalog: CatalogMain[] }>({
+    queryKey: ['catalog'],
+    queryFn: () => saasAdminApi.listCatalog().then((r) => r.data as { catalog: CatalogMain[] }),
+    staleTime: 60_000,
+  });
+  const [assignServiceId, setAssignServiceId] = useState('');
+  const [assignEndDate, setAssignEndDate] = useState('');
+  const assignMutation = useMutation({
+    mutationFn: () => saasAdminApi.assignService(orgId, { serviceId: assignServiceId, endDate: assignEndDate }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['org-detail'] }); setAssignServiceId(''); setAssignEndDate(''); },
   });
 
   if (isLoading || !data) {
@@ -460,6 +473,31 @@ export default function OrgDetailPage() {
                 <h2 className="text-base font-semibold text-slate-900">Purchased Services</h2>
                 <span className="text-xs text-slate-400 tabular-nums">${monthlyRevenue.toLocaleString()}/mo  ·  {org.services.length} subscriptions</span>
               </div>
+              {/* Assign a catalog service to this customer */}
+              <div className="card p-4 mb-4 flex flex-wrap items-end gap-3">
+                <div className="flex-1 min-w-[200px]">
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Service</label>
+                  <select value={assignServiceId} onChange={(e) => setAssignServiceId(e.target.value)} className="input">
+                    <option value="">Select a service…</option>
+                    {(catalog?.catalog ?? []).map((m) => (
+                      <optgroup key={m.id} label={m.name}>
+                        <option value={m.id}>{m.name} (main)</option>
+                        {m.children.map((c) => <option key={c.id} value={c.id}>{m.name} — {c.name}</option>)}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">End date</label>
+                  <input type="date" value={assignEndDate} onChange={(e) => setAssignEndDate(e.target.value)} className="input" />
+                </div>
+                <GlowButton className="py-2 px-4 text-sm"
+                  disabled={!assignServiceId || !assignEndDate || assignMutation.isPending}
+                  onClick={() => assignMutation.mutate()}>
+                  {assignMutation.isPending ? 'Assigning…' : 'Assign service'}
+                </GlowButton>
+              </div>
+
               <div className="card overflow-hidden">
                 {org.services.length === 0 ? (
                   <p className="px-5 py-6 text-sm text-slate-500">No services subscribed.</p>
@@ -469,16 +507,15 @@ export default function OrgDetailPage() {
                       <tr className="bg-slate-50 border-b border-slate-200">
                         <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Service</th>
                         <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Status</th>
-                        <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Renews</th>
+                        <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Ends</th>
                         <th className="px-5 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500">Monthly</th>
-                        <th className="px-5 py-3 text-center text-[11px] font-semibold uppercase tracking-wider text-slate-500">Enabled</th>
-                        <th className="px-5 py-3"></th>
+                        <th className="px-5 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {org.services.map((svc) => {
                         const cfg = serviceStatusConfig[svc.status] ?? serviceStatusConfig['ACTIVE']!;
-                        const days = daysUntil(svc.renewsAt);
+                        const days = daysUntil(svc.endDate);
                         const dayColor = days < 0 ? 'text-red-600' : days < 30 ? 'text-amber-600' : 'text-slate-500';
                         return (
                           <tr key={svc.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
@@ -496,24 +533,21 @@ export default function OrgDetailPage() {
                               <span className={`text-xs font-mono tabular-nums font-semibold ${dayColor}`}>
                                 {days < 0 ? `${Math.abs(days)}d ago` : `in ${days}d`}
                               </span>
-                              <p className="text-[11px] text-slate-400 mt-0.5">{new Date(svc.renewsAt).toLocaleDateString()}</p>
+                              <p className="text-[11px] text-slate-400 mt-0.5">{new Date(svc.endDate).toLocaleDateString()}</p>
                             </td>
                             <td className="px-5 py-3.5 text-right font-mono tabular-nums text-sm font-semibold text-slate-900">
                               ${svc.monthlyPrice.toLocaleString()}
                             </td>
-                            <td className="px-5 py-3.5 text-center">
-                              <button type="button" disabled={serviceToggleMutation.isPending}
-                                onClick={() => serviceToggleMutation.mutate({ id: svc.id, enabled: !svc.enabled })}
-                                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer disabled:opacity-50 ${svc.enabled ? 'bg-brand' : 'bg-slate-300'}`}
-                                aria-pressed={svc.enabled} aria-label={`Toggle ${svc.name}`}>
-                                <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${svc.enabled ? 'translate-x-[18px]' : 'translate-x-[2px]'}`} />
-                              </button>
-                            </td>
-                            <td className="px-5 py-3.5 text-right">
-                              <GlowButton variant="secondary" className="py-1 px-2.5 text-xs"
+                            <td className="px-5 py-3.5 text-right whitespace-nowrap">
+                              <GlowButton variant="secondary" className="py-1 px-2.5 text-xs mr-2"
                                 onClick={() => serviceRenewMutation.mutate(svc.id)} disabled={serviceRenewMutation.isPending}>
                                 Renew +12mo
                               </GlowButton>
+                              <button type="button"
+                                onClick={() => serviceRemoveMutation.mutate(svc.id)} disabled={serviceRemoveMutation.isPending}
+                                className="text-xs font-semibold text-red-600 hover:text-red-700 disabled:opacity-50 cursor-pointer">
+                                Remove
+                              </button>
                             </td>
                           </tr>
                         );

@@ -7,6 +7,7 @@ const TEST_USER = {
   email: 'authtest@example.com',
   password: 'TestPassword1!',
   organizationName: 'Auth Test Org',
+  contactNumber: '+1-555-0000',
 };
 
 describe('Auth flow', () => {

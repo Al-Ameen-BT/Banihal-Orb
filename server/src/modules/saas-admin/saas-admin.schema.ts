@@ -34,26 +34,45 @@ export const UpdateRequestSchema = z.object({
   assignedTo: z.string().max(200).optional(),
 });
 
-// ─── Services ────────────────────────────────────────────────────────────────
+// ─── Customer services (purchased) ──────────────────────────────────────────
 export const ListServicesSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(200).default(100),
-  status: z.enum(['ACTIVE', 'EXPIRING', 'EXPIRED', 'SUSPENDED']).optional(),
+  status: z.enum(['ACTIVE', 'EXPIRING', 'EXPIRED']).optional(),
   orgId: z.string().optional(),
-  enabled: z.coerce.boolean().optional(),
 });
 
 export const UpdateServiceSchema = z.object({
-  enabled: z.boolean().optional(),
-  status: z.enum(['ACTIVE', 'EXPIRING', 'EXPIRED', 'SUSPENDED']).optional(),
-  renewsAt: z.coerce.date().optional(),
-  monthlyPrice: z.number().int().min(0).optional(),
+  endDate: z.coerce.date().optional(),
   notes: z.string().max(500).optional(),
-});
+}).refine((d) => Object.keys(d).length > 0, { message: 'At least one field required' });
 
 export const RenewServiceSchema = z.object({
   months: z.coerce.number().int().min(1).max(60).default(12),
 });
+
+export const AssignServiceSchema = z.object({
+  serviceId: z.string().min(1),
+  endDate: z.coerce.date(),
+  purchaseDate: z.coerce.date().optional(),
+  notes: z.string().max(500).optional(),
+});
+
+// ─── Service catalog (main services → sub-services) ─────────────────────────
+export const CreateCatalogSchema = z.object({
+  name: z.string().min(2).max(120),
+  description: z.string().max(500).optional(),
+  parentId: z.string().optional(),
+  monthlyPrice: z.number().int().min(0).optional(),
+  active: z.boolean().optional(),
+});
+
+export const UpdateCatalogSchema = z.object({
+  name: z.string().min(2).max(120).optional(),
+  description: z.string().max(500).optional(),
+  monthlyPrice: z.number().int().min(0).optional(),
+  active: z.boolean().optional(),
+}).refine((d) => Object.keys(d).length > 0, { message: 'At least one field required' });
 
 // ─── Users (SAAS_ADMIN edits any user across orgs) ───────────────────────────
 export const UpdateUserSchema = z.object({
@@ -71,4 +90,7 @@ export type UpdateRequestInput = z.infer<typeof UpdateRequestSchema>;
 export type ListServicesInput = z.infer<typeof ListServicesSchema>;
 export type UpdateServiceInput = z.infer<typeof UpdateServiceSchema>;
 export type RenewServiceInput = z.infer<typeof RenewServiceSchema>;
+export type AssignServiceInput = z.infer<typeof AssignServiceSchema>;
+export type CreateCatalogInput = z.infer<typeof CreateCatalogSchema>;
+export type UpdateCatalogInput = z.infer<typeof UpdateCatalogSchema>;
 export type UpdateUserInput = z.infer<typeof UpdateUserSchema>;

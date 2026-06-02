@@ -33,7 +33,7 @@ interface OrgOverview {
 interface ServiceRequest {
   id: string; type: string; status: string; priority: string; subject: string;
   service: string | null; assignedTo: string | null; createdAt: string; resolvedAt: string | null;
-  organization: { id: string; name: string; industry: string | null; plan: string };
+  customer: { id: string; name: string; industry: string | null; plan: string };
 }
 interface FeatureFlag { id: string; key: string; value: boolean; description?: string; }
 
@@ -498,9 +498,9 @@ export default function SaasAdminPage() {
                             <tr key={r.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
                               <td className="px-5 py-3.5"><PriorityBadge priority={r.priority} /></td>
                               <td className="px-5 py-3.5">
-                                <Link href={`/saas-admin/orgs/${r.organization.id}`} className="block group">
-                                  <p className="text-sm font-medium text-slate-900 leading-tight group-hover:text-brand transition-colors">{r.organization.name}</p>
-                                  <p className="text-xs text-slate-400">{r.organization.industry ?? '—'}</p>
+                                <Link href={`/saas-admin/orgs/${r.customer.id}`} className="block group">
+                                  <p className="text-sm font-medium text-slate-900 leading-tight group-hover:text-brand transition-colors">{r.customer.name}</p>
+                                  <p className="text-xs text-slate-400">{r.customer.industry ?? '—'}</p>
                                 </Link>
                               </td>
                               <td className="px-5 py-3.5"><span className="text-xs font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">{typeConfig[r.type] ?? r.type}</span></td>

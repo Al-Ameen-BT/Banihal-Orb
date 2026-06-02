@@ -6,13 +6,21 @@ import { prisma } from '../src/config/database';
 
 export async function createTestOrg(name: string) {
   const slug = name.toLowerCase().replace(/\s+/g, '-') + '-' + Math.random().toString(36).slice(2, 8);
-  return prisma.organization.create({ data: { name, slug } });
+  return prisma.customer.create({
+    data: {
+      name,
+      slug,
+      mailId: `contact@${slug}.test`,
+      contactPerson: 'Test Contact',
+      contactNumber: '+1-555-0000',
+    },
+  });
 }
 
-export async function createTestUser(orgId: string, email: string, role: Role = 'MEMBER') {
+export async function createTestUser(orgId: string, email: string, role: Role = 'USER') {
   const passwordHash = await bcrypt.hash('TestPassword1!', 12);
   return prisma.user.create({
-    data: { email, name: 'Test User', passwordHash, role, organizationId: orgId },
+    data: { email, name: 'Test User', passwordHash, role, customerId: orgId },
   });
 }
 
@@ -28,6 +36,7 @@ export async function registerAndLogin(orgName: string, email: string) {
     email,
     password: 'TestPassword1!',
     organizationName: orgName,
+    contactNumber: '+1-555-0000',
   });
   return loginAs(email);
 }
@@ -35,9 +44,8 @@ export async function registerAndLogin(orgName: string, email: string) {
 export async function cleanDb() {
   await prisma.auditLog.deleteMany();
   await prisma.refreshToken.deleteMany();
-  await prisma.apiUsage.deleteMany();
   await prisma.user.deleteMany();
-  await prisma.organization.deleteMany();
+  await prisma.customer.deleteMany();
   await prisma.featureFlag.deleteMany();
 }
 

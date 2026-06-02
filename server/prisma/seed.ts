@@ -1,24 +1,71 @@
 import 'dotenv/config';
-import { PrismaClient, type ServiceStatus } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 const hash = (pw: string) => bcrypt.hash(pw, 12);
 
-// ─── Cybersecurity service catalog (name → monthly price USD) ───────────────
-const SERVICE_CATALOG: Record<string, { price: number; description: string }> = {
-  'SIEM':                    { price: 8000,  description: 'Security Information & Event Management with ML correlation' },
-  'SOC-as-a-Service':        { price: 15000, description: '24/7 managed Security Operations Center coverage' },
-  'EDR':                     { price: 4000,  description: 'Endpoint Detection & Response with behavioral analysis' },
-  'Threat Intel':            { price: 2500,  description: 'Real-time threat intelligence feed + IOC enrichment' },
-  'Vulnerability Mgmt':      { price: 3000,  description: 'Continuous vulnerability scanning + remediation guidance' },
-  'Zero Trust':              { price: 5000,  description: 'Zero Trust Network Access with conditional policies' },
-  'DLP':                     { price: 3500,  description: 'Data Loss Prevention with PII/PCI/PHI detection' },
-  'Cloud Security':          { price: 4500,  description: 'CSPM + CWPP across AWS, Azure, GCP workloads' },
-  'Compliance Monitoring':   { price: 2000,  description: 'SOC 2, HIPAA, PCI-DSS, GDPR continuous compliance' },
-  'Incident Response':       { price: 6000,  description: '4-hour IR SLA with forensics and containment' },
-  'Penetration Testing':     { price: 4000,  description: 'Quarterly external + internal penetration testing' },
-  'Deception Technology':    { price: 3500,  description: 'Honeypot grid for adversary detection' },
+// ─── Cybersecurity service catalog: main services → sub-services ────────────
+const SERVICE_CATALOG: Record<string, { price: number; description: string; subs: Array<{ name: string; price: number }> }> = {
+  'SIEM': { price: 8000, description: 'Security Information & Event Management with ML correlation', subs: [
+    { name: 'Log Ingestion & Retention', price: 2000 },
+    { name: 'ML Event Correlation', price: 3000 },
+    { name: 'Managed Threat Hunting', price: 3000 },
+  ] },
+  'SOC-as-a-Service': { price: 15000, description: '24/7 managed Security Operations Center coverage', subs: [
+    { name: 'Tier-1 Alert Monitoring', price: 5000 },
+    { name: 'Tier-2 Incident Triage', price: 6000 },
+    { name: 'Tier-3 Threat Hunting', price: 4000 },
+  ] },
+  'EDR': { price: 4000, description: 'Endpoint Detection & Response with behavioral analysis', subs: [
+    { name: 'Endpoint Agent Management', price: 1500 },
+    { name: 'Behavioral Analysis', price: 1500 },
+    { name: 'Automated Containment', price: 1000 },
+  ] },
+  'Threat Intel': { price: 2500, description: 'Real-time threat intelligence feed + IOC enrichment', subs: [
+    { name: 'IOC Feed & Enrichment', price: 1500 },
+    { name: 'Dark Web Monitoring', price: 1000 },
+  ] },
+  'Vulnerability Mgmt': { price: 3000, description: 'Continuous vulnerability scanning + remediation guidance', subs: [
+    { name: 'Network Scanning', price: 1200 },
+    { name: 'Web App Scanning', price: 1000 },
+    { name: 'Remediation Guidance', price: 800 },
+  ] },
+  'Zero Trust': { price: 5000, description: 'Zero Trust Network Access with conditional policies', subs: [
+    { name: 'ZTNA Gateway', price: 2500 },
+    { name: 'Conditional Access Policies', price: 1500 },
+    { name: 'Device Posture Checks', price: 1000 },
+  ] },
+  'DLP': { price: 3500, description: 'Data Loss Prevention with PII/PCI/PHI detection', subs: [
+    { name: 'Endpoint DLP', price: 1500 },
+    { name: 'Network DLP', price: 1200 },
+    { name: 'Cloud DLP', price: 800 },
+  ] },
+  'Cloud Security': { price: 4500, description: 'CSPM + CWPP across AWS, Azure, GCP workloads', subs: [
+    { name: 'CSPM (Posture)', price: 1800 },
+    { name: 'CWPP (Workload)', price: 1700 },
+    { name: 'CIEM (Entitlements)', price: 1000 },
+  ] },
+  'Compliance Monitoring': { price: 2000, description: 'SOC 2, HIPAA, PCI-DSS, GDPR continuous compliance', subs: [
+    { name: 'SOC 2', price: 600 },
+    { name: 'HIPAA', price: 600 },
+    { name: 'PCI-DSS', price: 500 },
+    { name: 'GDPR', price: 300 },
+  ] },
+  'Incident Response': { price: 6000, description: '4-hour IR SLA with forensics and containment', subs: [
+    { name: 'Digital Forensics', price: 2500 },
+    { name: 'Containment & Eradication', price: 2000 },
+    { name: 'Post-Incident Review', price: 1500 },
+  ] },
+  'Penetration Testing': { price: 4000, description: 'Quarterly external + internal penetration testing', subs: [
+    { name: 'External Pentest', price: 1500 },
+    { name: 'Internal Pentest', price: 1500 },
+    { name: 'Web App Pentest', price: 1000 },
+  ] },
+  'Deception Technology': { price: 3500, description: 'Honeypot grid for adversary detection', subs: [
+    { name: 'Honeypot Grid', price: 2000 },
+    { name: 'Decoy Credentials', price: 1500 },
+  ] },
 };
 
 // Plan → base monthly credit limit
@@ -29,56 +76,25 @@ const daysFromNow = (d: number) => new Date(now.getTime() + d * 86400_000);
 const daysAgo     = (d: number) => new Date(now.getTime() - d * 86400_000);
 const hoursAgo    = (h: number) => new Date(now.getTime() - h * 3600_000);
 
-/**
- * Derive ServiceStatus from renewal date.
- * - past renewal → EXPIRED
- * - <30 days     → EXPIRING
- * - else         → ACTIVE
- */
-function statusFromRenewal(renewsAt: Date, override?: ServiceStatus): ServiceStatus {
-  if (override) return override;
-  const days = (renewsAt.getTime() - now.getTime()) / 86400_000;
-  if (days < 0) return 'EXPIRED';
-  if (days < 30) return 'EXPIRING';
-  return 'ACTIVE';
-}
-
-async function createService(
-  organizationId: string,
-  name: keyof typeof SERVICE_CATALOG | string,
-  renewsAt: Date,
-  opts: { enabled?: boolean; status?: ServiceStatus; purchasedDaysAgo?: number } = {},
-) {
-  const cat = SERVICE_CATALOG[name];
-  if (!cat) throw new Error(`Unknown service: ${name}`);
-  return prisma.organizationService.create({
-    data: {
-      organizationId,
-      name,
-      description: cat.description,
-      monthlyPrice: cat.price,
-      purchasedAt: daysAgo(opts.purchasedDaysAgo ?? 365),
-      renewsAt,
-      status: statusFromRenewal(renewsAt, opts.status),
-      enabled: opts.enabled ?? true,
-      lastBilledAt: daysAgo(15),
-    },
-  });
-}
+// Derive the domain from a contact email, ignoring generic gmail addresses.
+const deriveDomain = (email: string): string | null => {
+  const d = email.split('@')[1]?.toLowerCase().trim();
+  return !d || d === 'gmail.com' ? null : d;
+};
 
 async function main() {
   console.log('🌱 Seeding Tech cybersecurity platform…\n');
 
   // ─── Clean slate (force-reset already wiped, but be defensive) ─────────────
-  await prisma.organizationService.deleteMany();
+  await prisma.customerService.deleteMany();
+  await prisma.service.deleteMany();
   await prisma.serviceRequest.deleteMany();
   await prisma.auditLog.deleteMany();
   await prisma.refreshToken.deleteMany();
-  await prisma.apiUsage.deleteMany();
   await prisma.orgFeatureFlag.deleteMany();
   await prisma.featureFlag.deleteMany();
   await prisma.user.deleteMany();
-  await prisma.organization.deleteMany();
+  await prisma.customer.deleteMany();
   console.log('🧹 Cleared existing data\n');
 
   // ─── Global Feature Flags ──────────────────────────────────────────────────
@@ -96,12 +112,38 @@ async function main() {
   });
   console.log('🚩 Created 8 global feature flags');
 
+  // ─── Service catalog (main services → sub-services) ─────────────────────────
+  const mainServiceIds: Record<string, string> = {};
+  let subCount = 0;
+  for (const [name, cat] of Object.entries(SERVICE_CATALOG)) {
+    const main = await prisma.service.create({
+      data: { name, description: cat.description, monthlyPrice: cat.price, active: true },
+    });
+    mainServiceIds[name] = main.id;
+    for (const sub of cat.subs) {
+      await prisma.service.create({
+        data: { name: sub.name, parentId: main.id, monthlyPrice: sub.price, active: true, description: `${name} — ${sub.name}` },
+      });
+      subCount++;
+    }
+  }
+  console.log(`🧩 Seeded ${Object.keys(SERVICE_CATALOG).length} main services + ${subCount} sub-services`);
+
+  // Helper: record a customer's purchase of a (main) service with an end date.
+  async function purchase(customerId: string, name: keyof typeof SERVICE_CATALOG, endDate: Date, purchasedDaysAgo: number) {
+    return prisma.customerService.create({
+      data: { customerId, serviceId: mainServiceIds[name]!, purchaseDate: daysAgo(purchasedDaysAgo), endDate },
+    });
+  }
+
   // ─── Tech (internal SaaS admin org) ────────────────────────────────────────
-  const techOrg = await prisma.organization.create({
+  const techOrg = await prisma.customer.create({
     data: {
       name: 'Tech', slug: 'tech-internal', plan: 'ENTERPRISE',
       industry: 'Cybersecurity', contractValue: 0, healthScore: 100, csm: 'Internal',
       creditLimit: 99999, ssoEnabled: true, mfaRequired: true,
+      mailId: 'admin@platform.com', contactPerson: 'Alex Chen',
+      contactNumber: '+1-555-0100', domain: deriveDomain('admin@platform.com'),
     },
   });
   const saasAdmin = await prisma.user.create({
@@ -109,25 +151,10 @@ async function main() {
       name: 'Alex Chen', email: 'admin@platform.com',
       passwordHash: await hash('SaasAdmin1!'),
       role: 'SAAS_ADMIN', mfaEnabled: true,
-      organizationId: techOrg.id, lastLoginAt: now,
+      customerId: techOrg.id, lastLoginAt: now,
     },
   });
   console.log(`✅ Tech (internal)  →  ${saasAdmin.email}  [SAAS_ADMIN]\n`);
-
-  // ─── Helper: seed API usage history for last N months ──────────────────────
-  async function seedUsage(orgId: string, base: number, variance: number, months = 6) {
-    for (let i = months - 1; i >= 0; i--) {
-      const start = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const end   = new Date(now.getFullYear(), now.getMonth() - i + 1, 0);
-      await prisma.apiUsage.create({
-        data: {
-          organizationId: orgId,
-          creditsUsed: Math.max(0, base + Math.floor((Math.random() - 0.4) * variance)),
-          periodStart: start, periodEnd: end,
-        },
-      });
-    }
-  }
 
   // ─── Spec for each client org ──────────────────────────────────────────────
   type OrgSpec = {
@@ -136,9 +163,8 @@ async function main() {
     sso: boolean; mfa: boolean;
     adminName: string; adminEmail: string;
     users: Array<{ name: string; email: string; mfa?: boolean }>;
-    usage: { base: number; variance: number };
-    // Each service includes its renewal in days from now (negative = expired) and optional status override
-    services: Array<{ name: keyof typeof SERVICE_CATALOG; renewsIn: number; enabled?: boolean; status?: ServiceStatus }>;
+    // Each purchased service includes its end date in days from now (negative = expired)
+    services: Array<{ name: keyof typeof SERVICE_CATALOG; renewsIn: number }>;
   };
 
   const orgSpecs: OrgSpec[] = [
@@ -151,7 +177,6 @@ async function main() {
         { name: 'Laura Metz',   email: 'lmetz@datavault.com',   mfa: true },
         { name: 'Omar Hassan',  email: 'ohassan@datavault.com', mfa: true },
       ],
-      usage: { base: 21000, variance: 5000 },
       services: [
         { name: 'SIEM',                 renewsIn: 188 },
         { name: 'SOC-as-a-Service',     renewsIn: 188 },
@@ -171,7 +196,6 @@ async function main() {
         { name: 'SOC Analyst 2', email: 'analyst2@orbital.aero', mfa: true },
         { name: 'SOC Analyst 3', email: 'analyst3@orbital.aero', mfa: true },
       ],
-      usage: { base: 18000, variance: 4000 },
       services: [
         { name: 'SIEM',                renewsIn: 140 },
         { name: 'EDR',                 renewsIn: 88 },
@@ -189,7 +213,6 @@ async function main() {
         { name: 'OT Security Eng 1', email: 'ot1@citygrid.io', mfa: true },
         { name: 'OT Security Eng 2', email: 'ot2@citygrid.io', mfa: true },
       ],
-      usage: { base: 14500, variance: 3000 },
       services: [
         { name: 'SIEM',                  renewsIn: 95 },
         { name: 'Incident Response',     renewsIn: 95 },
@@ -206,7 +229,6 @@ async function main() {
         { name: 'SOC Analyst 1', email: 'socanalyst1@nexusfinancial.com', mfa: true },
         { name: 'SOC Analyst 2', email: 'socanalyst2@nexusfinancial.com', mfa: true },
       ],
-      usage: { base: 12000, variance: 2000 },
       services: [
         { name: 'SIEM',                  renewsIn: 210 },
         { name: 'Threat Intel',          renewsIn: 210 },
@@ -223,12 +245,11 @@ async function main() {
         { name: 'HIPAA Officer 1', email: 'hipaa1@medcure.health', mfa: true },
         { name: 'HIPAA Officer 2', email: 'hipaa2@medcure.health', mfa: true },
       ],
-      usage: { base: 9500, variance: 1500 },
       services: [
         { name: 'Vulnerability Mgmt',    renewsIn: 60 },
         { name: 'EDR',                   renewsIn: 60 },
         { name: 'Compliance Monitoring', renewsIn: 60 },
-        { name: 'DLP',                   renewsIn: -8, status: 'EXPIRED' },  // EXPIRED!
+        { name: 'DLP',                   renewsIn: -8 },  // EXPIRED!
         { name: 'SIEM',                  renewsIn: 270 },
       ],
     },
@@ -240,7 +261,6 @@ async function main() {
         { name: 'Compliance Analyst 1', email: 'ca1@bluesky-ins.com' },
         { name: 'Compliance Analyst 2', email: 'ca2@bluesky-ins.com' },
       ],
-      usage: { base: 8800, variance: 1200 },
       services: [
         { name: 'SIEM',                  renewsIn: 130 },
         { name: 'DLP',                   renewsIn: 130 },
@@ -256,7 +276,6 @@ async function main() {
         { name: 'Legal IT 1', email: 'it1@pinnaclelaw.com' },
         { name: 'Legal IT 2', email: 'it2@pinnaclelaw.com' },
       ],
-      usage: { base: 3800, variance: 600 },
       services: [
         { name: 'DLP',                   renewsIn: 78 },
         { name: 'Vulnerability Mgmt',    renewsIn: 78 },
@@ -272,11 +291,10 @@ async function main() {
         { name: 'IT Staff 1', email: 'it1@vertexretail.com' },
         { name: 'IT Staff 2', email: 'it2@vertexretail.com' },
       ],
-      usage: { base: 3200, variance: 800 },
       services: [
         { name: 'Cloud Security',     renewsIn: 45 },
         { name: 'DLP',                renewsIn: 45 },
-        { name: 'Vulnerability Mgmt', renewsIn: -3, status: 'SUSPENDED', enabled: false }, // SUSPENDED!
+        { name: 'Vulnerability Mgmt', renewsIn: -3 }, // EXPIRED!
       ],
     },
     {
@@ -287,7 +305,6 @@ async function main() {
         { name: 'Plant IT 1', email: 'plantit1@novatech-mfg.com' },
         { name: 'Plant IT 2', email: 'plantit2@novatech-mfg.com' },
       ],
-      usage: { base: 2800, variance: 600 },
       services: [
         { name: 'EDR',                renewsIn: 102 },
         { name: 'Cloud Security',     renewsIn: 102 },
@@ -302,7 +319,6 @@ async function main() {
         { name: 'Network Eng 1', email: 'neteng1@terralogic.co' },
         { name: 'Network Eng 2', email: 'neteng2@terralogic.co' },
       ],
-      usage: { base: 2400, variance: 500 },
       services: [
         { name: 'SOC-as-a-Service', renewsIn: 165 },
         { name: 'EDR',              renewsIn: 165 },
@@ -317,7 +333,6 @@ async function main() {
         { name: 'Cloud Eng 1', email: 'cloud1@cortexmedia.tv' },
         { name: 'Cloud Eng 2', email: 'cloud2@cortexmedia.tv' },
       ],
-      usage: { base: 2200, variance: 400 },
       services: [
         { name: 'Cloud Security',     renewsIn: 195 },
         { name: 'EDR',                renewsIn: 195 },
@@ -329,25 +344,27 @@ async function main() {
       contractValue: 0, healthScore: 72, csm: 'Priya Nair', sso: false, mfa: false,
       adminName: 'Zoe Grant', adminEmail: 'zgrant@ironclad-log.com',
       users: [{ name: 'IT Admin Trial', email: 'it@ironclad-log.com' }],
-      usage: { base: 120, variance: 80 },
       services: [
         { name: 'Vulnerability Mgmt', renewsIn: 5 },  // trial expiring
       ],
     },
   ];
 
-  // ─── Create each org with its admin, users, services, usage ────────────────
+  // ─── Create each org with its admin, users, services ───────────────────────
   const created: Array<{ id: string; name: string; plan: string; admin: { id: string; email: string } }> = [];
   let serviceCount = 0;
 
   for (const spec of orgSpecs) {
-    const org = await prisma.organization.create({
+    const org = await prisma.customer.create({
       data: {
         name: spec.name, slug: spec.slug, plan: spec.plan,
         industry: spec.industry, contractValue: spec.contractValue,
         healthScore: spec.healthScore, csm: spec.csm,
         creditLimit: CREDIT_LIMITS[spec.plan]!,
         ssoEnabled: spec.sso, mfaRequired: spec.mfa,
+        mailId: spec.adminEmail, contactPerson: spec.adminName,
+        contactNumber: `+1-555-${String(101 + created.length).padStart(4, '0')}`,
+        domain: deriveDomain(spec.adminEmail),
       },
     });
 
@@ -357,7 +374,7 @@ async function main() {
         name: spec.adminName, email: spec.adminEmail,
         passwordHash: await hash('Admin1234!'),
         role: 'ORG_ADMIN', mfaEnabled: spec.mfa || spec.sso,
-        organizationId: org.id,
+        customerId: org.id,
         lastLoginAt: hoursAgo(Math.floor(Math.random() * 48) + 1),
       },
     });
@@ -369,22 +386,17 @@ async function main() {
           name: u.name, email: u.email,
           passwordHash: await hash('User1234!'),
           role: 'USER', mfaEnabled: u.mfa ?? false,
-          organizationId: org.id,
+          customerId: org.id,
         },
       });
     }
 
-    // Services
+    // Purchased services
     for (const s of spec.services) {
-      await createService(org.id, s.name, daysFromNow(s.renewsIn), {
-        enabled: s.enabled,
-        status: s.status,
-        purchasedDaysAgo: 365 - Math.max(0, s.renewsIn),
-      });
+      await purchase(org.id, s.name, daysFromNow(s.renewsIn), 365 - Math.max(0, s.renewsIn));
       serviceCount++;
     }
 
-    await seedUsage(org.id, spec.usage.base, spec.usage.variance);
     created.push({ id: org.id, name: org.name, plan: spec.plan, admin: { id: admin.id, email: admin.email } });
     console.log(`✅ ${spec.name.padEnd(28)} [${spec.plan.padEnd(10)} / $${(spec.contractValue/1000).toFixed(0).padStart(3)}K]  →  ${spec.adminEmail}`);
   }
@@ -407,16 +419,16 @@ async function main() {
   // ─── Org Feature Flag overrides ────────────────────────────────────────────
   await prisma.orgFeatureFlag.createMany({
     data: [
-      { organizationId: datavault.id, key: 'ai_threat_analysis',     value: true  },
-      { organizationId: datavault.id, key: 'auto_incident_response',  value: true  },
-      { organizationId: datavault.id, key: 'zero_trust_beta',         value: true  },
-      { organizationId: datavault.id, key: 'deception_grid',          value: true  },
-      { organizationId: orbital.id,   key: 'deception_grid',          value: true  },
-      { organizationId: orbital.id,   key: 'ai_threat_analysis',      value: true  },
-      { organizationId: nexus.id,     key: 'ai_threat_analysis',      value: true  },
-      { organizationId: nexus.id,     key: 'siem_ml_correlation',     value: true  },
-      { organizationId: medcure.id,   key: 'auto_incident_response',  value: false },
-      { organizationId: citygrid.id,  key: 'zero_trust_beta',         value: true  },
+      { customerId: datavault.id, key: 'ai_threat_analysis',     value: true  },
+      { customerId: datavault.id, key: 'auto_incident_response',  value: true  },
+      { customerId: datavault.id, key: 'zero_trust_beta',         value: true  },
+      { customerId: datavault.id, key: 'deception_grid',          value: true  },
+      { customerId: orbital.id,   key: 'deception_grid',          value: true  },
+      { customerId: orbital.id,   key: 'ai_threat_analysis',      value: true  },
+      { customerId: nexus.id,     key: 'ai_threat_analysis',      value: true  },
+      { customerId: nexus.id,     key: 'siem_ml_correlation',     value: true  },
+      { customerId: medcure.id,   key: 'auto_incident_response',  value: false },
+      { customerId: citygrid.id,  key: 'zero_trust_beta',         value: true  },
     ],
   });
   console.log('🚩 Org-level feature flag overrides applied');
@@ -425,74 +437,74 @@ async function main() {
   await prisma.serviceRequest.createMany({
     data: [
       // CRITICAL / ESCALATED
-      { organizationId: datavault.id, type: 'INCIDENT', status: 'ESCALATED', priority: 'CRITICAL',
+      { customerId: datavault.id, type: 'INCIDENT', status: 'ESCALATED', priority: 'CRITICAL',
         subject: 'Suspicious lateral movement detected in prod trading environment',
         description: 'SIEM triggered 47 correlated alerts indicating lateral movement from compromised service account.',
         service: 'SIEM', assignedTo: 'Sarah Chen', createdAt: hoursAgo(2) },
-      { organizationId: citygrid.id, type: 'INCIDENT', status: 'ESCALATED', priority: 'CRITICAL',
+      { customerId: citygrid.id, type: 'INCIDENT', status: 'ESCALATED', priority: 'CRITICAL',
         subject: 'SCADA network port scan detected — potential OT intrusion',
         description: 'Unauthorized port scanning targeting SCADA control systems on isolated OT network.',
         service: 'SIEM', assignedTo: 'Sarah Chen', createdAt: hoursAgo(4) },
       // HIGH
-      { organizationId: orbital.id, type: 'INCIDENT', status: 'IN_PROGRESS', priority: 'HIGH',
+      { customerId: orbital.id, type: 'INCIDENT', status: 'IN_PROGRESS', priority: 'HIGH',
         subject: 'Privileged account access from unrecognized geolocation (Moscow, RU)',
         description: 'Admin account accessed from Russia. MFA bypassed. Possible credential theft.',
         service: 'Zero Trust', assignedTo: 'Marcus Webb', createdAt: hoursAgo(6) },
-      { organizationId: nexus.id, type: 'INCIDENT', status: 'IN_PROGRESS', priority: 'HIGH',
+      { customerId: nexus.id, type: 'INCIDENT', status: 'IN_PROGRESS', priority: 'HIGH',
         subject: 'Threat intel feed stale — IOCs not updating for 18 hours',
         description: 'The threat intelligence feed pipeline has failed silently.',
         service: 'Threat Intel', assignedTo: 'Marcus Webb', createdAt: hoursAgo(18) },
-      { organizationId: medcure.id, type: 'SUPPORT', status: 'OPEN', priority: 'HIGH',
+      { customerId: medcure.id, type: 'SUPPORT', status: 'OPEN', priority: 'HIGH',
         subject: 'EDR agent quarantined critical Epic EHR process — patient impact',
         description: 'EDR falsely quarantined Epic on 12 clinical workstations. Active patient care disruption.',
         service: 'EDR', assignedTo: 'Priya Nair', createdAt: hoursAgo(1) },
       // MEDIUM
-      { organizationId: nexus.id, type: 'SUPPORT', status: 'IN_PROGRESS', priority: 'MEDIUM',
+      { customerId: nexus.id, type: 'SUPPORT', status: 'IN_PROGRESS', priority: 'MEDIUM',
         subject: 'SIEM correlation rules need tuning for trading desk workloads',
         description: 'High false-positive rate on algorithmic trading processes.',
         service: 'SIEM', assignedTo: 'Marcus Webb', createdAt: daysAgo(2) },
-      { organizationId: bluesky.id, type: 'FEATURE_REQUEST', status: 'OPEN', priority: 'MEDIUM',
+      { customerId: bluesky.id, type: 'FEATURE_REQUEST', status: 'OPEN', priority: 'MEDIUM',
         subject: 'Add custom DLP policy for PII/PCI fields in claims database',
         description: 'Build DLP rules for insurance claims data: SSN, DOB, policy numbers.',
         service: 'DLP', assignedTo: 'Priya Nair', createdAt: daysAgo(3) },
-      { organizationId: vertex.id, type: 'SUPPORT', status: 'OPEN', priority: 'MEDIUM',
+      { customerId: vertex.id, type: 'SUPPORT', status: 'OPEN', priority: 'MEDIUM',
         subject: 'Cloud security posture report showing 23 critical misconfigs in AWS',
         description: 'CSPM scan returned 23 critical and 47 high findings in production AWS account.',
         service: 'Cloud Security', assignedTo: 'Marcus Webb', createdAt: daysAgo(1) },
-      { organizationId: orbital.id, type: 'FEATURE_REQUEST', status: 'OPEN', priority: 'MEDIUM',
+      { customerId: orbital.id, type: 'FEATURE_REQUEST', status: 'OPEN', priority: 'MEDIUM',
         subject: 'Request integration of SIEM with Lockheed Cyber Kill Chain framework',
         description: 'Custom SIEM dashboards mapped to the Cyber Kill Chain for ITAR compliance.',
         service: 'SIEM', assignedTo: 'Marcus Webb', createdAt: daysAgo(4) },
-      { organizationId: novatech.id, type: 'SUPPORT', status: 'IN_PROGRESS', priority: 'MEDIUM',
+      { customerId: novatech.id, type: 'SUPPORT', status: 'IN_PROGRESS', priority: 'MEDIUM',
         subject: 'EDR agent failing to update on 8 factory floor Windows XP machines',
         description: 'Legacy industrial control PCs running Windows XP cannot receive EDR agent updates.',
         service: 'EDR', assignedTo: 'Priya Nair', createdAt: daysAgo(5) },
       // RESOLVED + LOW
-      { organizationId: pinnacle.id, type: 'SUPPORT', status: 'RESOLVED', priority: 'MEDIUM',
+      { customerId: pinnacle.id, type: 'SUPPORT', status: 'RESOLVED', priority: 'MEDIUM',
         subject: 'Generate GDPR compliance report for external audit',
         description: 'Automated compliance report for DLP, data access logs, and breach notifications.',
         service: 'Compliance Monitoring', assignedTo: 'Sarah Chen', createdAt: daysAgo(7), resolvedAt: daysAgo(5) },
-      { organizationId: terra.id, type: 'SUPPORT', status: 'RESOLVED', priority: 'LOW',
+      { customerId: terra.id, type: 'SUPPORT', status: 'RESOLVED', priority: 'LOW',
         subject: 'SOC dashboard not loading for 3 remote warehouse users',
         description: 'VPN routing issue causing SOC portal inaccessibility.',
         service: 'SOC-as-a-Service', assignedTo: 'Marcus Webb', createdAt: daysAgo(3), resolvedAt: daysAgo(2) },
-      { organizationId: ironclad.id, type: 'ONBOARDING', status: 'OPEN', priority: 'LOW',
+      { customerId: ironclad.id, type: 'ONBOARDING', status: 'OPEN', priority: 'LOW',
         subject: 'Complete initial vulnerability scan baseline configuration',
         description: 'First-time setup of vulnerability scanning scope, credentialed scan profiles, and templates.',
         service: 'Vulnerability Mgmt', assignedTo: 'Priya Nair', createdAt: daysAgo(6) },
-      { organizationId: cortex.id, type: 'SUPPORT', status: 'OPEN', priority: 'LOW',
+      { customerId: cortex.id, type: 'SUPPORT', status: 'OPEN', priority: 'LOW',
         subject: 'Cloud security posture report for new Azure Media Services workloads',
         description: 'Extend CSPM coverage to newly deployed Azure Media Services infrastructure.',
         service: 'Cloud Security', assignedTo: 'Sarah Chen', createdAt: daysAgo(2) },
-      { organizationId: datavault.id, type: 'FEATURE_REQUEST', status: 'OPEN', priority: 'MEDIUM',
+      { customerId: datavault.id, type: 'FEATURE_REQUEST', status: 'OPEN', priority: 'MEDIUM',
         subject: 'SIEM ↔ ServiceNow bidirectional integration for incident ticketing',
         description: 'Auto-create ServiceNow P1/P2 tickets from SIEM alerts, sync resolution status back.',
         service: 'SIEM', assignedTo: 'Sarah Chen', createdAt: daysAgo(8) },
-      { organizationId: medcure.id, type: 'BILLING', status: 'OPEN', priority: 'LOW',
+      { customerId: medcure.id, type: 'BILLING', status: 'OPEN', priority: 'LOW',
         subject: 'Invoice discrepancy — HIPAA compliance add-on billed twice in October',
         description: 'Duplicate line item for HIPAA compliance monitoring add-on in October invoice.',
         service: 'Compliance Monitoring', assignedTo: 'Priya Nair', createdAt: daysAgo(10) },
-      { organizationId: bluesky.id, type: 'ONBOARDING', status: 'RESOLVED', priority: 'LOW',
+      { customerId: bluesky.id, type: 'ONBOARDING', status: 'RESOLVED', priority: 'LOW',
         subject: 'Onboard 4 new SOC analysts to SIEM console and runbooks',
         description: 'Training and access provisioning for Q4 SOC analyst class.',
         service: 'SIEM', assignedTo: 'Priya Nair', createdAt: daysAgo(14), resolvedAt: daysAgo(10) },
@@ -503,14 +515,14 @@ async function main() {
   // ─── Audit logs ─────────────────────────────────────────────────────────────
   await prisma.auditLog.createMany({
     data: [
-      { action: 'LOGIN',          performedById: saasAdmin.id,        organizationId: techOrg.id,    metadata: { ip: '10.0.0.1' } },
-      { action: 'LOGIN',          performedById: datavault.admin.id,  organizationId: datavault.id,  metadata: { ip: '192.168.10.5' } },
-      { action: 'LOGIN',          performedById: orbital.admin.id,    organizationId: orbital.id,    metadata: { ip: '10.50.0.1' } },
-      { action: 'ORG_SUSPENDED',  performedById: saasAdmin.id, targetId: ironclad.id,  organizationId: ironclad.id, metadata: { reason: 'Trial conversion pending' } },
-      { action: 'IMPERSONATE',    performedById: saasAdmin.id, targetId: vertex.admin.id, organizationId: vertex.id, metadata: { reason: 'Health score investigation TKT-2041' } },
-      { action: 'PLAN_UPGRADED',  performedById: saasAdmin.id, targetId: bluesky.id, organizationId: bluesky.id, metadata: { from: 'PRO', to: 'ENTERPRISE' } },
-      { action: 'MFA_ENFORCED',   performedById: saasAdmin.id, targetId: medcure.id, organizationId: medcure.id, metadata: { reason: 'HIPAA compliance requirement' } },
-      { action: 'SERVICE_DISABLED', performedById: saasAdmin.id, targetId: vertex.id, organizationId: vertex.id, metadata: { service: 'Vulnerability Mgmt', reason: 'Payment overdue 14 days' } },
+      { action: 'LOGIN',          performedById: saasAdmin.id,        customerId: techOrg.id,    metadata: { ip: '10.0.0.1' } },
+      { action: 'LOGIN',          performedById: datavault.admin.id,  customerId: datavault.id,  metadata: { ip: '192.168.10.5' } },
+      { action: 'LOGIN',          performedById: orbital.admin.id,    customerId: orbital.id,    metadata: { ip: '10.50.0.1' } },
+      { action: 'ORG_SUSPENDED',  performedById: saasAdmin.id, targetId: ironclad.id,  customerId: ironclad.id, metadata: { reason: 'Trial conversion pending' } },
+      { action: 'IMPERSONATE',    performedById: saasAdmin.id, targetId: vertex.admin.id, customerId: vertex.id, metadata: { reason: 'Health score investigation TKT-2041' } },
+      { action: 'PLAN_UPGRADED',  performedById: saasAdmin.id, targetId: bluesky.id, customerId: bluesky.id, metadata: { from: 'PRO', to: 'ENTERPRISE' } },
+      { action: 'MFA_ENFORCED',   performedById: saasAdmin.id, targetId: medcure.id, customerId: medcure.id, metadata: { reason: 'HIPAA compliance requirement' } },
+      { action: 'SERVICE_DISABLED', performedById: saasAdmin.id, targetId: vertex.id, customerId: vertex.id, metadata: { service: 'Vulnerability Mgmt', reason: 'Payment overdue 14 days' } },
     ],
   });
   console.log('📝 Created audit trail entries');

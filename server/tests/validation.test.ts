@@ -31,6 +31,7 @@ describe('Zod input validation', () => {
       email: 'valtest@example.com',
       password: 'TestPassword1!',
       organizationName: 'Val Org',
+      contactNumber: '+1-555-0000',
     });
     const loginRes = await request(app).post('/api/auth/login').send({ email: 'valtest@example.com', password: 'TestPassword1!' });
     const cookies = loginRes.headers['set-cookie'] as string[];

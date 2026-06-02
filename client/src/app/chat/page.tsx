@@ -7,14 +7,14 @@ import RoleGuard from '@/components/guards/RoleGuard';
 import Sidebar from '@/components/ui/Sidebar';
 import Chatbot from '@/components/ui/Chatbot';
 import { useAuth } from '@/contexts/AuthContext';
-import type { Organization } from '@/lib/schemas';
+import type { Customer } from '@/lib/schemas';
 
 export default function ChatPage() {
   const { user } = useAuth();
 
-  const { data: org } = useQuery<Organization>({
+  const { data: org } = useQuery<Customer>({
     queryKey: ['org'],
-    queryFn: () => orgsApi.getMe().then((r) => r.data as Organization),
+    queryFn: () => orgsApi.getMe().then((r) => r.data as Customer),
     staleTime: 60_000,
   });
 

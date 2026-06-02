@@ -7,7 +7,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Organization {
+model Customer {
   id            String                @id @default(cuid())
   name          String
   slug          String                @unique
@@ -16,6 +16,11 @@ model Organization {
   ssoEnabled    Boolean               @default(false)
   mfaRequired   Boolean               @default(false)
   creditLimit   Int                   @default(1000)
+  // ─── Primary contact details ──────────────────────────────────
+  mailId        String
+  contactPerson String
+  contactNumber String
+  domain        String?               // derived from mailId (null for gmail.com)
   // ─── B2B / Cybersecurity fields ───────────────────────────────
   industry      String?
   contractValue Int                   @default(0)
@@ -24,31 +29,31 @@ model Organization {
   // ──────────────────────────────────────────────────────────────
   createdAt     DateTime              @default(now())
   updatedAt     DateTime              @updatedAt
-  apiUsage      ApiUsage[]
   featureFlags  OrgFeatureFlag[]
   users         User[]
   requests      ServiceRequest[]
-  services      OrganizationService[]
+  services      CustomerService[]
 
   @@index([slug])
+  @@map("customers")
 }
 
 model User {
-  id             String         @id @default(cuid())
-  email          String         @unique
-  passwordHash   String
-  name           String
-  role           Role           @default(USER)
-  mfaEnabled     Boolean        @default(false)
-  lastLoginAt    DateTime?
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
-  organizationId String
-  auditLogs      AuditLog[]
-  refreshTokens  RefreshToken[]
-  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  id            String         @id @default(cuid())
+  email         String         @unique
+  passwordHash  String
+  name          String
+  role          Role           @default(USER)
+  mfaEnabled    Boolean        @default(false)
+  lastLoginAt   DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  customerId    String
+  auditLogs     AuditLog[]
+  refreshTokens RefreshToken[]
+  customer      Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
-  @@index([organizationId])
+  @@index([customerId])
   @@index([email])
 }
 
@@ -65,31 +70,18 @@ model RefreshToken {
 }
 
 model AuditLog {
-  id             String   @id @default(cuid())
-  action         String
-  performedById  String
-  targetId       String?
-  metadata       Json?
-  createdAt      DateTime @default(now())
-  organizationId String
-  performedBy    User     @relation(fields: [performedById], references: [id])
+  id            String   @id @default(cuid())
+  action        String
+  performedById String
+  targetId      String?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  customerId    String
+  performedBy   User     @relation(fields: [performedById], references: [id])
 
-  @@index([organizationId])
+  @@index([customerId])
   @@index([performedById])
   @@index([createdAt])
-}
-
-model ApiUsage {
-  id             String       @id @default(cuid())
-  organizationId String
-  creditsUsed    Int          @default(0)
-  periodStart    DateTime
-  periodEnd      DateTime
-  createdAt      DateTime     @default(now())
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-
-  @@index([organizationId])
-  @@index([periodStart])
 }
 
 model FeatureFlag {
@@ -104,60 +96,78 @@ model FeatureFlag {
 }
 
 model OrgFeatureFlag {
-  id             String       @id @default(cuid())
-  organizationId String
-  key            String
-  value          Boolean      @default(false)
-  updatedAt      DateTime     @updatedAt
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  customerId String
+  key        String
+  value      Boolean  @default(false)
+  updatedAt  DateTime @updatedAt
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
-  @@unique([organizationId, key])
-  @@index([organizationId])
+  @@unique([customerId, key])
+  @@index([customerId])
 }
 
 model ServiceRequest {
-  id             String        @id @default(cuid())
-  organizationId String
-  type           RequestType   @default(SUPPORT)
-  status         RequestStatus @default(OPEN)
-  priority       Priority      @default(MEDIUM)
-  subject        String
-  description    String?
-  service        String?
-  assignedTo     String?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-  resolvedAt     DateTime?
-  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  id          String        @id @default(cuid())
+  customerId  String
+  type        RequestType   @default(SUPPORT)
+  status      RequestStatus @default(OPEN)
+  priority    Priority      @default(MEDIUM)
+  subject     String
+  description String?
+  service     String?
+  assignedTo  String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  resolvedAt  DateTime?
+  customer    Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
-  @@index([organizationId])
+  @@index([customerId])
   @@index([status])
   @@index([priority])
   @@index([createdAt])
 }
 
-// ─── Subscribed services per org, with renewal tracking ─────────────
-// Super Admin can enable/disable each row; renewal date drives status.
-model OrganizationService {
-  id              String         @id @default(cuid())
-  organizationId  String
-  name            String
-  description     String?
-  status          ServiceStatus  @default(ACTIVE)
-  enabled         Boolean        @default(true)
-  monthlyPrice    Int            @default(0)
-  purchasedAt     DateTime       @default(now())
-  renewsAt        DateTime
-  lastBilledAt    DateTime?
-  notes           String?
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-  organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+// ─── Service catalog (self-referential: main services → sub-services) ───
+// Global table managed by the platform SAAS_ADMIN (not customer-scoped).
+// parentId null = main service; parentId set = sub-service of that parent.
+model Service {
+  id           String            @id @default(cuid())
+  name         String
+  description  String?
+  parentId     String?
+  active       Boolean           @default(true)
+  monthlyPrice Int               @default(0)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  parent       Service?          @relation("ServiceHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  children     Service[]         @relation("ServiceHierarchy")
+  purchases    CustomerService[]
 
-  @@unique([organizationId, name])
-  @@index([organizationId])
-  @@index([status])
-  @@index([renewsAt])
+  @@index([parentId])
+  @@index([active])
+  @@map("services")
+}
+
+// ─── Customer ↔ purchased service, with purchase/end dates ──────────
+// endDate drives expiry status (ACTIVE / EXPIRING / EXPIRED), derived in code.
+// Managed by the platform SAAS_ADMIN; customer-scoped for org members.
+model CustomerService {
+  id           String   @id @default(cuid())
+  customerId   String
+  serviceId    String
+  purchaseDate DateTime @default(now())
+  endDate      DateTime
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  service      Service  @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+
+  @@index([customerId])
+  @@index([serviceId])
+  @@index([endDate])
+  @@map("customerServices")
 }
 
 enum Role {

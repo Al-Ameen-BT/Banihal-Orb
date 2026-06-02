@@ -9,7 +9,7 @@ import Sidebar from '@/components/ui/Sidebar';
 import DataTable from '@/components/ui/DataTable';
 import GlowButton from '@/components/ui/GlowButton';
 import Toggle from '@/components/ui/Toggle';
-import type { User, Organization } from '@/lib/schemas';
+import type { User, Customer } from '@/lib/schemas';
 
 const roleConfig: Record<string, { label: string; cls: string }> = {
   USER:       { label: 'User',        cls: 'text-slate-600 bg-slate-100' },
@@ -29,9 +29,9 @@ export default function UsersPage() {
     staleTime: 30_000,
   });
 
-  const { data: org } = useQuery<Organization>({
+  const { data: org } = useQuery<Customer>({
     queryKey: ['org'],
-    queryFn: () => orgsApi.getMe().then((r) => r.data as Organization),
+    queryFn: () => orgsApi.getMe().then((r) => r.data as Customer),
     staleTime: 60_000,
   });
 

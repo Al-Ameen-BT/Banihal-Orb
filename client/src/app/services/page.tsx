@@ -5,10 +5,7 @@ import { motion } from 'framer-motion';
 import { orgsApi } from '@/lib/api';
 import RoleGuard from '@/components/guards/RoleGuard';
 import Sidebar from '@/components/ui/Sidebar';
-import UsageMeter from '@/components/ui/UsageMeter';
-import type { Organization, OrganizationService } from '@/lib/schemas';
-
-interface UsageData { totalUsed: number; creditLimit: number; }
+import type { Customer, OrganizationService } from '@/lib/schemas';
 
 const statusConfig: Record<string, { cls: string; dot: string; label: string }> = {
   ACTIVE:    { cls: 'text-emerald-700 bg-emerald-50', dot: 'bg-emerald-500', label: 'Active' },
@@ -22,21 +19,15 @@ function daysUntil(iso: string): number {
 }
 
 export default function ServicesPage() {
-  const { data: org } = useQuery<Organization>({
+  const { data: org } = useQuery<Customer>({
     queryKey: ['org'],
-    queryFn: () => orgsApi.getMe().then((r) => r.data as Organization),
+    queryFn: () => orgsApi.getMe().then((r) => r.data as Customer),
     staleTime: 60_000,
   });
 
   const { data: servicesData, isLoading } = useQuery<{ services: OrganizationService[]; monthlyTotal: number }>({
     queryKey: ['my-services'],
     queryFn: () => orgsApi.getServices().then((r) => r.data as { services: OrganizationService[]; monthlyTotal: number }),
-    staleTime: 30_000,
-  });
-
-  const { data: usage } = useQuery<UsageData>({
-    queryKey: ['usage'],
-    queryFn: () => orgsApi.getUsage().then((r) => r.data as UsageData),
     staleTime: 30_000,
   });
 
@@ -73,16 +64,6 @@ export default function ServicesPage() {
                 <SummaryTile label="Monthly Cost"  value={`$${monthlyTotal.toLocaleString()}`} tone="brand" />
               </div>
             </motion.div>
-
-            {/* API Credits */}
-            {usage && (
-              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.07 }}>
-                <h2 className="text-base font-semibold text-slate-900 mb-4">API Credits</h2>
-                <div className="card p-5">
-                  <UsageMeter used={usage.totalUsed} limit={usage.creditLimit} />
-                </div>
-              </motion.div>
-            )}
 
             {/* Services table */}
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.1 }}>

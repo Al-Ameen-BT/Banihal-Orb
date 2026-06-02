@@ -11,6 +11,7 @@ export const RegisterSchema = z.object({
       'Password must contain uppercase, lowercase, number, and special character',
     ),
   organizationName: z.string().min(2).max(100),
+  contactNumber: z.string().min(7, 'Contact number is required').max(20),
 });
 
 export const LoginSchema = z.object({

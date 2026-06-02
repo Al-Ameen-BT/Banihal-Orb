@@ -24,10 +24,18 @@ router.get('/top-clients', saasAdminController.getTopClients);
 router.get('/requests', saasAdminController.listRequests);
 router.patch('/requests/:id', saasAdminController.updateRequest);
 
-// Organization services (subscriptions w/ renewals)
+// Service catalog (main services → sub-services)
+router.get('/catalog', saasAdminController.listCatalog);
+router.post('/catalog', saasAdminController.createCatalog);
+router.patch('/catalog/:id', saasAdminController.updateCatalog);
+router.delete('/catalog/:id', saasAdminController.deleteCatalog);
+
+// Customer services (purchased subscriptions w/ expiry management)
 router.get('/services', saasAdminController.listServices);
+router.post('/customers/:customerId/services', saasAdminController.assignService);
 router.patch('/services/:id', saasAdminController.updateService);
 router.post('/services/:id/renew', saasAdminController.renewService);
+router.delete('/services/:id', saasAdminController.removeService);
 
 // Feature flags
 router.get('/flags', saasAdminController.listFlags);

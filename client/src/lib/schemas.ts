@@ -11,6 +11,7 @@ export const RegisterSchema = z.object({
       'Password must contain uppercase, lowercase, number, and special character',
     ),
   organizationName: z.string().min(2).max(100),
+  contactNumber: z.string().min(7, 'Contact number is required').max(20),
 });
 
 export const LoginSchema = z.object({
@@ -45,12 +46,12 @@ export interface User {
   name: string;
   role: Role;
   mfaEnabled: boolean;
-  organizationId: string;
+  customerId: string;
   lastLoginAt: string | null;
   createdAt: string;
 }
 
-export interface Organization {
+export interface Customer {
   id: string;
   name: string;
   slug: string;
@@ -59,6 +60,10 @@ export interface Organization {
   ssoEnabled: boolean;
   mfaRequired: boolean;
   creditLimit: number;
+  mailId: string;
+  contactPerson: string;
+  contactNumber: string;
+  domain: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -73,4 +78,19 @@ export interface OrganizationService {
   purchasedAt: string;
   renewsAt: string;
   lastBilledAt: string | null;
+}
+
+// ─── Service catalog (main services → sub-services) ─────────────────────────
+export interface CatalogService {
+  id: string;
+  name: string;
+  description: string | null;
+  parentId: string | null;
+  active: boolean;
+  monthlyPrice: number;
+  _count?: { purchases: number };
+}
+
+export interface CatalogMain extends CatalogService {
+  children: CatalogService[];
 }

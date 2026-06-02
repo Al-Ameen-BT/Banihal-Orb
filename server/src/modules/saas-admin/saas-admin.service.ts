@@ -6,6 +6,7 @@ import type {
   ListOrgsInput, UpdateOrgInput, ToggleFlagInput,
   ListRequestsInput, UpdateRequestInput,
   ListServicesInput, UpdateServiceInput, RenewServiceInput,
+  AssignServiceInput, CreateCatalogInput, UpdateCatalogInput,
   UpdateUserInput,
 } from './saas-admin.schema';
 
@@ -29,7 +30,7 @@ export async function listAllOrgs(input: ListOrgsInput) {
   };
 
   const [orgs, total] = await Promise.all([
-    prisma.organization.findMany({
+    prisma.customer.findMany({
       where, skip, take: input.limit,
       select: {
         id: true, name: true, slug: true, plan: true, suspended: true, creditLimit: true,
@@ -39,14 +40,14 @@ export async function listAllOrgs(input: ListOrgsInput) {
       },
       orderBy: { contractValue: 'desc' },
     }),
-    prisma.organization.count({ where }),
+    prisma.customer.count({ where }),
   ]);
 
   return { orgs, total, page: input.page, limit: input.limit, pages: Math.ceil(total / input.limit) };
 }
 
 export async function updateOrg(orgId: string, input: UpdateOrgInput) {
-  return prisma.organization.update({
+  return prisma.customer.update({
     where: { id: orgId }, data: input,
     select: { id: true, name: true, slug: true, plan: true, suspended: true, creditLimit: true, updatedAt: true },
   });
@@ -55,39 +56,41 @@ export async function updateOrg(orgId: string, input: UpdateOrgInput) {
 export async function impersonateUser(targetUserId: string, adminUserId: string) {
   const target = await prisma.user.findUnique({
     where: { id: targetUserId },
-    select: { id: true, organizationId: true, role: true, name: true, email: true },
+    select: { id: true, customerId: true, role: true, name: true, email: true },
   });
   if (!target) throw Object.assign(new Error('User not found'), { status: 404, code: 'NOT_FOUND' });
 
   await prisma.auditLog.create({
     data: {
       action: 'IMPERSONATE', performedById: adminUserId, targetId: targetUserId,
-      organizationId: target.organizationId,
+      customerId: target.customerId,
       metadata: { targetEmail: target.email, targetName: target.name },
     },
   });
 
-  const token = signImpersonationToken(target.id, target.organizationId, target.role);
+  const token = signImpersonationToken(target.id, target.customerId, target.role);
   return { impersonationToken: token, expiresIn: '5m', target: { id: target.id, name: target.name, email: target.email } };
 }
 
 // ─── Platform metrics ───────────────────────────────────────────────────────
 export async function getPlatformMetrics() {
+  const now = new Date();
+  const in30 = new Date(now.getTime() + 30 * 86400_000);
   const [
     totalOrgs, orgsByPlan, totalUsers, totalAdmins,
     openRequests, criticalRequests,
     contractAgg, servicesActive, servicesExpiring, servicesExpired,
   ] = await Promise.all([
-    prisma.organization.count({ where: { suspended: false, slug: { not: 'tech-internal' } } }),
-    prisma.organization.groupBy({ by: ['plan'], _count: { id: true }, where: { slug: { not: 'tech-internal' } } }),
+    prisma.customer.count({ where: { suspended: false, slug: { not: 'tech-internal' } } }),
+    prisma.customer.groupBy({ by: ['plan'], _count: { id: true }, where: { slug: { not: 'tech-internal' } } }),
     prisma.user.count({ where: { role: 'USER' } }),
     prisma.user.count({ where: { role: 'ORG_ADMIN' } }),
     prisma.serviceRequest.count({ where: { status: { in: ['OPEN', 'IN_PROGRESS', 'ESCALATED'] } } }),
     prisma.serviceRequest.count({ where: { priority: 'CRITICAL', status: { notIn: ['RESOLVED', 'CLOSED'] } } }),
-    prisma.organization.aggregate({ _sum: { contractValue: true }, where: { suspended: false } }),
-    prisma.organizationService.count({ where: { status: 'ACTIVE', enabled: true } }),
-    prisma.organizationService.count({ where: { status: 'EXPIRING' } }),
-    prisma.organizationService.count({ where: { status: { in: ['EXPIRED', 'SUSPENDED'] } } }),
+    prisma.customer.aggregate({ _sum: { contractValue: true }, where: { suspended: false } }),
+    prisma.customerService.count({ where: { endDate: { gte: in30 } } }),
+    prisma.customerService.count({ where: { endDate: { gte: now, lt: in30 } } }),
+    prisma.customerService.count({ where: { endDate: { lt: now } } }),
   ]);
 
   const totalACV = contractAgg._sum.contractValue ?? 0;
@@ -112,7 +115,7 @@ export async function getPlatformMetrics() {
 // Single comprehensive list for the rebuilt SaaS Admin landing page:
 // every client org + their admin + service status breakdown + open request counts.
 export async function getOrgsOverview() {
-  const orgs = await prisma.organization.findMany({
+  const orgs = await prisma.customer.findMany({
     where: { slug: { not: 'tech-internal' } },
     select: {
       id: true, name: true, slug: true, plan: true, suspended: true,
@@ -124,7 +127,7 @@ export async function getOrgsOverview() {
         select: { id: true, name: true, email: true, mfaEnabled: true, lastLoginAt: true },
         take: 1,
       },
-      services: { select: { status: true, enabled: true } },
+      services: { select: { endDate: true } },
       requests: {
         where: { status: { in: ['OPEN', 'IN_PROGRESS', 'ESCALATED'] } },
         select: { priority: true },
@@ -134,10 +137,11 @@ export async function getOrgsOverview() {
   });
 
   const enriched = orgs.map((o) => {
-    const servicesActive    = o.services.filter((s) => s.status === 'ACTIVE' && s.enabled).length;
-    const servicesExpiring  = o.services.filter((s) => s.status === 'EXPIRING').length;
-    const servicesExpired   = o.services.filter((s) => s.status === 'EXPIRED').length;
-    const servicesSuspended = o.services.filter((s) => s.status === 'SUSPENDED' || !s.enabled).length;
+    const statuses = o.services.map((s) => deriveStatus(s.endDate));
+    const servicesActive    = statuses.filter((st) => st === 'ACTIVE').length;
+    const servicesExpiring  = statuses.filter((st) => st === 'EXPIRING').length;
+    const servicesExpired   = statuses.filter((st) => st === 'EXPIRED').length;
+    const servicesSuspended = 0;
     const openRequests      = o.requests.length;
     const criticalRequests  = o.requests.filter((r) => r.priority === 'CRITICAL').length;
     return {
@@ -157,14 +161,14 @@ export async function getOrgsOverview() {
 
 // ─── Top clients ────────────────────────────────────────────────────────────
 export async function getTopClients(limit = 10) {
-  const orgs = await prisma.organization.findMany({
+  const orgs = await prisma.customer.findMany({
     where: { suspended: false, contractValue: { gt: 0 } },
     select: {
       id: true, name: true, slug: true, plan: true, industry: true,
       contractValue: true, healthScore: true, csm: true, createdAt: true, suspended: true,
       _count: { select: { users: true, requests: true, services: true } },
       requests: { where: { status: { in: ['OPEN', 'IN_PROGRESS', 'ESCALATED'] } }, select: { id: true, priority: true, status: true } },
-      services: { select: { id: true, name: true } },
+      services: { select: { id: true } },
     },
     orderBy: { contractValue: 'desc' },
     take: limit,
@@ -184,7 +188,7 @@ export async function listOrgAdmins() {
     where: { role: 'ORG_ADMIN' },
     select: {
       id: true, name: true, email: true, mfaEnabled: true, lastLoginAt: true, createdAt: true,
-      organization: {
+      customer: {
         select: {
           id: true, name: true, slug: true, plan: true, industry: true,
           contractValue: true, healthScore: true, suspended: true,
@@ -192,7 +196,7 @@ export async function listOrgAdmins() {
         },
       },
     },
-    orderBy: [{ organization: { contractValue: 'desc' } }, { name: 'asc' }],
+    orderBy: [{ customer: { contractValue: 'desc' } }, { name: 'asc' }],
   });
   return admins;
 }
@@ -204,13 +208,13 @@ export async function listServiceRequests(input: ListRequestsInput) {
     ...(input.status ? { status: input.status } : {}),
     ...(input.priority ? { priority: input.priority } : {}),
     ...(input.type ? { type: input.type } : {}),
-    ...(input.orgId ? { organizationId: input.orgId } : {}),
+    ...(input.orgId ? { customerId: input.orgId } : {}),
   };
 
   const [requests, total] = await Promise.all([
     prisma.serviceRequest.findMany({
       where, skip, take: input.limit,
-      include: { organization: { select: { id: true, name: true, industry: true, plan: true } } },
+      include: { customer: { select: { id: true, name: true, industry: true, plan: true } } },
       orderBy: [{ priority: 'asc' }, { status: 'asc' }, { createdAt: 'desc' }],
     }),
     prisma.serviceRequest.count({ where }),
@@ -229,88 +233,208 @@ export async function updateServiceRequest(requestId: string, adminUserId: strin
   await prisma.auditLog.create({
     data: {
       action: 'UPDATE_SERVICE_REQUEST', performedById: adminUserId, targetId: requestId,
-      organizationId: existing.organizationId,
+      customerId: existing.customerId,
       metadata: { changes: input, previous: { status: existing.status, priority: existing.priority } },
     },
   });
 
-  return prisma.serviceRequest.update({ where: { id: requestId }, data, include: { organization: { select: { id: true, name: true } } } });
+  return prisma.serviceRequest.update({ where: { id: requestId }, data, include: { customer: { select: { id: true, name: true } } } });
 }
 
-// ─── Organization Services ──────────────────────────────────────────────────
+// ─── Customer services (purchased) — list / manage expiry ───────────────────
+function serviceLabel(s: { name: string; parent?: { name: string } | null }): string {
+  return s.parent ? `${s.parent.name} — ${s.name}` : s.name;
+}
+
 export async function listAllServices(input: ListServicesInput) {
   const skip = (input.page - 1) * input.limit;
+  const now = new Date();
+  const in30 = new Date(now.getTime() + 30 * 86400_000);
+  const statusWhere =
+    input.status === 'ACTIVE'   ? { endDate: { gte: in30 } } :
+    input.status === 'EXPIRING' ? { endDate: { gte: now, lt: in30 } } :
+    input.status === 'EXPIRED'  ? { endDate: { lt: now } } : {};
   const where = {
-    ...(input.status ? { status: input.status } : {}),
-    ...(input.orgId ? { organizationId: input.orgId } : {}),
-    ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+    ...statusWhere,
+    ...(input.orgId ? { customerId: input.orgId } : {}),
   };
 
-  const [services, total] = await Promise.all([
-    prisma.organizationService.findMany({
+  const [rows, total] = await Promise.all([
+    prisma.customerService.findMany({
       where, skip, take: input.limit,
-      include: { organization: { select: { id: true, name: true, plan: true, industry: true } } },
-      orderBy: [{ status: 'asc' }, { renewsAt: 'asc' }],
+      include: {
+        customer: { select: { id: true, name: true, plan: true, industry: true } },
+        service: { select: { id: true, name: true, monthlyPrice: true, parent: { select: { id: true, name: true } } } },
+      },
+      orderBy: { endDate: 'asc' },
     }),
-    prisma.organizationService.count({ where }),
+    prisma.customerService.count({ where }),
   ]);
+
+  const services = rows.map((r) => ({
+    id: r.id,
+    customerId: r.customerId,
+    serviceId: r.serviceId,
+    serviceName: serviceLabel(r.service),
+    monthlyPrice: r.service.monthlyPrice,
+    purchaseDate: r.purchaseDate,
+    endDate: r.endDate,
+    status: deriveStatus(r.endDate),
+    notes: r.notes,
+    customer: r.customer,
+  }));
 
   return { services, total, page: input.page, limit: input.limit, pages: Math.ceil(total / input.limit) };
 }
 
 export async function updateService(serviceId: string, adminUserId: string, input: UpdateServiceInput) {
-  const existing = await prisma.organizationService.findUnique({ where: { id: serviceId } });
+  const existing = await prisma.customerService.findUnique({
+    where: { id: serviceId }, include: { service: { select: { name: true } } },
+  });
   if (!existing) throw Object.assign(new Error('Service not found'), { status: 404, code: 'NOT_FOUND' });
 
-  // Auto-derive status when renewsAt changes and no explicit status override given
-  const data: Record<string, unknown> = { ...input };
-  if (input.renewsAt && !input.status) {
-    data['status'] = deriveStatus(input.renewsAt);
-  }
+  const data: Record<string, unknown> = {};
+  if (input.endDate) data['endDate'] = input.endDate;
+  if (input.notes !== undefined) data['notes'] = input.notes;
 
   await prisma.auditLog.create({
     data: {
-      action: input.enabled === false ? 'SERVICE_DISABLED' : input.enabled === true ? 'SERVICE_ENABLED' : 'SERVICE_UPDATED',
-      performedById: adminUserId,
-      targetId: serviceId,
-      organizationId: existing.organizationId,
-      metadata: { service: existing.name, changes: input },
+      action: 'CUSTOMER_SERVICE_UPDATED', performedById: adminUserId, targetId: serviceId,
+      customerId: existing.customerId,
+      metadata: { service: existing.service.name, changes: input },
     },
   });
 
-  return prisma.organizationService.update({
-    where: { id: serviceId },
-    data,
-    include: { organization: { select: { id: true, name: true } } },
+  return prisma.customerService.update({
+    where: { id: serviceId }, data,
+    include: { customer: { select: { id: true, name: true } }, service: { select: { id: true, name: true } } },
   });
 }
 
 export async function renewService(serviceId: string, adminUserId: string, input: RenewServiceInput) {
-  const existing = await prisma.organizationService.findUnique({ where: { id: serviceId } });
+  const existing = await prisma.customerService.findUnique({
+    where: { id: serviceId }, include: { service: { select: { name: true } } },
+  });
   if (!existing) throw Object.assign(new Error('Service not found'), { status: 404, code: 'NOT_FOUND' });
 
-  // Renew from later of (today, current renewsAt) so renewals stack correctly
-  const baseTime = Math.max(Date.now(), existing.renewsAt.getTime());
-  const newRenewsAt = new Date(baseTime + input.months * 30 * 86400_000);
+  // Extend from the later of (today, current endDate) so renewals stack correctly
+  const baseTime = Math.max(Date.now(), existing.endDate.getTime());
+  const newEndDate = new Date(baseTime + input.months * 30 * 86400_000);
 
   await prisma.auditLog.create({
     data: {
       action: 'SERVICE_RENEWED', performedById: adminUserId, targetId: serviceId,
-      organizationId: existing.organizationId,
-      metadata: { service: existing.name, months: input.months, previousRenewsAt: existing.renewsAt, newRenewsAt },
+      customerId: existing.customerId,
+      metadata: { service: existing.service.name, months: input.months, previousEndDate: existing.endDate, newEndDate },
     },
   });
 
-  return prisma.organizationService.update({
-    where: { id: serviceId },
-    data: { renewsAt: newRenewsAt, status: 'ACTIVE', enabled: true, lastBilledAt: new Date() },
-    include: { organization: { select: { id: true, name: true } } },
+  return prisma.customerService.update({
+    where: { id: serviceId }, data: { endDate: newEndDate },
+    include: { customer: { select: { id: true, name: true } }, service: { select: { id: true, name: true } } },
   });
+}
+
+// ─── Assign / remove a customer's purchased service ──────────────────────────
+export async function assignCustomerService(customerId: string, adminUserId: string, input: AssignServiceInput) {
+  const [customer, service] = await Promise.all([
+    prisma.customer.findUnique({ where: { id: customerId }, select: { id: true, name: true } }),
+    prisma.service.findUnique({ where: { id: input.serviceId }, select: { id: true, name: true } }),
+  ]);
+  if (!customer) throw Object.assign(new Error('Customer not found'), { status: 404, code: 'NOT_FOUND' });
+  if (!service) throw Object.assign(new Error('Service not found'), { status: 404, code: 'NOT_FOUND' });
+
+  const created = await prisma.customerService.create({
+    data: {
+      customerId,
+      serviceId: input.serviceId,
+      purchaseDate: input.purchaseDate ?? new Date(),
+      endDate: input.endDate,
+      notes: input.notes ?? null,
+    },
+    include: { customer: { select: { id: true, name: true } }, service: { select: { id: true, name: true } } },
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      action: 'SERVICE_ASSIGNED', performedById: adminUserId, targetId: created.id,
+      customerId,
+      metadata: { service: service.name, customer: customer.name, endDate: input.endDate },
+    },
+  });
+
+  return created;
+}
+
+export async function removeCustomerService(id: string, adminUserId: string) {
+  const existing = await prisma.customerService.findUnique({
+    where: { id }, include: { service: { select: { name: true } } },
+  });
+  if (!existing) throw Object.assign(new Error('Service not found'), { status: 404, code: 'NOT_FOUND' });
+
+  await prisma.auditLog.create({
+    data: {
+      action: 'SERVICE_REMOVED', performedById: adminUserId, targetId: id,
+      customerId: existing.customerId,
+      metadata: { service: existing.service.name },
+    },
+  });
+
+  await prisma.customerService.delete({ where: { id } });
+}
+
+// ─── Service catalog (global, SAAS_ADMIN): main services → sub-services ──────
+export async function listCatalog() {
+  const services = await prisma.service.findMany({
+    orderBy: [{ name: 'asc' }],
+    select: {
+      id: true, name: true, description: true, parentId: true, active: true, monthlyPrice: true,
+      _count: { select: { purchases: true } },
+    },
+  });
+  const mains = services
+    .filter((s) => !s.parentId)
+    .map((m) => ({ ...m, children: services.filter((s) => s.parentId === m.id) }));
+  return { catalog: mains, total: services.length };
+}
+
+export async function createCatalogService(input: CreateCatalogInput) {
+  if (input.parentId) {
+    const parent = await prisma.service.findUnique({ where: { id: input.parentId }, select: { id: true, parentId: true } });
+    if (!parent) throw Object.assign(new Error('Parent service not found'), { status: 404, code: 'NOT_FOUND' });
+    if (parent.parentId) throw Object.assign(new Error('Sub-services cannot be nested under another sub-service'), { status: 400, code: 'INVALID_PARENT' });
+  }
+  return prisma.service.create({
+    data: {
+      name: input.name,
+      description: input.description ?? null,
+      parentId: input.parentId ?? null,
+      monthlyPrice: input.monthlyPrice ?? 0,
+      active: input.active ?? true,
+    },
+  });
+}
+
+export async function updateCatalogService(id: string, input: UpdateCatalogInput) {
+  const existing = await prisma.service.findUnique({ where: { id } });
+  if (!existing) throw Object.assign(new Error('Service not found'), { status: 404, code: 'NOT_FOUND' });
+  return prisma.service.update({ where: { id }, data: input });
+}
+
+export async function deleteCatalogService(id: string) {
+  const existing = await prisma.service.findUnique({
+    where: { id }, include: { _count: { select: { purchases: true, children: true } } },
+  });
+  if (!existing) throw Object.assign(new Error('Service not found'), { status: 404, code: 'NOT_FOUND' });
+  if (existing._count.purchases > 0) {
+    throw Object.assign(new Error('Cannot delete a service with customer purchases'), { status: 409, code: 'SERVICE_IN_USE' });
+  }
+  await prisma.service.delete({ where: { id } });  // sub-services cascade
 }
 
 // ─── Org detail (deep view for Super Admin drill-down) ─────────────────────
 export async function getOrgDetail(orgId: string) {
-  const org = await prisma.organization.findUnique({
+  const org = await prisma.customer.findUnique({
     where: { id: orgId },
     include: {
       _count: { select: { users: true, services: true, requests: true } },
@@ -319,8 +443,11 @@ export async function getOrgDetail(orgId: string) {
         orderBy: [{ role: 'asc' }, { name: 'asc' }],
       },
       services: {
-        orderBy: [{ status: 'asc' }, { renewsAt: 'asc' }],
-        select: { id: true, name: true, description: true, status: true, enabled: true, monthlyPrice: true, purchasedAt: true, renewsAt: true, lastBilledAt: true },
+        orderBy: { endDate: 'asc' },
+        select: {
+          id: true, purchaseDate: true, endDate: true, notes: true,
+          service: { select: { id: true, name: true, description: true, monthlyPrice: true, parent: { select: { id: true, name: true } } } },
+        },
       },
       requests: {
         where: { status: { in: ['OPEN', 'IN_PROGRESS', 'ESCALATED'] } },
@@ -330,31 +457,43 @@ export async function getOrgDetail(orgId: string) {
       },
     },
   });
-  if (!org) throw Object.assign(new Error('Organization not found'), { status: 404, code: 'NOT_FOUND' });
+  if (!org) throw Object.assign(new Error('Customer not found'), { status: 404, code: 'NOT_FOUND' });
+
+  // Flatten purchased services into the shape the client expects (derived status).
+  const services = org.services.map((s) => ({
+    id: s.id,
+    name: serviceLabel(s.service),
+    description: s.service.description,
+    status: deriveStatus(s.endDate),
+    monthlyPrice: s.service.monthlyPrice,
+    purchaseDate: s.purchaseDate,
+    endDate: s.endDate,
+    notes: s.notes,
+  }));
 
   const admin = org.users.find((u) => u.role === 'ORG_ADMIN') ?? null;
-  const monthlyRevenue = org.services
-    .filter((s) => s.enabled && (s.status === 'ACTIVE' || s.status === 'EXPIRING'))
+  const monthlyRevenue = services
+    .filter((s) => s.status !== 'EXPIRED')
     .reduce((sum, s) => sum + s.monthlyPrice, 0);
 
-  return { org, admin, monthlyRevenue };
+  return { org: { ...org, services }, admin, monthlyRevenue };
 }
 
 // ─── User management (SAAS_ADMIN — any user across any org) ────────────────
 const userSelect = {
   id: true, email: true, name: true, role: true, mfaEnabled: true,
-  lastLoginAt: true, createdAt: true, organizationId: true,
+  lastLoginAt: true, createdAt: true, customerId: true,
 } as const;
 
 export async function updateUser(targetUserId: string, adminUserId: string, input: UpdateUserInput) {
-  const target = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, organizationId: true, role: true, email: true } });
+  const target = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, customerId: true, role: true, email: true } });
   if (!target) throw Object.assign(new Error('User not found'), { status: 404, code: 'NOT_FOUND' });
   if (target.role === 'SAAS_ADMIN') throw Object.assign(new Error('SAAS_ADMIN accounts cannot be modified via this endpoint'), { status: 403, code: 'PROTECTED_ACCOUNT' });
 
   await prisma.auditLog.create({
     data: {
       action: 'SAAS_ADMIN_USER_UPDATE', performedById: adminUserId, targetId: targetUserId,
-      organizationId: target.organizationId,
+      customerId: target.customerId,
       metadata: { changes: input, targetEmail: target.email, previousRole: target.role },
     },
   });
@@ -364,14 +503,14 @@ export async function updateUser(targetUserId: string, adminUserId: string, inpu
 
 export async function removeUser(targetUserId: string, adminUserId: string) {
   if (targetUserId === adminUserId) throw Object.assign(new Error('Cannot remove yourself'), { status: 400, code: 'SELF_REMOVE' });
-  const target = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, organizationId: true, role: true, email: true, name: true } });
+  const target = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, customerId: true, role: true, email: true, name: true } });
   if (!target) throw Object.assign(new Error('User not found'), { status: 404, code: 'NOT_FOUND' });
   if (target.role === 'SAAS_ADMIN') throw Object.assign(new Error('SAAS_ADMIN accounts cannot be removed via this endpoint'), { status: 403, code: 'PROTECTED_ACCOUNT' });
 
   await prisma.auditLog.create({
     data: {
       action: 'SAAS_ADMIN_USER_REMOVE', performedById: adminUserId, targetId: targetUserId,
-      organizationId: target.organizationId,
+      customerId: target.customerId,
       metadata: { targetEmail: target.email, targetName: target.name, targetRole: target.role },
     },
   });
@@ -380,7 +519,7 @@ export async function removeUser(targetUserId: string, adminUserId: string) {
 }
 
 export async function resetUserPassword(targetUserId: string, adminUserId: string) {
-  const target = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, organizationId: true, role: true, email: true } });
+  const target = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, customerId: true, role: true, email: true } });
   if (!target) throw Object.assign(new Error('User not found'), { status: 404, code: 'NOT_FOUND' });
   if (target.role === 'SAAS_ADMIN') throw Object.assign(new Error('SAAS_ADMIN passwords cannot be reset via this endpoint'), { status: 403, code: 'PROTECTED_ACCOUNT' });
 
@@ -393,7 +532,7 @@ export async function resetUserPassword(targetUserId: string, adminUserId: strin
   await prisma.auditLog.create({
     data: {
       action: 'SAAS_ADMIN_PASSWORD_RESET', performedById: adminUserId, targetId: targetUserId,
-      organizationId: target.organizationId,
+      customerId: target.customerId,
       metadata: { targetEmail: target.email },
     },
   });

@@ -7,7 +7,7 @@ import RoleGuard from '@/components/guards/RoleGuard';
 import Sidebar from '@/components/ui/Sidebar';
 import { ShimmerCard } from '@/components/ui/Shimmer';
 import { useAuth } from '@/contexts/AuthContext';
-import type { Organization, OrganizationService } from '@/lib/schemas';
+import type { Customer, OrganizationService } from '@/lib/schemas';
 
 // ─── Status config (light theme) ────────────────────────────────────────────
 const statusConfig: Record<string, { cls: string; dot: string; label: string }> = {
@@ -59,9 +59,9 @@ function ServiceCard({ svc }: { svc: OrganizationService }) {
 export default function UserDashboard() {
   const { user } = useAuth();
 
-  const { data: org } = useQuery<Organization>({
+  const { data: org } = useQuery<Customer>({
     queryKey: ['org'],
-    queryFn: () => orgsApi.getMe().then((r) => r.data as Organization),
+    queryFn: () => orgsApi.getMe().then((r) => r.data as Customer),
     staleTime: 60_000,
   });
 
