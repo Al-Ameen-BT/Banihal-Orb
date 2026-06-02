@@ -16,7 +16,7 @@ const EnvSchema = z.object({
     return undefined;
   }, z.boolean().optional()),
   // Ollama chatbot backend
-  OLLAMA_URL: z.string().url().default('http://localhost:11434'),
+  OLLAMA_URL: z.string().url().default('http://localhost:11435'),
   OLLAMA_MODEL: z.string().default('qwen2.5:3b'),
 });
 

@@ -17,9 +17,33 @@ import getpass
 import signal
 import threading
 import time
+import json
+import urllib.request
 
 SYSTEMD_PATH = "/etc/systemd/system"
 SERVICE_NAME = "b2bweb.service"
+
+# Defaults for the Ollama chatbot backend (kept in sync with server/src/config/env.ts).
+# Overridable via OLLAMA_URL / OLLAMA_MODEL in server/.env.
+DEFAULT_OLLAMA_URL = "http://localhost:11435"
+DEFAULT_OLLAMA_MODEL = "qwen2.5:3b"
+
+
+def read_env_value(env_path, key, default):
+    """Reads a single KEY=value from a .env file (ignores quotes/comments). Returns default if absent."""
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                if k.strip() == key:
+                    v = v.strip().strip('"').strip("'")
+                    return v or default
+    except Exception:
+        pass
+    return default
 
 # ==============================================================================
 # ─── PART 1: SUPERVISOR & PROCESS ORCHESTRATOR MODE (--run) ──────────────────
@@ -200,6 +224,42 @@ def prepare_applications(project_dir, is_dev):
         run_preparer_command([npm_bin, "run", "build"], client_dir, "Client-Build")
         log("[Preparer]", "Client compiled successfully.")
 
+    # --- 3. OLLAMA CHATBOT BACKEND PREFLIGHT ---
+    # The /chat feature proxies to a local Ollama server. Verify it's reachable and the
+    # chat model is pulled. This is best-effort: failures warn but never block deployment.
+    env_path = os.path.join(server_dir, ".env")
+    ollama_url = read_env_value(env_path, "OLLAMA_URL", DEFAULT_OLLAMA_URL)
+    ollama_model = read_env_value(env_path, "OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
+    log("[Preparer]", f"Checking Ollama chatbot backend at {ollama_url} (model: {ollama_model})...")
+
+    model_present = False
+    reachable = False
+    try:
+        with urllib.request.urlopen(ollama_url.rstrip("/") + "/api/tags", timeout=5) as resp:
+            tags = json.loads(resp.read().decode("utf-8"))
+        reachable = True
+        available = [m.get("name", "") for m in tags.get("models", [])]
+        model_present = ollama_model in available
+        if model_present:
+            log("[Preparer]", f"Ollama model '{ollama_model}' is available. ✨")
+        else:
+            log("[Preparer]", f"⚠️ Model '{ollama_model}' not found. Available: {available or 'none'}")
+    except Exception as e:
+        log("[Preparer]", f"⚠️ Warning: Could not reach Ollama at {ollama_url} ({e}). "
+                          f"The chat assistant will be unavailable until Ollama is running.")
+
+    # Attempt to pull the model if Ollama is up but the model is missing.
+    if reachable and not model_present:
+        ollama_bin = shutil.which("ollama")
+        if not ollama_bin:
+            log("[Preparer]", f"⚠️ 'ollama' CLI not found in PATH; cannot auto-pull. Run manually: ollama pull {ollama_model}")
+        else:
+            try:
+                run_preparer_command([ollama_bin, "pull", ollama_model], project_dir, "Ollama-Pull")
+                log("[Preparer]", f"Ollama model '{ollama_model}' pulled successfully.")
+            except Exception as e:
+                log("[Preparer]", f"⚠️ Warning: Failed to pull Ollama model '{ollama_model}': {e}")
+
     log("[Preparer]", "Application preparation and build pipeline completed successfully! ✨")
 
 
@@ -305,7 +365,8 @@ def run_installer(project_dir, user, py_cmd, script_path, is_dev, dry_run):
     # Dynamically generate service content pointing back to THIS script with --run
     service_content = f"""[Unit]
 Description=Tech B2B SaaS Unified Platform Service (Client & Server)
-After=network.target postgresql.service
+After=network.target postgresql.service ollama.service
+Wants=ollama.service
 Documentation=https://github.com/Al-Ameen-BT/B2B-Site
 
 [Service]
