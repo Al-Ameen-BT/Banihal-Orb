@@ -1,89 +1,41 @@
 import { env } from '../../config/env';
-import { getMyOrg, getMyServices } from '../organizations/organizations.service';
 import type { ChatMessage } from './chat.schema';
 
-interface OllamaChatResponse {
-  message?: { role: string; content: string; thinking?: string };
+interface AgentEvent {
+  token?: string;
   error?: string;
 }
 
-const SYSTEM_PROMPT = `You are the "Tech Assistant", an in-app support assistant for a B2B security-services SaaS platform.
-
-Your job:
-- Answer concise, practical questions about the customer's subscribed services, renewals, billing, and how to use the platform.
-- Help users decide when and how to open a support ticket, and point them to the right team (Org Admin for account/access issues, CSM/SOC team for security investigations).
-
-Rules:
-- Be concise and professional. Prefer 1-3 short sentences. Use **bold** sparingly for key terms.
-- Only use the organization context provided below — never invent service names, prices, dates, or people.
-- You cannot perform actions (create tickets, change settings, query SIEM/EDR data). Guide the user to the right place instead.
-- For account access problems (login, MFA, password, locked accounts), direct users to their Org Admin or a HIGH-priority ticket.
-- If you don't know something or it's outside the provided context, say so and suggest opening a ticket.`;
-
-/** Builds a grounding block from the caller's real org + service data. */
-async function buildContext(orgId: string): Promise<string> {
-  try {
-    const [org, { services, monthlyTotal }] = await Promise.all([
-      getMyOrg(orgId),
-      getMyServices(orgId),
-    ]);
-
-    const serviceLines = services.length
-      ? services
-          .map((s) => {
-            const renews = s.renewsAt ? new Date(s.renewsAt).toISOString().slice(0, 10) : 'n/a';
-            return `- ${s.name} | status: ${s.status} | renews: ${renews} | $${s.monthlyPrice}/mo`;
-          })
-          .join('\n')
-      : '- (no services subscribed)';
-
-    return [
-      `Organization: ${org.name} (plan: ${org.plan})`,
-      `Monthly spend: $${monthlyTotal}/mo`,
-      `Subscribed services:`,
-      serviceLines,
-    ].join('\n');
-  } catch {
-    // Context is best-effort; the assistant still works without it.
-    return 'Organization context is currently unavailable.';
-  }
-}
-
-export async function generateReply(
-  orgId: string,
-  message: string,
-  history: ChatMessage[],
-): Promise<string> {
-  const context = await buildContext(orgId);
-
-  const messages = [
-    { role: 'system', content: `${SYSTEM_PROMPT}\n\n--- ORGANIZATION CONTEXT ---\n${context}` },
-    ...history,
-    { role: 'user', content: message },
-  ];
-
-  // Abort if Ollama is slow/unreachable so the request doesn't hang.
+/**
+ * Proxy a chat turn to the Analytics Agent's SSE endpoint, consume the token
+ * stream server-side, and return the full assembled reply.
+ *
+ * The agent always streams (`text/event-stream`) with events of the form:
+ *   data: {"token": "..."}        ← appended to the answer
+ *   data: {"error": "..."}        ← surfaced as a failure
+ *   data: [DONE]                  ← end of stream
+ *
+ * We buffer the whole stream (read it to completion) and return one reply, so
+ * the client `/api/chat` contract ({ reply }) is unchanged.
+ */
+export async function generateReply(message: string, history: ChatMessage[]): Promise<string> {
+  // Abort if the agent is slow/unreachable so the request doesn't hang.
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60_000);
+  const timeout = setTimeout(() => controller.abort(), 90_000);
 
   let res: globalThis.Response;
   try {
-    res = await fetch(`${env.OLLAMA_URL}/api/chat`, {
+    res = await fetch(`${env.AGENT_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: env.OLLAMA_MODEL,
-        messages,
-        stream: false,
-        options: { temperature: 0.4, num_predict: 512 },
-      }),
+      body: JSON.stringify({ message, history }),
       signal: controller.signal,
     });
   } catch (err) {
     const aborted = err instanceof Error && err.name === 'AbortError';
     throw Object.assign(new Error(aborted ? 'The assistant timed out' : 'The assistant is unavailable'), {
       status: 503,
-      code: 'LLM_UNAVAILABLE',
+      code: 'AGENT_UNAVAILABLE',
     });
   } finally {
     clearTimeout(timeout);
@@ -92,20 +44,38 @@ export async function generateReply(
   if (!res.ok) {
     throw Object.assign(new Error(`Assistant backend error (${res.status})`), {
       status: 503,
-      code: 'LLM_ERROR',
+      code: 'AGENT_ERROR',
     });
   }
 
-  const data = (await res.json()) as OllamaChatResponse;
-  // qwen2.5 fills `content`. Fall back to `thinking` only if a reasoning model
-  // (e.g. qwen3.x) ever leaves `content` empty, so the request never silently fails.
-  const reply = data.message?.content?.trim() || data.message?.thinking?.trim();
+  // Buffered: wait for the full event-stream, then parse every `data:` line.
+  const raw = await res.text();
+  let reply = '';
 
+  for (const rawLine of raw.split(/\r?\n/)) {
+    const line = rawLine.trimEnd();
+    if (!line.startsWith('data:')) continue;
+
+    const dataStr = line.slice(5).trim();
+    if (!dataStr) continue;
+    if (dataStr === '[DONE]') break;
+
+    let event: AgentEvent;
+    try {
+      event = JSON.parse(dataStr) as AgentEvent;
+    } catch {
+      continue; // ignore keep-alives / non-JSON frames
+    }
+
+    if (event.error) {
+      throw Object.assign(new Error('The assistant returned an error'), { status: 502, code: 'AGENT_STREAM_ERROR' });
+    }
+    if (event.token) reply += event.token;
+  }
+
+  reply = reply.trim();
   if (!reply) {
-    throw Object.assign(new Error('The assistant returned an empty response'), {
-      status: 502,
-      code: 'LLM_EMPTY',
-    });
+    throw Object.assign(new Error('The assistant returned an empty response'), { status: 502, code: 'AGENT_EMPTY' });
   }
 
   return reply;

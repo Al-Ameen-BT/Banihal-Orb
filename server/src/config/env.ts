@@ -15,7 +15,10 @@ const EnvSchema = z.object({
     if (val === 'false') return false;
     return undefined;
   }, z.boolean().optional()),
-  // Ollama chatbot backend
+  // Chatbot backend — Analytics Agent (SSE streaming) on the same host.
+  // The agent wraps the LLM + knowledge base; /api/chat proxies to it.
+  AGENT_URL: z.string().url().default('http://localhost:8050'),
+  // Legacy Ollama settings (the agent manages its own model now; kept for the deploy preflight)
   OLLAMA_URL: z.string().url().default('http://localhost:11435'),
   OLLAMA_MODEL: z.string().default('qwen2.5:3b'),
 });
