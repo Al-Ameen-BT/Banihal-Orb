@@ -2,7 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
-import { orgsApi } from '@/lib/api';
+import { orgsApi, chatApi, type ChatTurn } from '@/lib/api';
 import RoleGuard from '@/components/guards/RoleGuard';
 import Sidebar from '@/components/ui/Sidebar';
 import Chatbot from '@/components/ui/Chatbot';
@@ -17,6 +17,11 @@ export default function ChatPage() {
     queryFn: () => orgsApi.getMe().then((r) => r.data as Organization),
     staleTime: 60_000,
   });
+
+  async function handleMessage(text: string, history: ChatTurn[]): Promise<string> {
+    const { data } = await chatApi.send(text, history);
+    return data.reply;
+  }
 
   return (
     <RoleGuard allowedRoles={['USER', 'ORG_ADMIN', 'SAAS_ADMIN']}>
@@ -44,7 +49,7 @@ export default function ChatPage() {
               transition={{ duration: 0.25, delay: 0.04 }}
               className="max-w-[900px] mx-auto w-full h-full"
             >
-              <Chatbot userName={user?.name} orgName={org?.name} className="h-full" />
+              <Chatbot userName={user?.name} orgName={org?.name} onUserMessage={handleMessage} className="h-full" />
             </motion.div>
           </div>
         </main>

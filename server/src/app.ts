@@ -15,6 +15,7 @@ import usersRoutes from './modules/users/users.routes';
 import orgsRoutes from './modules/organizations/organizations.routes';
 import dashboardRoutes from './modules/dashboard/dashboard.routes';
 import saasAdminRoutes from './modules/saas-admin/saas-admin.routes';
+import chatRoutes from './modules/chat/chat.routes';
 
 const app = express();
 
@@ -51,6 +52,7 @@ const withTenant = tenantMiddleware as express.RequestHandler;
 app.use('/api/users', withTenant, usersRoutes);
 app.use('/api/organizations', withTenant, orgsRoutes);
 app.use('/api/dashboard', withTenant, dashboardRoutes);
+app.use('/api/chat', withTenant, chatRoutes);
 
 // SaaS admin — SAAS_ADMIN role required, no tenant scope (global access)
 app.use('/api/saas-admin', requireRole('SAAS_ADMIN'), saasAdminRoutes);

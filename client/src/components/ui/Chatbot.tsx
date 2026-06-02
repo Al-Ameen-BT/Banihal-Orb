@@ -10,9 +10,14 @@ interface Message {
   timestamp: number;
 }
 
+interface ChatTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 interface ChatbotProps {
-  /** Optional — wire to a real backend (LLM, ticketing agent, etc.) later. */
-  onUserMessage?: (text: string) => Promise<string>;
+  /** Optional — wire to a real backend (LLM, ticketing agent, etc.). Receives prior turns for context. */
+  onUserMessage?: (text: string, history: ChatTurn[]) => Promise<string>;
   /** Optional — personalize the greeting. */
   userName?: string;
   orgName?: string;
@@ -108,7 +113,11 @@ export default function Chatbot({ onUserMessage, userName, orgName, className }:
     let replyText: string;
     try {
       if (onUserMessage) {
-        replyText = await onUserMessage(text);
+        // Build prior turns (exclude the greeting and the message we just added)
+        const history: ChatTurn[] = messages
+          .filter((m) => m.id !== 'bot-greet')
+          .map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }));
+        replyText = await onUserMessage(text, history);
       } else {
         await new Promise((r) => setTimeout(r, 700 + Math.random() * 500));
         replyText = pickReply(text, fallbackCounter.current++);
@@ -142,7 +151,11 @@ export default function Chatbot({ onUserMessage, userName, orgName, className }:
           <h3 className="text-base font-semibold text-slate-900 leading-tight">Tech Assistant</h3>
           <p className="text-xs text-slate-500">Online · usually responds instantly</p>
         </div>
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 px-2 py-1 bg-slate-100 rounded-md">Demo</span>
+        {onUserMessage ? (
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-600 px-2 py-1 bg-emerald-50 rounded-md">Live</span>
+        ) : (
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 px-2 py-1 bg-slate-100 rounded-md">Demo</span>
+        )}
       </div>
 
       {/* Message list */}

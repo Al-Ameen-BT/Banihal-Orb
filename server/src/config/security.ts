@@ -18,4 +18,5 @@ export const corsOptions: CorsOptions = {
 export const rateLimitConfig = {
   global: { windowMs: 15 * 60 * 1000, max: 100 },
   auth: { windowMs: 15 * 60 * 1000, max: 5 },
+  chat: { windowMs: 60 * 1000, max: 15 },
 };

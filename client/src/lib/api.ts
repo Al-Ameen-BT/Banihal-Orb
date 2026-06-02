@@ -90,6 +90,16 @@ export const dashboardApi = {
   getQueue: (params?: Record<string, unknown>) => api.get('/dashboard/queue', { params }),
 };
 
+export interface ChatTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export const chatApi = {
+  send: (message: string, history: ChatTurn[] = []) =>
+    api.post<{ reply: string }>('/chat', { message, history }),
+};
+
 export const saasAdminApi = {
   listOrgs: (params?: Record<string, unknown>) => api.get('/saas-admin/orgs', { params }),
   updateOrg: (id: string, data: unknown) => api.patch(`/saas-admin/orgs/${id}`, data),

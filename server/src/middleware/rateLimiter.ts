@@ -16,3 +16,11 @@ export const authRateLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Too many authentication attempts', code: 'AUTH_RATE_LIMITED' },
 });
+
+export const chatRateLimiter = rateLimit({
+  windowMs: rateLimitConfig.chat.windowMs,
+  max: rateLimitConfig.chat.max,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many messages, please slow down', code: 'CHAT_RATE_LIMITED' },
+});
