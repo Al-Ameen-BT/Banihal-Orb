@@ -5,8 +5,8 @@ import { env } from '../../config/env';
 
 const COOKIE_OPTS = {
   httpOnly: true,
-  secure: env.NODE_ENV === 'production',
-  sameSite: 'strict' as const,
+  secure: env.COOKIE_SECURE ?? (env.NODE_ENV === 'production'),
+  sameSite: 'lax' as const,
 };
 
 function setTokenCookies(res: Response, tokens: { accessToken: string; refreshToken: string }): void {

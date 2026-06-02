@@ -10,6 +10,11 @@ const EnvSchema = z.object({
   PORT: z.coerce.number().default(3001),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   ALLOWED_ORIGINS: z.string().default('http://localhost:3000'),
+  COOKIE_SECURE: z.preprocess((val) => {
+    if (val === 'true') return true;
+    if (val === 'false') return false;
+    return undefined;
+  }, z.boolean().optional()),
 });
 
 const result = EnvSchema.safeParse(process.env);
