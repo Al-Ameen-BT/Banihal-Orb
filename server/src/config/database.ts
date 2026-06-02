@@ -24,8 +24,8 @@ function buildPrisma() {
           // Only inject on data-reading/mutating ops; skip raw/aggregate where clause injection isn't applicable
           const scopedOps = ['findFirst', 'findMany', 'findUnique', 'update', 'updateMany', 'delete', 'deleteMany', 'count'];
 
-          // Models without organizationId (global tables)
-          const globalModels = ['FeatureFlag'];
+          // Models without organizationId (global tables or tables without organizationId relation)
+          const globalModels = ['FeatureFlag', 'Organization', 'RefreshToken'];
 
           if (store?.orgId && scopedOps.includes(operation) && !globalModels.includes(model)) {
             const existingWhere = (args['where'] as Record<string, unknown>) ?? {};
