@@ -17,7 +17,7 @@ export default function SupportPage() {
   });
 
   return (
-    <RoleGuard allowedRoles={['USER', 'ORG_ADMIN', 'SAAS_ADMIN']}>
+    <RoleGuard allowedRoles={['USER', 'ORG_ADMIN', 'SADMIN', 'ADMINISTRATOR']}>
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">

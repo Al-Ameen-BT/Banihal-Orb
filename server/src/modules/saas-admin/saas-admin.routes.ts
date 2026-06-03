@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import * as saasAdminController from './saas-admin.controller';
+import { requireRole } from '../../middleware/rbac.middleware';
 
 const router = Router();
 
@@ -40,5 +41,12 @@ router.delete('/services/:id', saasAdminController.removeService);
 // Feature flags
 router.get('/flags', saasAdminController.listFlags);
 router.patch('/flags/:key', saasAdminController.toggleFlag);
+
+// Administrator-only: manage Sadmin accounts
+const onlyAdministrator = requireRole('ADMINISTRATOR');
+router.get('/sadmins', onlyAdministrator, saasAdminController.listSadmins);
+router.patch('/sadmins/:id', onlyAdministrator, saasAdminController.updateSadmin);
+router.delete('/sadmins/:id', onlyAdministrator, saasAdminController.removeSadmin);
+router.post('/sadmins/:id/reset-password', onlyAdministrator, saasAdminController.resetSadminPassword);
 
 export default router;

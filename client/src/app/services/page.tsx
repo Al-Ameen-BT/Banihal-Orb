@@ -38,7 +38,7 @@ export default function ServicesPage() {
   const issuesCount   = services.filter((s) => s.status === 'EXPIRED' || s.status === 'SUSPENDED' || !s.enabled).length;
 
   return (
-    <RoleGuard allowedRoles={['ORG_ADMIN', 'SAAS_ADMIN']}>
+    <RoleGuard allowedRoles={['ORG_ADMIN', 'SADMIN', 'ADMINISTRATOR']}>
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">

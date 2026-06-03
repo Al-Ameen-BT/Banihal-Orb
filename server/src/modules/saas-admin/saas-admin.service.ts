@@ -10,7 +10,7 @@ import type {
   UpdateUserInput,
 } from './saas-admin.schema';
 
-// All queries in this module bypass tenant scope intentionally (SAAS_ADMIN global access)
+// All queries in this module bypass tenant scope intentionally (SADMIN / ADMINISTRATOR global access)
 
 // ─── Derive service status from renewal date ────────────────────────────────
 function deriveStatus(renewsAt: Date): 'ACTIVE' | 'EXPIRING' | 'EXPIRED' {
@@ -383,7 +383,7 @@ export async function removeCustomerService(id: string, adminUserId: string) {
   await prisma.customerService.delete({ where: { id } });
 }
 
-// ─── Service catalog (global, SAAS_ADMIN): main services → sub-services ──────
+// ─── Service catalog (global, SADMIN): main services → sub-services ──────────
 export async function listCatalog() {
   const services = await prisma.service.findMany({
     orderBy: [{ name: 'asc' }],
@@ -479,7 +479,7 @@ export async function getOrgDetail(orgId: string) {
   return { org: { ...org, services }, admin, monthlyRevenue };
 }
 
-// ─── User management (SAAS_ADMIN — any user across any org) ────────────────
+// ─── User management (SADMIN — any org user across any org) ─────────────────
 const userSelect = {
   id: true, email: true, name: true, role: true, mfaEnabled: true,
   lastLoginAt: true, createdAt: true, customerId: true,
@@ -488,11 +488,11 @@ const userSelect = {
 export async function updateUser(targetUserId: string, adminUserId: string, input: UpdateUserInput) {
   const target = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, customerId: true, role: true, email: true } });
   if (!target) throw Object.assign(new Error('User not found'), { status: 404, code: 'NOT_FOUND' });
-  if (target.role === 'SAAS_ADMIN') throw Object.assign(new Error('SAAS_ADMIN accounts cannot be modified via this endpoint'), { status: 403, code: 'PROTECTED_ACCOUNT' });
+  if (target.role === 'SADMIN' || target.role === 'ADMINISTRATOR') throw Object.assign(new Error('Platform admin accounts cannot be modified via this endpoint'), { status: 403, code: 'PROTECTED_ACCOUNT' });
 
   await prisma.auditLog.create({
     data: {
-      action: 'SAAS_ADMIN_USER_UPDATE', performedById: adminUserId, targetId: targetUserId,
+      action: 'ADMIN_USER_UPDATE', performedById: adminUserId, targetId: targetUserId,
       customerId: target.customerId,
       metadata: { changes: input, targetEmail: target.email, previousRole: target.role },
     },
@@ -505,11 +505,11 @@ export async function removeUser(targetUserId: string, adminUserId: string) {
   if (targetUserId === adminUserId) throw Object.assign(new Error('Cannot remove yourself'), { status: 400, code: 'SELF_REMOVE' });
   const target = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, customerId: true, role: true, email: true, name: true } });
   if (!target) throw Object.assign(new Error('User not found'), { status: 404, code: 'NOT_FOUND' });
-  if (target.role === 'SAAS_ADMIN') throw Object.assign(new Error('SAAS_ADMIN accounts cannot be removed via this endpoint'), { status: 403, code: 'PROTECTED_ACCOUNT' });
+  if (target.role === 'SADMIN' || target.role === 'ADMINISTRATOR') throw Object.assign(new Error('Platform admin accounts cannot be removed via this endpoint'), { status: 403, code: 'PROTECTED_ACCOUNT' });
 
   await prisma.auditLog.create({
     data: {
-      action: 'SAAS_ADMIN_USER_REMOVE', performedById: adminUserId, targetId: targetUserId,
+      action: 'ADMIN_USER_REMOVE', performedById: adminUserId, targetId: targetUserId,
       customerId: target.customerId,
       metadata: { targetEmail: target.email, targetName: target.name, targetRole: target.role },
     },
@@ -521,7 +521,7 @@ export async function removeUser(targetUserId: string, adminUserId: string) {
 export async function resetUserPassword(targetUserId: string, adminUserId: string) {
   const target = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, customerId: true, role: true, email: true } });
   if (!target) throw Object.assign(new Error('User not found'), { status: 404, code: 'NOT_FOUND' });
-  if (target.role === 'SAAS_ADMIN') throw Object.assign(new Error('SAAS_ADMIN passwords cannot be reset via this endpoint'), { status: 403, code: 'PROTECTED_ACCOUNT' });
+  if (target.role === 'SADMIN' || target.role === 'ADMINISTRATOR') throw Object.assign(new Error('Platform admin passwords cannot be reset via this endpoint'), { status: 403, code: 'PROTECTED_ACCOUNT' });
 
   const tempPassword = crypto.randomBytes(9).toString('base64').replace(/[+/=]/g, '') + 'A1!';
   const passwordHash = await bcrypt.hash(tempPassword, 12);
@@ -531,7 +531,7 @@ export async function resetUserPassword(targetUserId: string, adminUserId: strin
 
   await prisma.auditLog.create({
     data: {
-      action: 'SAAS_ADMIN_PASSWORD_RESET', performedById: adminUserId, targetId: targetUserId,
+      action: 'ADMIN_PASSWORD_RESET', performedById: adminUserId, targetId: targetUserId,
       customerId: target.customerId,
       metadata: { targetEmail: target.email },
     },
@@ -550,4 +550,74 @@ export async function upsertFlag(key: string, input: ToggleFlagInput) {
     create: { key, value: input.value, description: input.description },
     update: { value: input.value, ...(input.description ? { description: input.description } : {}) },
   });
+}
+
+// ─── Administrator-only: Sadmin management ───────────────────────────────────
+const sadminSelect = {
+  id: true, email: true, name: true, role: true, mfaEnabled: true,
+  lastLoginAt: true, createdAt: true, customerId: true,
+  customer: { select: { id: true, name: true, slug: true, domain: true } },
+} as const;
+
+export async function listSadmins() {
+  return prisma.user.findMany({
+    where: { role: 'SADMIN' },
+    select: sadminSelect,
+    orderBy: [{ customer: { name: 'asc' } }, { name: 'asc' }],
+  });
+}
+
+export async function updateSadmin(targetUserId: string, administratorId: string, input: UpdateUserInput) {
+  const target = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, customerId: true, role: true, email: true } });
+  if (!target) throw Object.assign(new Error('User not found'), { status: 404, code: 'NOT_FOUND' });
+  if (target.role !== 'SADMIN') throw Object.assign(new Error('Target is not a Sadmin'), { status: 400, code: 'INVALID_TARGET' });
+
+  await prisma.auditLog.create({
+    data: {
+      action: 'ADMINISTRATOR_SADMIN_UPDATE', performedById: administratorId, targetId: targetUserId,
+      customerId: target.customerId,
+      metadata: { changes: input, targetEmail: target.email, previousRole: target.role },
+    },
+  });
+
+  return prisma.user.update({ where: { id: targetUserId }, data: input, select: sadminSelect });
+}
+
+export async function removeSadmin(targetUserId: string, administratorId: string) {
+  if (targetUserId === administratorId) throw Object.assign(new Error('Cannot remove yourself'), { status: 400, code: 'SELF_REMOVE' });
+  const target = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, customerId: true, role: true, email: true, name: true } });
+  if (!target) throw Object.assign(new Error('User not found'), { status: 404, code: 'NOT_FOUND' });
+  if (target.role !== 'SADMIN') throw Object.assign(new Error('Target is not a Sadmin'), { status: 400, code: 'INVALID_TARGET' });
+
+  await prisma.auditLog.create({
+    data: {
+      action: 'ADMINISTRATOR_SADMIN_REMOVE', performedById: administratorId, targetId: targetUserId,
+      customerId: target.customerId,
+      metadata: { targetEmail: target.email, targetName: target.name },
+    },
+  });
+
+  await prisma.user.delete({ where: { id: targetUserId } });
+}
+
+export async function resetSadminPassword(targetUserId: string, administratorId: string) {
+  const target = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, customerId: true, role: true, email: true } });
+  if (!target) throw Object.assign(new Error('User not found'), { status: 404, code: 'NOT_FOUND' });
+  if (target.role !== 'SADMIN') throw Object.assign(new Error('Target is not a Sadmin'), { status: 400, code: 'INVALID_TARGET' });
+
+  const tempPassword = crypto.randomBytes(9).toString('base64').replace(/[+/=]/g, '') + 'A1!';
+  const passwordHash = await bcrypt.hash(tempPassword, 12);
+
+  await prisma.user.update({ where: { id: targetUserId }, data: { passwordHash } });
+  await prisma.refreshToken.deleteMany({ where: { userId: targetUserId } });
+
+  await prisma.auditLog.create({
+    data: {
+      action: 'ADMINISTRATOR_SADMIN_PASSWORD_RESET', performedById: administratorId, targetId: targetUserId,
+      customerId: target.customerId,
+      metadata: { targetEmail: target.email },
+    },
+  });
+
+  return { tempPassword, message: 'Password reset. Communicate this temporary password securely; all existing sessions have been revoked.' };
 }

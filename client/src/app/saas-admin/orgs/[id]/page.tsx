@@ -16,7 +16,7 @@ import { Shimmer } from '@/components/ui/Shimmer';
 // ─── Types ──────────────────────────────────────────────────────────────────
 interface OrgUser {
   id: string; name: string; email: string;
-  role: 'USER' | 'ORG_ADMIN' | 'SAAS_ADMIN';
+  role: 'USER' | 'ORG_ADMIN' | 'SADMIN' | 'ADMINISTRATOR';
   mfaEnabled: boolean; lastLoginAt: string | null; createdAt: string;
 }
 interface OrgService {
@@ -57,9 +57,10 @@ const priorityConfig: Record<string, { cls: string; dot: string; label: string }
   LOW:      { cls: 'text-slate-600 bg-slate-100', dot: 'bg-slate-400',  label: 'Low' },
 };
 const roleConfig: Record<string, { cls: string; label: string }> = {
-  USER:       { cls: 'text-slate-600 bg-slate-100',    label: 'User' },
-  ORG_ADMIN:  { cls: 'text-violet-700 bg-violet-50',   label: 'Org Admin' },
-  SAAS_ADMIN: { cls: 'text-brand-700 bg-brand-50',     label: 'Super Admin' },
+  USER:          { cls: 'text-slate-600 bg-slate-100',   label: 'User' },
+  ORG_ADMIN:     { cls: 'text-violet-700 bg-violet-50',  label: 'Org Admin' },
+  SADMIN:        { cls: 'text-brand-700 bg-brand-50',    label: 'Sadmin' },
+  ADMINISTRATOR: { cls: 'text-rose-700 bg-rose-50',      label: 'Administrator' },
 };
 const planConfig: Record<string, string> = {
   FREE:       'text-slate-600 bg-slate-100',
@@ -288,7 +289,7 @@ function UserRow({ user, isCurrentAdmin }: { user: OrgUser; isCurrentAdmin: bool
         {new Date(user.createdAt).toLocaleDateString()}
       </td>
       <td className="px-5 py-3.5 text-right">
-        {user.role === 'SAAS_ADMIN' ? (
+        {(user.role === 'SADMIN' || user.role === 'ADMINISTRATOR') ? (
           <span className="text-xs text-slate-400">Protected</span>
         ) : (
           <div className="flex gap-1.5 justify-end">
@@ -354,7 +355,7 @@ export default function OrgDetailPage() {
 
   if (isLoading || !data) {
     return (
-      <RoleGuard allowedRoles={['SAAS_ADMIN']}>
+      <RoleGuard allowedRoles={['SADMIN', 'ADMINISTRATOR']}>
         <div className="flex h-screen overflow-hidden bg-canvas">
           <Sidebar />
           <main className="flex-1 overflow-y-auto">
@@ -371,7 +372,7 @@ export default function OrgDetailPage() {
 
   if (error || !data?.org) {
     return (
-      <RoleGuard allowedRoles={['SAAS_ADMIN']}>
+      <RoleGuard allowedRoles={['SADMIN', 'ADMINISTRATOR']}>
         <div className="flex h-screen overflow-hidden bg-canvas">
           <Sidebar />
           <main className="flex-1 flex items-center justify-center">
@@ -389,7 +390,7 @@ export default function OrgDetailPage() {
   const otherUsers = org.users.filter((u) => u.id !== admin?.id);
 
   return (
-    <RoleGuard allowedRoles={['SAAS_ADMIN']}>
+    <RoleGuard allowedRoles={['SADMIN', 'ADMINISTRATOR']}>
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">

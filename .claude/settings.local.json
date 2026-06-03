@@ -5,7 +5,10 @@
       "Read(//c/Users/admin/Desktop/**)",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8001/)",
       "Bash(curl -s http://localhost:8001/)",
-      "Bash(curl -s http://localhost:8001/api/chat -X POST -H \"Content-Type: application/json\" -d '{\"message\":\"hello\",\"history\":[]}')"
+      "Bash(curl -s http://localhost:8001/api/chat -X POST -H \"Content-Type: application/json\" -d '{\"message\":\"hello\",\"history\":[]}')",
+      "Bash(npx prisma *)",
+      "Bash(node *)",
+      "Bash(systemctl status *)"
     ]
   }
 }

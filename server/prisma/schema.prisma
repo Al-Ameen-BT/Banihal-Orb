@@ -129,7 +129,7 @@ model ServiceRequest {
 }
 
 // ─── Service catalog (self-referential: main services → sub-services) ───
-// Global table managed by the platform SAAS_ADMIN (not customer-scoped).
+// Global table managed by the platform (SADMIN / ADMINISTRATOR, not customer-scoped).
 // parentId null = main service; parentId set = sub-service of that parent.
 model Service {
   id           String            @id @default(cuid())
@@ -151,7 +151,7 @@ model Service {
 
 // ─── Customer ↔ purchased service, with purchase/end dates ──────────
 // endDate drives expiry status (ACTIVE / EXPIRING / EXPIRED), derived in code.
-// Managed by the platform SAAS_ADMIN; customer-scoped for org members.
+// Managed by the platform (SADMIN / ADMINISTRATOR); customer-scoped for org members.
 model CustomerService {
   id           String   @id @default(cuid())
   customerId   String
@@ -173,7 +173,8 @@ model CustomerService {
 enum Role {
   USER
   ORG_ADMIN
-  SAAS_ADMIN
+  SADMIN
+  ADMINISTRATOR
 }
 
 enum Plan {

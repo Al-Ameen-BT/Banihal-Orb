@@ -74,12 +74,12 @@ export const UpdateCatalogSchema = z.object({
   active: z.boolean().optional(),
 }).refine((d) => Object.keys(d).length > 0, { message: 'At least one field required' });
 
-// ─── Users (SAAS_ADMIN edits any user across orgs) ───────────────────────────
+// ─── Users (SADMIN edits org users; ADMINISTRATOR edits Sadmins) ─────────────
 export const UpdateUserSchema = z.object({
   name: z.string().min(2).max(80).optional(),
   email: z.string().email().optional(),
   mfaEnabled: z.boolean().optional(),
-  role: z.enum(['USER', 'ORG_ADMIN']).optional(),  // SAAS_ADMIN never assignable
+  role: z.enum(['USER', 'ORG_ADMIN']).optional(),  // SADMIN / ADMINISTRATOR never assignable via this schema
 }).refine((d) => Object.keys(d).length > 0, { message: 'At least one field required' });
 
 export type ListOrgsInput = z.infer<typeof ListOrgsSchema>;

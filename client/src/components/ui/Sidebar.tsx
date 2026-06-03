@@ -16,9 +16,10 @@ const icons = {
 };
 
 const roleConfig: Record<string, { label: string; badge: string; avatar: string }> = {
-  USER:       { label: 'User',        badge: 'text-slate-600 bg-slate-100',  avatar: 'from-slate-400 to-slate-500' },
-  ORG_ADMIN:  { label: 'Org Admin',   badge: 'text-violet-700 bg-violet-50', avatar: 'from-violet-400 to-violet-600' },
-  SAAS_ADMIN: { label: 'Super Admin', badge: 'text-brand-700 bg-brand-50',   avatar: 'from-brand-400 to-brand-600' },
+  USER:          { label: 'User',          badge: 'text-slate-600 bg-slate-100',   avatar: 'from-slate-400 to-slate-500' },
+  ORG_ADMIN:     { label: 'Org Admin',     badge: 'text-violet-700 bg-violet-50',  avatar: 'from-violet-400 to-violet-600' },
+  SADMIN:        { label: 'Sadmin',        badge: 'text-brand-700 bg-brand-50',    avatar: 'from-brand-400 to-brand-600' },
+  ADMINISTRATOR: { label: 'Administrator', badge: 'text-rose-700 bg-rose-50',      avatar: 'from-rose-500 to-rose-700' },
 };
 
 function NavItem({ href, label, icon, active }: { href: string; label: string; icon: string; active: boolean }) {
@@ -50,8 +51,8 @@ export default function Sidebar() {
   const { user, logout } = useAuth();
   const path = usePathname();
 
-  const isAdmin = user?.role === 'ORG_ADMIN' || user?.role === 'SAAS_ADMIN';
-  const isSaas  = user?.role === 'SAAS_ADMIN';
+  const isAdmin = user?.role === 'ORG_ADMIN' || user?.role === 'SADMIN' || user?.role === 'ADMINISTRATOR';
+  const isSaas  = user?.role === 'SADMIN' || user?.role === 'ADMINISTRATOR';
   const roleCfg = roleConfig[user?.role ?? ''] ?? roleConfig['USER']!;
 
   return (

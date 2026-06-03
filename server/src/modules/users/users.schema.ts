@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-// Only USER and ORG_ADMIN are assignable via API — SAAS_ADMIN never is.
+// Only USER and ORG_ADMIN are assignable via API — SADMIN / ADMINISTRATOR never are.
 const AssignableRole = z.enum(['USER', 'ORG_ADMIN']);
 
 export const UpdateMeSchema = z.object({

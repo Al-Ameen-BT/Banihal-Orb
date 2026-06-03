@@ -12,9 +12,10 @@ import Toggle from '@/components/ui/Toggle';
 import type { User, Customer } from '@/lib/schemas';
 
 const roleConfig: Record<string, { label: string; cls: string }> = {
-  USER:       { label: 'User',        cls: 'text-slate-600 bg-slate-100' },
-  ORG_ADMIN:  { label: 'Org Admin',   cls: 'text-violet-700 bg-violet-50' },
-  SAAS_ADMIN: { label: 'Super Admin', cls: 'text-brand-700 bg-brand-50' },
+  USER:          { label: 'User',          cls: 'text-slate-600 bg-slate-100' },
+  ORG_ADMIN:     { label: 'Org Admin',     cls: 'text-violet-700 bg-violet-50' },
+  SADMIN:        { label: 'Sadmin',        cls: 'text-brand-700 bg-brand-50' },
+  ADMINISTRATOR: { label: 'Administrator', cls: 'text-rose-700 bg-rose-50' },
 };
 
 export default function UsersPage() {
@@ -79,7 +80,7 @@ export default function UsersPage() {
     {
       key: 'actions', header: '',
       render: (row: User) => {
-        if (row.role === 'SAAS_ADMIN') return <span className="text-xs text-slate-400">Protected</span>;
+        if (row.role === 'SADMIN' || row.role === 'ADMINISTRATOR') return <span className="text-xs text-slate-400">Protected</span>;
         const nextRole = row.role === 'USER' ? 'ORG_ADMIN' : 'USER';
         return (
           <div className="flex gap-1.5 justify-end">
@@ -103,7 +104,7 @@ export default function UsersPage() {
   const mfaCount   = users?.users.filter((u) => u.mfaEnabled).length ?? 0;
 
   return (
-    <RoleGuard allowedRoles={['ORG_ADMIN', 'SAAS_ADMIN']}>
+    <RoleGuard allowedRoles={['ORG_ADMIN', 'SADMIN', 'ADMINISTRATOR']}>
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">

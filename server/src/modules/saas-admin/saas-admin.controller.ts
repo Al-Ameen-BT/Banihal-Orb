@@ -185,3 +185,33 @@ export async function toggleFlag(req: Request, res: Response, next: NextFunction
     res.json(flag);
   } catch (err) { next(err); }
 }
+
+// ─── Administrator: Sadmin management ───────────────────────────────────────
+export async function listSadmins(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const sadmins = await saasAdminService.listSadmins();
+    res.json({ sadmins });
+  } catch (err) { next(err); }
+}
+
+export async function updateSadmin(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = UpdateUserSchema.parse(req.body);
+    const user = await saasAdminService.updateSadmin(req.params['id']!, req.user.userId, input);
+    res.json(user);
+  } catch (err) { next(err); }
+}
+
+export async function removeSadmin(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    await saasAdminService.removeSadmin(req.params['id']!, req.user.userId);
+    res.status(204).end();
+  } catch (err) { next(err); }
+}
+
+export async function resetSadminPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const result = await saasAdminService.resetSadminPassword(req.params['id']!, req.user.userId);
+    res.json(result);
+  } catch (err) { next(err); }
+}

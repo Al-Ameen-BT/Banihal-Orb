@@ -20,13 +20,14 @@ api.interceptors.response.use(
   (res) => res,
   async (error: AxiosError) => {
     const original = error.config as InternalAxiosRequestConfig & { _retry?: boolean; _skipRetry?: boolean };
+    const status = error.response?.status;
 
-    // Don't retry: auth endpoints, already-retried requests, or silent-check requests
     const isAuthEndpoint = original.url?.includes('/auth/');
-    const isPublicPage = typeof window !== 'undefined' &&
-      ['/login', '/register'].some((p) => window.location.pathname.startsWith(p));
+    const currentPath = typeof window !== 'undefined' ? window.location.pathname : '';
+    const isPublicPage = ['/login', '/register'].some((p) => currentPath.startsWith(p));
 
-    if (error.response?.status === 401 && !original._retry && !original._skipRetry && !isAuthEndpoint && !isPublicPage) {
+    // 401 — attempt token refresh, then redirect to login
+    if (status === 401 && !original._retry && !original._skipRetry && !isAuthEndpoint && !isPublicPage) {
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
           refreshSubscribers.push((ok) => {
@@ -47,12 +48,23 @@ api.interceptors.response.use(
       } catch {
         onRefreshComplete(false);
         isRefreshing = false;
-        // Only redirect if not already on /login
-        if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+        if (typeof window !== 'undefined' && !currentPath.startsWith('/login')) {
           window.location.href = '/login';
         }
         return Promise.reject(error);
       }
+    }
+
+    // 403 — redirect to access-denied page (skip on auth endpoints and silent checks)
+    if (status === 403 && !original._skipRetry && !isAuthEndpoint && !currentPath.startsWith('/403')) {
+      if (typeof window !== 'undefined') window.location.href = '/403';
+      return Promise.reject(error);
+    }
+
+    // 5xx — redirect to server error page (skip on silent checks)
+    if (status !== undefined && status >= 500 && !original._skipRetry && !currentPath.startsWith('/server-error')) {
+      if (typeof window !== 'undefined') window.location.href = '/server-error';
+      return Promise.reject(error);
     }
 
     return Promise.reject(error);
@@ -194,4 +206,9 @@ export const saasAdminApi = {
   deleteCatalog: (id: string) => api.delete(`/saas-admin/catalog/${id}`),
   listFlags: () => api.get('/saas-admin/flags'),
   toggleFlag: (key: string, data: unknown) => api.patch(`/saas-admin/flags/${key}`, data),
+  // Administrator-only: Sadmin management
+  listSadmins: () => api.get('/saas-admin/sadmins'),
+  updateSadmin: (id: string, data: unknown) => api.patch(`/saas-admin/sadmins/${id}`, data),
+  removeSadmin: (id: string) => api.delete(`/saas-admin/sadmins/${id}`),
+  resetSadminPassword: (id: string) => api.post(`/saas-admin/sadmins/${id}/reset-password`),
 };

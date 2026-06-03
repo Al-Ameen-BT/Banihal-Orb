@@ -146,15 +146,24 @@ async function main() {
       contactNumber: '+1-555-0100', domain: deriveDomain('admin@platform.com'),
     },
   });
-  const saasAdmin = await prisma.user.create({
+  const sadmin = await prisma.user.create({
     data: {
       name: 'Alex Chen', email: 'admin@platform.com',
       passwordHash: await hash('SaasAdmin1!'),
-      role: 'SAAS_ADMIN', mfaEnabled: true,
+      role: 'SADMIN', mfaEnabled: true,
       customerId: techOrg.id, lastLoginAt: now,
     },
   });
-  console.log(`✅ Tech (internal)  →  ${saasAdmin.email}  [SAAS_ADMIN]\n`);
+  const administrator = await prisma.user.create({
+    data: {
+      name: 'Super Admin', email: 'superadmin@platform.com',
+      passwordHash: await hash('SuperAdmin1!'),
+      role: 'ADMINISTRATOR', mfaEnabled: true,
+      customerId: techOrg.id, lastLoginAt: now,
+    },
+  });
+  console.log(`✅ Tech (internal)  →  ${sadmin.email}  [SADMIN]`);
+  console.log(`✅ Tech (internal)  →  ${administrator.email}  [ADMINISTRATOR]\n`);
 
   // ─── Spec for each client org ──────────────────────────────────────────────
   type OrgSpec = {
@@ -515,14 +524,14 @@ async function main() {
   // ─── Audit logs ─────────────────────────────────────────────────────────────
   await prisma.auditLog.createMany({
     data: [
-      { action: 'LOGIN',          performedById: saasAdmin.id,        customerId: techOrg.id,    metadata: { ip: '10.0.0.1' } },
+      { action: 'LOGIN',          performedById: sadmin.id,           customerId: techOrg.id,    metadata: { ip: '10.0.0.1' } },
       { action: 'LOGIN',          performedById: datavault.admin.id,  customerId: datavault.id,  metadata: { ip: '192.168.10.5' } },
       { action: 'LOGIN',          performedById: orbital.admin.id,    customerId: orbital.id,    metadata: { ip: '10.50.0.1' } },
-      { action: 'ORG_SUSPENDED',  performedById: saasAdmin.id, targetId: ironclad.id,  customerId: ironclad.id, metadata: { reason: 'Trial conversion pending' } },
-      { action: 'IMPERSONATE',    performedById: saasAdmin.id, targetId: vertex.admin.id, customerId: vertex.id, metadata: { reason: 'Health score investigation TKT-2041' } },
-      { action: 'PLAN_UPGRADED',  performedById: saasAdmin.id, targetId: bluesky.id, customerId: bluesky.id, metadata: { from: 'PRO', to: 'ENTERPRISE' } },
-      { action: 'MFA_ENFORCED',   performedById: saasAdmin.id, targetId: medcure.id, customerId: medcure.id, metadata: { reason: 'HIPAA compliance requirement' } },
-      { action: 'SERVICE_DISABLED', performedById: saasAdmin.id, targetId: vertex.id, customerId: vertex.id, metadata: { service: 'Vulnerability Mgmt', reason: 'Payment overdue 14 days' } },
+      { action: 'ORG_SUSPENDED',  performedById: sadmin.id, targetId: ironclad.id,  customerId: ironclad.id, metadata: { reason: 'Trial conversion pending' } },
+      { action: 'IMPERSONATE',    performedById: sadmin.id, targetId: vertex.admin.id, customerId: vertex.id, metadata: { reason: 'Health score investigation TKT-2041' } },
+      { action: 'PLAN_UPGRADED',  performedById: administrator.id, targetId: bluesky.id, customerId: bluesky.id, metadata: { from: 'PRO', to: 'ENTERPRISE' } },
+      { action: 'MFA_ENFORCED',   performedById: administrator.id, targetId: medcure.id, customerId: medcure.id, metadata: { reason: 'HIPAA compliance requirement' } },
+      { action: 'SERVICE_DISABLED', performedById: sadmin.id, targetId: vertex.id, customerId: vertex.id, metadata: { service: 'Vulnerability Mgmt', reason: 'Payment overdue 14 days' } },
     ],
   });
   console.log('📝 Created audit trail entries');
@@ -530,10 +539,11 @@ async function main() {
   // ─── Summary ────────────────────────────────────────────────────────────────
   const totalACV = orgSpecs.reduce((s, o) => s + o.contractValue, 0);
   console.log('\n' + '─'.repeat(72));
-  console.log('🎉 Tech cybersecurity platform seeded with 3-tier RBAC!\n');
-  console.log('  Roles  →  SAAS_ADMIN  >  ORG_ADMIN  >  USER\n');
-  console.log('  Super Admin');
-  console.log('    SAAS_ADMIN  admin@platform.com         SaasAdmin1!\n');
+  console.log('🎉 Tech cybersecurity platform seeded with 4-tier RBAC!\n');
+  console.log('  Roles  →  ADMINISTRATOR  >  SADMIN  >  ORG_ADMIN  >  USER\n');
+  console.log('  Platform Admins');
+  console.log('    ADMINISTRATOR  superadmin@platform.com    SuperAdmin1!');
+  console.log('    SADMIN         admin@platform.com         SaasAdmin1!\n');
   console.log('  Organization Admins  (all use password "Admin1234!")');
   for (const o of created) {
     console.log(`    ORG_ADMIN   ${o.admin.email.padEnd(34)} [${o.name}]`);

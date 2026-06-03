@@ -39,7 +39,7 @@ export default function RegisterPage() {
     setLoading(true);
     try {
       await authApi.register(result.data);
-      router.push('/dashboard');
+      router.push('/login?registered=1');
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Registration failed';
       setServerError(msg);

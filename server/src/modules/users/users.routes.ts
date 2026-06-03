@@ -7,9 +7,9 @@ const router = Router();
 router.get('/me', usersController.getMe);
 router.patch('/me', usersController.updateMe);
 
-router.get('/', requireRole('ORG_ADMIN', 'SAAS_ADMIN'), usersController.listUsers);
-router.post('/invite', requireRole('ORG_ADMIN', 'SAAS_ADMIN'), usersController.inviteUser);
-router.patch('/:id/role', requireRole('ORG_ADMIN', 'SAAS_ADMIN'), usersController.changeRole);
-router.delete('/:id', requireRole('ORG_ADMIN', 'SAAS_ADMIN'), usersController.removeUser);
+router.get('/', requireRole('ORG_ADMIN', 'SADMIN', 'ADMINISTRATOR'), usersController.listUsers);
+router.post('/invite', requireRole('ORG_ADMIN', 'SADMIN', 'ADMINISTRATOR'), usersController.inviteUser);
+router.patch('/:id/role', requireRole('ORG_ADMIN', 'SADMIN', 'ADMINISTRATOR'), usersController.changeRole);
+router.delete('/:id', requireRole('ORG_ADMIN', 'SADMIN', 'ADMINISTRATOR'), usersController.removeUser);
 
 export default router;

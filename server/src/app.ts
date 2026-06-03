@@ -54,8 +54,8 @@ app.use('/api/organizations', withTenant, orgsRoutes);
 app.use('/api/dashboard', withTenant, dashboardRoutes);
 app.use('/api/chat', withTenant, chatRoutes);
 
-// SaaS admin — SAAS_ADMIN role required, no tenant scope (global access)
-app.use('/api/saas-admin', requireRole('SAAS_ADMIN'), saasAdminRoutes);
+// Sadmin / Administrator — platform-level access, no tenant scope
+app.use('/api/saas-admin', requireRole('SADMIN', 'ADMINISTRATOR'), saasAdminRoutes);
 
 // ─── 404 handler ─────────────────────────────────────────────────────────────
 app.use((_req, res) => {

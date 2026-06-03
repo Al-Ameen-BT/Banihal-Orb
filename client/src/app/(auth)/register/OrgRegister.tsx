@@ -39,7 +39,7 @@ export default function RegisterPage() {
     setLoading(true);
     try {
       await authApi.register(result.data);
-      router.push('/dashboard');
+      router.push('/login?registered=1');
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Registration failed';
       setServerError(msg);
@@ -50,7 +50,6 @@ export default function RegisterPage() {
 
   const fields: Array<{ id: string; label: string; type?: string; autoComplete?: string; placeholder: string }> = [
     { id: 'organizationName', label: 'Organization name', placeholder: 'Organization Name' },
-    { id: 'domain', label: 'Organization email domain', placeholder: 'e.g. organization.com' },
     { id: 'name', label: 'Your full name', placeholder: 'Your Name' },
     { id: 'email', label: 'Work email', type: 'email', autoComplete: 'email', placeholder: 'you@organization.com' },
     { id: 'contactNumber', label: 'Contact number', type: 'tel', autoComplete: 'tel', placeholder: '+91 9876543210' },

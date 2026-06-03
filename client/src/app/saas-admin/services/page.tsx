@@ -36,7 +36,7 @@ export default function SaasServicesPage() {
   const [tab, setTab] = useState<'subscriptions' | 'catalog'>('subscriptions');
 
   return (
-    <RoleGuard allowedRoles={['SAAS_ADMIN']}>
+    <RoleGuard allowedRoles={['SADMIN', 'ADMINISTRATOR']}>
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">

@@ -75,7 +75,12 @@ export async function register(input: RegisterInput): Promise<TokenPair> {
   return { accessToken, refreshToken };
 }
 
-const PLATFORM_SLUG = 'banihal-platform-internal';
+// Derive a stable customer slug from a Sadmin's email domain.
+// e.g. admin@acompany.in → platform-acompany-in
+function domainSlug(email: string): string {
+  const domain = email.split('@')[1]?.toLowerCase().trim() ?? 'unknown';
+  return `platform-${domain.replace(/\./g, '-')}`;
+}
 
 export async function registerSaas(input: RegisterSaasInput): Promise<TokenPair> {
   const existing = await prisma.user.findUnique({ where: { email: input.email } });
@@ -85,30 +90,39 @@ export async function registerSaas(input: RegisterSaasInput): Promise<TokenPair>
 
   const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
 
-  let platform = await prisma.customer.findUnique({ where: { slug: PLATFORM_SLUG } });
-  if (!platform) {
-    platform = await prisma.customer.create({
+  // Group Sadmins by work-email domain: admin@acompany.in → customer slug "platform-acompany-in"
+  const slug = domainSlug(input.email);
+  const domain = input.email.split('@')[1]?.toLowerCase().trim() ?? 'unknown';
+
+  let domainCustomer = await prisma.customer.findUnique({ where: { slug } });
+  if (!domainCustomer) {
+    domainCustomer = await prisma.customer.create({
       data: {
-        name: 'Banihal Platform',
-        slug: PLATFORM_SLUG,
-        mailId: 'platform@banihal.com',
+        name: `${domain} Platform`,
+        slug,
+        mailId: input.email,
         contactPerson: input.name,
         contactNumber: input.contactNumber,
+        domain: deriveDomain(input.email),
       },
     });
   }
+
+  // First registrant under a domain becomes the ADMINISTRATOR; all subsequent ones are SADMIN.
+  const existingCount = await prisma.user.count({ where: { customerId: domainCustomer.id } });
+  const role = existingCount === 0 ? 'ADMINISTRATOR' : 'SADMIN';
 
   const user = await prisma.user.create({
     data: {
       email: input.email,
       passwordHash,
       name: input.name,
-      role: 'SAAS_ADMIN',
-      customerId: platform.id,
+      role,
+      customerId: domainCustomer.id,
     },
   });
 
-  const accessToken = signAccessToken(user.id, platform.id, user.role);
+  const accessToken = signAccessToken(user.id, domainCustomer.id, user.role);
   const refreshToken = await createRefreshToken(user.id);
   return { accessToken, refreshToken };
 }
@@ -185,7 +199,7 @@ export function signImpersonationToken(userId: string, customerId: string, role:
   });
 }
 
-// Run a callback outside tenant scope (for SAAS_ADMIN global queries)
+// Run a callback outside tenant scope (for SADMIN / ADMINISTRATOR global queries)
 export async function withoutTenantScope<T>(fn: () => Promise<T>): Promise<T> {
   return customerContext.run({} as { customerId: string }, fn);
 }

@@ -1,13 +1,30 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { useAuth } from '@/contexts/AuthContext';
 import { LoginSchema } from '@/lib/schemas';
 import GlowButton from '@/components/ui/GlowButton';
 import AmbientBackdrop from '@/components/ui/AmbientBackdrop';
+
+function RegistrationSuccessBanner() {
+  const searchParams = useSearchParams();
+  if (searchParams.get('registered') !== '1') return null;
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -4 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="flex items-center gap-2.5 px-3.5 py-2.5 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700"
+    >
+      <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+      </svg>
+      Account created successfully! Sign in with your new credentials.
+    </motion.div>
+  );
+}
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -64,6 +81,10 @@ export default function LoginPage() {
         {/* Card */ }
         <div className="card p-6">
           <form onSubmit={handleSubmit} className="space-y-5">
+            <Suspense>
+              <RegistrationSuccessBanner />
+            </Suspense>
+
             {serverError && (
               <motion.div
                 initial={{ opacity: 0, y: -4 }}

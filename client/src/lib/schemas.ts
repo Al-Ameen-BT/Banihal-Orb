@@ -49,8 +49,8 @@ export type LoginInput = z.infer<typeof LoginSchema>;
 export type UpdateMeInput = z.infer<typeof UpdateMeSchema>;
 export type InviteUserInput = z.infer<typeof InviteUserSchema>;
 
-// ─── 3-tier RBAC: USER → ORG_ADMIN → SAAS_ADMIN ─────────────────────────────
-export type Role = 'USER' | 'ORG_ADMIN' | 'SAAS_ADMIN';
+// ─── 4-tier RBAC: USER → ORG_ADMIN → SADMIN → ADMINISTRATOR ─────────────────
+export type Role = 'USER' | 'ORG_ADMIN' | 'SADMIN' | 'ADMINISTRATOR';
 export type Plan = 'FREE' | 'PRO' | 'ENTERPRISE';
 export type ServiceStatus = 'ACTIVE' | 'EXPIRING' | 'EXPIRED' | 'SUSPENDED';
 

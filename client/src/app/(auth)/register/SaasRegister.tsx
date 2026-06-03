@@ -38,7 +38,7 @@ export default function SaasRegister() {
     setLoading(true);
     try {
       await authApi.registerSaas(result.data);
-      router.push('/dashboard');
+      router.push('/login?registered=1');
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Registration failed';
       setServerError(msg);
@@ -68,8 +68,8 @@ export default function SaasRegister() {
           <div className="flex justify-center mb-6">
             <img src="/banihal-logo.png" alt="Banihal Logo" className="max-h-12 w-auto object-contain" />
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 mb-1 tracking-tight">Create SaaS Admin Account</h1>
-          <p className="text-sm text-slate-500">Platform administration access</p>
+          <h1 className="text-2xl font-bold text-slate-900 mb-1 tracking-tight">Create Sadmin Account</h1>
+          <p className="text-sm text-slate-500">Platform super-admin access</p>
         </div>
 
         {/* Card */}
