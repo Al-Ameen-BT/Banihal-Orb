@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface Message {
@@ -64,14 +64,107 @@ function pickReply(text: string, fallbackIdx: number): string {
   return fallbacks[fallbackIdx % fallbacks.length]!;
 }
 
-// Render bot replies with simple **bold** markdown
-function renderContent(text: string) {
-  const parts = text.split(/(\*\*[^*]+\*\*)/g);
-  return parts.map((p, i) =>
-    p.startsWith('**') && p.endsWith('**')
-      ? <strong key={i} className="font-semibold">{p.slice(2, -2)}</strong>
-      : <span key={i}>{p}</span>
-  );
+// ─── Lightweight markdown renderer for assistant replies ────────────────────
+// Supports fenced ```code blocks```, inline `code`, **bold**, and numbered /
+// bulleted lists — enough to match the agent's formatted output without a dep.
+
+// Inline: **bold** and `code`, keeping plain text between.
+function renderInline(text: string, keyPrefix: string): ReactNode[] {
+  return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((p, i) => {
+    if (!p) return null;
+    if (p.startsWith('**') && p.endsWith('**')) {
+      return <strong key={`${keyPrefix}-b${i}`} className="font-semibold">{p.slice(2, -2)}</strong>;
+    }
+    if (p.startsWith('`') && p.endsWith('`')) {
+      return (
+        <code key={`${keyPrefix}-c${i}`} className="px-1 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-[0.85em] text-slate-800">
+          {p.slice(1, -1)}
+        </code>
+      );
+    }
+    return <span key={`${keyPrefix}-t${i}`}>{p}</span>;
+  });
+}
+
+const ORDERED = /^\s*\d+\.\s+/;
+const BULLET = /^\s*[-*]\s+/;
+
+// A non-code text segment: groups consecutive list items, else paragraphs.
+function renderMarkdownText(text: string, keyPrefix: string): ReactNode[] {
+  const lines = text.split('\n');
+  const out: ReactNode[] = [];
+  let i = 0;
+  let k = 0;
+
+  while (i < lines.length) {
+    const line = lines[i] ?? '';
+
+    if (ORDERED.test(line)) {
+      const items: string[] = [];
+      while (i < lines.length && ORDERED.test(lines[i] ?? '')) { items.push((lines[i] ?? '').replace(ORDERED, '')); i++; }
+      out.push(
+        <ol key={`${keyPrefix}-ol${k++}`} className="list-decimal pl-5 my-1.5 space-y-1">
+          {items.map((it, j) => <li key={j}>{renderInline(it, `${keyPrefix}-ol${k}i${j}`)}</li>)}
+        </ol>,
+      );
+      continue;
+    }
+
+    if (BULLET.test(line)) {
+      const items: string[] = [];
+      while (i < lines.length && BULLET.test(lines[i] ?? '')) { items.push((lines[i] ?? '').replace(BULLET, '')); i++; }
+      out.push(
+        <ul key={`${keyPrefix}-ul${k++}`} className="list-disc pl-5 my-1.5 space-y-1">
+          {items.map((it, j) => <li key={j}>{renderInline(it, `${keyPrefix}-ul${k}i${j}`)}</li>)}
+        </ul>,
+      );
+      continue;
+    }
+
+    if (!line.trim()) { i++; continue; }
+
+    const para: string[] = [];
+    while (i < lines.length) {
+      const l = lines[i] ?? '';
+      if (!l.trim() || ORDERED.test(l) || BULLET.test(l)) break;
+      para.push(l);
+      i++;
+    }
+    out.push(
+      <p key={`${keyPrefix}-p${k++}`} className="my-1 first:mt-0 last:mb-0 leading-relaxed">
+        {para.map((pl, j) => <span key={j}>{renderInline(pl, `${keyPrefix}-p${k}l${j}`)}{j < para.length - 1 ? <br /> : null}</span>)}
+      </p>,
+    );
+  }
+
+  return out;
+}
+
+// Top level: split out fenced code blocks (odd segments), render the rest as markdown.
+function renderContent(text: string): ReactNode[] {
+  const segments = text.split(/```/);
+  const out: ReactNode[] = [];
+
+  segments.forEach((seg, idx) => {
+    if (idx % 2 === 1) {
+      // Strip an optional language hint / leading blank line, and the trailing newline.
+      let code = seg;
+      const nl = code.indexOf('\n');
+      if (nl !== -1 && /^[a-zA-Z0-9+#.-]*$/.test(code.slice(0, nl).trim())) {
+        code = code.slice(nl + 1);
+      }
+      code = code.replace(/\n$/, '');
+      out.push(
+        <pre key={`code${idx}`} className="my-2 p-3 rounded-lg bg-slate-50 border border-slate-200 overflow-x-auto">
+          <code className="font-mono text-xs text-slate-800 whitespace-pre">{code}</code>
+        </pre>,
+      );
+    } else if (seg.trim()) {
+      out.push(...renderMarkdownText(seg, `s${idx}`));
+    }
+  });
+
+  return out;
 }
 
 function formatTime(ts: number): string {
