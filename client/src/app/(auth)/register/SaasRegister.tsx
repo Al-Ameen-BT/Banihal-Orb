@@ -48,10 +48,10 @@ export default function SaasRegister() {
   }
 
   const fields: Array<{ id: string; label: string; type?: string; autoComplete?: string; placeholder: string }> = [
-    { id: 'name', label: 'Your full name', placeholder: 'Jane Smith' },
-    { id: 'email', label: 'Work email', type: 'email', autoComplete: 'email', placeholder: 'jane@banihal.com' },
-    { id: 'contactNumber', label: 'Contact number', type: 'tel', autoComplete: 'tel', placeholder: '+1 555 012 3456' },
-    { id: 'password', label: 'Password', type: 'password', autoComplete: 'new-password', placeholder: '12+ chars, mixed case, symbol' },
+    { id: 'name', label: 'Your full name', placeholder: 'Your Name' },
+    { id: 'email', label: 'Work email', type: 'email', autoComplete: 'email', placeholder: 'you@banihal.com' },
+    { id: 'contactNumber', label: 'Contact number', type: 'tel', autoComplete: 'tel', placeholder: '+91 9876543210' },
+    { id: 'password', label: 'Password', type: 'password', autoComplete: 'new-password', placeholder: 'New password' },
   ];
 
   return (
