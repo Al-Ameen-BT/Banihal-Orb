@@ -64,6 +64,7 @@ export default api;
 // Typed API helpers
 export const authApi = {
   register: (data: unknown) => api.post('/auth/register', data),
+  registerSaas: (data: unknown) => api.post('/auth/register-saas', data),
   login: (data: unknown) => api.post('/auth/login', data),
   logout: () => api.post('/auth/logout'),
 };

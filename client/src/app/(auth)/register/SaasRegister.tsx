@@ -5,11 +5,11 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { authApi } from '@/lib/api';
-import { RegisterSchema } from '@/lib/schemas';
+import { RegisterSaasSchema } from '@/lib/schemas';
 import GlowButton from '@/components/ui/GlowButton';
 import AmbientBackdrop from '@/components/ui/AmbientBackdrop';
 
-export default function RegisterPage() {
+export default function SaasRegister() {
   const router = useRouter();
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState('');
@@ -25,11 +25,10 @@ export default function RegisterPage() {
       name: fd.get('name') as string,
       email: fd.get('email') as string,
       password: fd.get('password') as string,
-      organizationName: fd.get('organizationName') as string,
       contactNumber: fd.get('contactNumber') as string,
     };
 
-    const result = RegisterSchema.safeParse(data);
+    const result = RegisterSaasSchema.safeParse(data);
     if (!result.success) {
       const flat = result.error.flatten().fieldErrors;
       setErrors(Object.fromEntries(Object.entries(flat).map(([k, v]) => [k, v?.[0] ?? ''])));
@@ -38,7 +37,7 @@ export default function RegisterPage() {
 
     setLoading(true);
     try {
-      await authApi.register(result.data);
+      await authApi.registerSaas(result.data);
       router.push('/dashboard');
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Registration failed';
@@ -50,7 +49,7 @@ export default function RegisterPage() {
 
   const fields: Array<{ id: string; label: string; type?: string; autoComplete?: string; placeholder: string }> = [
     { id: 'name', label: 'Your full name', placeholder: 'Jane Smith' },
-    { id: 'email', label: 'Work email', type: 'email', autoComplete: 'email', placeholder: 'jane@acme.com' },
+    { id: 'email', label: 'Work email', type: 'email', autoComplete: 'email', placeholder: 'jane@banihal.com' },
     { id: 'contactNumber', label: 'Contact number', type: 'tel', autoComplete: 'tel', placeholder: '+1 555 012 3456' },
     { id: 'password', label: 'Password', type: 'password', autoComplete: 'new-password', placeholder: '12+ chars, mixed case, symbol' },
   ];
@@ -69,8 +68,8 @@ export default function RegisterPage() {
           <div className="flex justify-center mb-6">
             <img src="/banihal-logo.png" alt="Banihal Logo" className="max-h-12 w-auto object-contain" />
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 mb-1 tracking-tight">Create an Account</h1>
-          <p className="text-sm text-slate-500">Start managing your operations</p>
+          <h1 className="text-2xl font-bold text-slate-900 mb-1 tracking-tight">Create SaaS Admin Account</h1>
+          <p className="text-sm text-slate-500">Platform administration access</p>
         </div>
 
         {/* Card */}
@@ -98,7 +97,7 @@ export default function RegisterPage() {
             ))}
 
             <GlowButton type="submit" loading={loading} className="w-full !mt-6">
-              {loading ? 'Creating organization…' : 'Create organization'}
+              {loading ? 'Creating account…' : 'Create admin account'}
             </GlowButton>
           </form>
         </div>
@@ -109,7 +108,7 @@ export default function RegisterPage() {
             Sign in
           </Link>
         </p>
-      </motion.div >
-    </div >
+      </motion.div>
+    </div>
   );
 }

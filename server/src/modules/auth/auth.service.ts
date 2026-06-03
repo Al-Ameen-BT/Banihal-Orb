@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import { Role } from '@prisma/client';
 import { prisma, customerContext } from '../../config/database';
 import { env } from '../../config/env';
-import type { RegisterInput, LoginInput } from './auth.schema';
+import type { RegisterInput, RegisterSaasInput, LoginInput } from './auth.schema';
 
 const BCRYPT_ROUNDS = 12;
 
@@ -71,6 +71,44 @@ export async function register(input: RegisterInput): Promise<TokenPair> {
 
   const user = customer.users[0]!;
   const accessToken = signAccessToken(user.id, customer.id, user.role);
+  const refreshToken = await createRefreshToken(user.id);
+  return { accessToken, refreshToken };
+}
+
+const PLATFORM_SLUG = 'banihal-platform-internal';
+
+export async function registerSaas(input: RegisterSaasInput): Promise<TokenPair> {
+  const existing = await prisma.user.findUnique({ where: { email: input.email } });
+  if (existing) {
+    throw Object.assign(new Error('Email already registered'), { status: 409, code: 'EMAIL_EXISTS' });
+  }
+
+  const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
+
+  let platform = await prisma.customer.findUnique({ where: { slug: PLATFORM_SLUG } });
+  if (!platform) {
+    platform = await prisma.customer.create({
+      data: {
+        name: 'Banihal Platform',
+        slug: PLATFORM_SLUG,
+        mailId: 'platform@banihal.com',
+        contactPerson: input.name,
+        contactNumber: input.contactNumber,
+      },
+    });
+  }
+
+  const user = await prisma.user.create({
+    data: {
+      email: input.email,
+      passwordHash,
+      name: input.name,
+      role: 'SAAS_ADMIN',
+      customerId: platform.id,
+    },
+  });
+
+  const accessToken = signAccessToken(user.id, platform.id, user.role);
   const refreshToken = await createRefreshToken(user.id);
   return { accessToken, refreshToken };
 }
