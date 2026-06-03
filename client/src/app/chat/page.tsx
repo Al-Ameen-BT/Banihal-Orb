@@ -18,9 +18,26 @@ export default function ChatPage() {
     staleTime: 60_000,
   });
 
-  async function handleMessage(text: string, history: ChatTurn[]): Promise<string> {
-    const { data } = await chatApi.send(text, history);
-    return data.reply;
+  async function handleMessage(
+    text: string,
+    history: ChatTurn[],
+    onToken?: (token: string) => void,
+  ): Promise<string> {
+    return new Promise((resolve, reject) => {
+      let fullReply = '';
+      chatApi
+        .stream(
+          text,
+          history,
+          (token) => {
+            fullReply += token;
+            onToken?.(token);
+          },
+          () => resolve(fullReply),
+          (msg) => reject(new Error(msg)),
+        )
+        .catch(reject);
+    });
   }
 
   return (

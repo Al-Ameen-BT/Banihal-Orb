@@ -16,17 +16,21 @@ interface ChatTurn {
 }
 
 interface ChatbotProps {
-  /** Optional — wire to a real backend (LLM, ticketing agent, etc.). Receives prior turns for context. */
-  onUserMessage?: (text: string, history: ChatTurn[]) => Promise<string>;
-  /** Optional — personalize the greeting. */
+  /**
+   * Wire to a real backend. Receives prior turns for context.
+   * If onToken is provided, the component renders tokens progressively as they arrive.
+   */
+  onUserMessage?: (
+    text: string,
+    history: ChatTurn[],
+    onToken?: (token: string) => void,
+  ) => Promise<string>;
   userName?: string;
   orgName?: string;
-  /** Optional — override the default height. Pass `h-full`, `flex-1`, etc. */
   className?: string;
 }
 
-// Keyword-aware canned replies for the demo. Replace with a real LLM call later
-// by passing the `onUserMessage` prop.
+// Keyword-aware canned replies for demo/offline mode (no onUserMessage prop)
 function pickReply(text: string, fallbackIdx: number): string {
   const t = text.toLowerCase();
 
@@ -52,7 +56,6 @@ function pickReply(text: string, fallbackIdx: number): string {
     return "Take care. If anything urgent comes up, the ticket form is always available — and a human is on the other end.";
   }
 
-  // Rotation fallback for unknown queries
   const fallbacks = [
     "Got it — I've noted that. I'm a demo assistant, so for anything complex I'd recommend opening a ticket so a security engineer can follow up.",
     "Thanks for the message. For specific questions about your services or account, your Org Admin is your fastest path. For incidents or technical issues, the ticket form is right here.",
@@ -64,9 +67,10 @@ function pickReply(text: string, fallbackIdx: number): string {
 // Render bot replies with simple **bold** markdown
 function renderContent(text: string) {
   const parts = text.split(/(\*\*[^*]+\*\*)/g);
-  return parts.map((p, i) => p.startsWith('**') && p.endsWith('**')
-    ? <strong key={i} className="font-semibold">{p.slice(2, -2)}</strong>
-    : <span key={i}>{p}</span>
+  return parts.map((p, i) =>
+    p.startsWith('**') && p.endsWith('**')
+      ? <strong key={i} className="font-semibold">{p.slice(2, -2)}</strong>
+      : <span key={i}>{p}</span>
   );
 }
 
@@ -89,11 +93,12 @@ export default function Chatbot({ onUserMessage, userName, orgName, className }:
   }]);
   const [input, setInput] = useState('');
   const [typing, setTyping] = useState(false);
+  const [streamingMsgId, setStreamingMsgId] = useState<string | null>(null);
   const fallbackCounter = useRef(0);
+  const streamingIdRef = useRef<string>('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Auto-scroll to bottom on new messages or typing indicator
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -109,26 +114,63 @@ export default function Chatbot({ onUserMessage, userName, orgName, className }:
     setInput('');
     setTyping(true);
 
-    // Real backend call if provided, otherwise local canned reply with a small delay
-    let replyText: string;
+    const history: ChatTurn[] = messages
+      .filter((m) => m.id !== 'bot-greet')
+      .map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }));
+
     try {
       if (onUserMessage) {
-        // Build prior turns (exclude the greeting and the message we just added)
-        const history: ChatTurn[] = messages
-          .filter((m) => m.id !== 'bot-greet')
-          .map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }));
-        replyText = await onUserMessage(text, history);
+        let firstToken = true;
+
+        await onUserMessage(text, history, (token) => {
+          if (firstToken) {
+            firstToken = false;
+            const id = `b-${Date.now()}`;
+            streamingIdRef.current = id;
+            setStreamingMsgId(id);
+            setMessages((prev) => [...prev, { id, role: 'bot', content: token, timestamp: Date.now() }]);
+            setTyping(false);
+          } else {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === streamingIdRef.current ? { ...m, content: m.content + token } : m,
+              ),
+            );
+          }
+        });
+
+        // Handle non-streaming fallback: onUserMessage resolved but no tokens were fired
+        if (firstToken) {
+          setMessages((prev) => [...prev, {
+            id: `b-${Date.now()}`,
+            role: 'bot',
+            content: "Sorry — the assistant returned an empty response. Please try again.",
+            timestamp: Date.now(),
+          }]);
+          setTyping(false);
+        }
       } else {
+        // Demo/offline mode
         await new Promise((r) => setTimeout(r, 700 + Math.random() * 500));
-        replyText = pickReply(text, fallbackCounter.current++);
+        const replyText = pickReply(text, fallbackCounter.current++);
+        setMessages((prev) => [...prev, { id: `b-${Date.now()}`, role: 'bot', content: replyText, timestamp: Date.now() }]);
+        setTyping(false);
       }
     } catch {
-      replyText = "Sorry — I hit an error reaching the assistant. Please try again, or open a ticket if it's urgent.";
+      const errMsg = "Sorry — I hit an error reaching the assistant. Please try again, or open a ticket if it's urgent.";
+      if (streamingIdRef.current) {
+        setMessages((prev) =>
+          prev.map((m) => m.id === streamingIdRef.current ? { ...m, content: errMsg } : m),
+        );
+      } else {
+        setMessages((prev) => [...prev, { id: `b-${Date.now()}`, role: 'bot', content: errMsg, timestamp: Date.now() }]);
+        setTyping(false);
+      }
+    } finally {
+      setStreamingMsgId(null);
+      streamingIdRef.current = '';
+      inputRef.current?.focus();
     }
-
-    setMessages((prev) => [...prev, { id: `b-${Date.now()}`, role: 'bot', content: replyText, timestamp: Date.now() }]);
-    setTyping(false);
-    inputRef.current?.focus();
   }
 
   const quickPrompts = [
@@ -136,6 +178,8 @@ export default function Chatbot({ onUserMessage, userName, orgName, className }:
     "What services are expiring?",
     "Who is my CSM?",
   ];
+
+  const isLive = !!onUserMessage;
 
   return (
     <div className={`card flex flex-col overflow-hidden ${className ?? 'h-[640px]'}`}>
@@ -151,7 +195,7 @@ export default function Chatbot({ onUserMessage, userName, orgName, className }:
           <h3 className="text-base font-semibold text-slate-900 leading-tight">Tech Assistant</h3>
           <p className="text-xs text-slate-500">Online · usually responds instantly</p>
         </div>
-        {onUserMessage ? (
+        {isLive ? (
           <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-600 px-2 py-1 bg-emerald-50 rounded-md">Live</span>
         ) : (
           <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 px-2 py-1 bg-slate-100 rounded-md">Demo</span>
@@ -183,6 +227,10 @@ export default function Chatbot({ onUserMessage, userName, orgName, className }:
                     : 'bg-white border border-slate-200 text-slate-800 rounded-bl-md shadow-xs'
                 }`}>
                   {renderContent(msg.content)}
+                  {/* Blinking cursor while this message is still streaming */}
+                  {streamingMsgId === msg.id && (
+                    <span className="inline-block w-0.5 h-3.5 bg-slate-400 opacity-75 animate-pulse ml-0.5 align-middle rounded-full" />
+                  )}
                 </div>
                 <p className={`text-[10px] text-slate-400 mt-1 ${msg.role === 'user' ? 'text-right pr-1' : 'pl-1'}`}>
                   {formatTime(msg.timestamp)}
@@ -192,7 +240,7 @@ export default function Chatbot({ onUserMessage, userName, orgName, className }:
           ))}
         </AnimatePresence>
 
-        {/* Typing indicator */}
+        {/* Typing indicator — shown while waiting for the first token */}
         <AnimatePresence>
           {typing && (
             <motion.div
@@ -216,7 +264,7 @@ export default function Chatbot({ onUserMessage, userName, orgName, className }:
         </AnimatePresence>
       </div>
 
-      {/* Quick prompts (shown only when conversation is just the greeting) */}
+      {/* Quick prompts — shown only on the initial greeting */}
       {messages.length === 1 && !typing && (
         <div className="px-5 pb-3 flex flex-wrap gap-2 flex-shrink-0">
           {quickPrompts.map((q) => (
@@ -243,12 +291,12 @@ export default function Chatbot({ onUserMessage, userName, orgName, className }:
           onChange={(e) => setInput(e.target.value)}
           placeholder="Ask a question or describe an issue…"
           className="flex-1 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-brand focus:bg-white transition-colors"
-          disabled={typing}
+          disabled={typing || !!streamingMsgId}
           maxLength={500}
         />
         <button
           type="submit"
-          disabled={!input.trim() || typing}
+          disabled={!input.trim() || typing || !!streamingMsgId}
           className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-brand text-white hover:bg-brand-700 active:bg-brand-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
           aria-label="Send message"
         >

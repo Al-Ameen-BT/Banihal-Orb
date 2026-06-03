@@ -95,8 +95,76 @@ export interface ChatTurn {
 }
 
 export const chatApi = {
-  send: (message: string, history: ChatTurn[] = []) =>
-    api.post<{ reply: string }>('/chat', { message, history }),
+  stream: async (
+    message: string,
+    history: ChatTurn[] = [],
+    onToken: (token: string) => void,
+    onDone?: () => void,
+    onError?: (msg: string) => void,
+  ): Promise<void> => {
+    let response: Response;
+    try {
+      response = await fetch(`${BASE}/api/chat`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, history }),
+      });
+    } catch {
+      onError?.('The assistant is unavailable. Please try again.');
+      onDone?.();
+      return;
+    }
+
+    if (!response.ok || !response.body) {
+      onError?.(`Request failed (${response.status})`);
+      onDone?.();
+      return;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const rawLine of lines) {
+          const line = rawLine.trimEnd();
+          if (!line.startsWith('data:')) continue;
+
+          const dataStr = line.slice(5).trim();
+          if (!dataStr) continue;
+
+          if (dataStr === '[DONE]') {
+            onDone?.();
+            return;
+          }
+
+          try {
+            const event = JSON.parse(dataStr) as { token?: string; error?: string };
+            if (event.error) {
+              onError?.(event.error);
+              return;
+            }
+            if (event.token) onToken(event.token);
+          } catch {
+            /* ignore keep-alives / non-JSON frames */
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    onDone?.();
+  },
 };
 
 export const saasAdminApi = {

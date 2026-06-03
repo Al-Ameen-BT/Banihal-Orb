@@ -1,3 +1,4 @@
+import type { Request, Response } from 'express';
 import { env } from '../../config/env';
 import type { ChatMessage } from './chat.schema';
 
@@ -7,76 +8,105 @@ interface AgentEvent {
 }
 
 /**
- * Proxy a chat turn to the Analytics Agent's SSE endpoint, consume the token
- * stream server-side, and return the full assembled reply.
+ * Proxy a chat turn to the Analytics Agent's SSE endpoint and pipe the token
+ * stream directly to the Express response so the client sees tokens progressively.
  *
- * The agent always streams (`text/event-stream`) with events of the form:
- *   data: {"token": "..."}        ← appended to the answer
- *   data: {"error": "..."}        ← surfaced as a failure
- *   data: [DONE]                  ← end of stream
- *
- * We buffer the whole stream (read it to completion) and return one reply, so
- * the client `/api/chat` contract ({ reply }) is unchanged.
+ * Agent SSE protocol:
+ *   data: {"token": "..."}        ← forwarded to client
+ *   data: {"error": "..."}        ← forwarded as error event, then [DONE]
+ *   data: [DONE]                  ← forwarded to client, stream ends
  */
-export async function generateReply(message: string, history: ChatMessage[]): Promise<string> {
-  // Abort if the agent is slow/unreachable so the request doesn't hang.
+export async function streamToResponse(
+  message: string,
+  history: ChatMessage[],
+  req: Request,
+  res: Response,
+): Promise<void> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 90_000);
 
-  let res: globalThis.Response;
+  // Clean up when the client disconnects early
+  req.on('close', () => controller.abort());
+
   try {
-    res = await fetch(`${env.AGENT_URL}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, history }),
-      signal: controller.signal,
-    });
-  } catch (err) {
-    const aborted = err instanceof Error && err.name === 'AbortError';
-    throw Object.assign(new Error(aborted ? 'The assistant timed out' : 'The assistant is unavailable'), {
-      status: 503,
-      code: 'AGENT_UNAVAILABLE',
-    });
+    let agentRes: globalThis.Response;
+    try {
+      agentRes = await fetch(`${env.AGENT_URL}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, history }),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      const aborted = err instanceof Error && err.name === 'AbortError';
+      throw Object.assign(
+        new Error(aborted ? 'The assistant timed out' : 'The assistant is unavailable'),
+        { status: 503, code: 'AGENT_UNAVAILABLE' },
+      );
+    }
+
+    if (!agentRes.ok) {
+      throw Object.assign(new Error(`Assistant backend error (${agentRes.status})`), {
+        status: 503,
+        code: 'AGENT_ERROR',
+      });
+    }
+
+    if (!agentRes.body) {
+      throw Object.assign(new Error('Agent returned no body'), { status: 502, code: 'AGENT_EMPTY' });
+    }
+
+    const reader = agentRes.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const rawLine of lines) {
+          const line = rawLine.trimEnd();
+          if (!line.startsWith('data:')) continue;
+
+          const dataStr = line.slice(5).trim();
+          if (!dataStr) continue;
+
+          if (dataStr === '[DONE]') {
+            res.write('data: [DONE]\n\n');
+            return;
+          }
+
+          let event: AgentEvent;
+          try {
+            event = JSON.parse(dataStr) as AgentEvent;
+          } catch {
+            continue;
+          }
+
+          if (event.error) {
+            res.write(`data: ${JSON.stringify({ error: event.error })}\n\n`);
+            res.write('data: [DONE]\n\n');
+            return;
+          }
+
+          if (event.token) {
+            res.write(`data: ${JSON.stringify({ token: event.token })}\n\n`);
+          }
+        }
+      }
+
+      // Stream ended without an explicit [DONE] frame
+      res.write('data: [DONE]\n\n');
+    } finally {
+      reader.releaseLock();
+    }
   } finally {
     clearTimeout(timeout);
+    if (!res.writableEnded) res.end();
   }
-
-  if (!res.ok) {
-    throw Object.assign(new Error(`Assistant backend error (${res.status})`), {
-      status: 503,
-      code: 'AGENT_ERROR',
-    });
-  }
-
-  // Buffered: wait for the full event-stream, then parse every `data:` line.
-  const raw = await res.text();
-  let reply = '';
-
-  for (const rawLine of raw.split(/\r?\n/)) {
-    const line = rawLine.trimEnd();
-    if (!line.startsWith('data:')) continue;
-
-    const dataStr = line.slice(5).trim();
-    if (!dataStr) continue;
-    if (dataStr === '[DONE]') break;
-
-    let event: AgentEvent;
-    try {
-      event = JSON.parse(dataStr) as AgentEvent;
-    } catch {
-      continue; // ignore keep-alives / non-JSON frames
-    }
-
-    if (event.error) {
-      throw Object.assign(new Error('The assistant returned an error'), { status: 502, code: 'AGENT_STREAM_ERROR' });
-    }
-    if (event.token) reply += event.token;
-  }
-
-  reply = reply.trim();
-  if (!reply) {
-    throw Object.assign(new Error('The assistant returned an empty response'), { status: 502, code: 'AGENT_EMPTY' });
-  }
-
-  return reply;
 }
