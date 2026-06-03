@@ -86,12 +86,24 @@ function renderInline(text: string, keyPrefix: string): ReactNode[] {
   });
 }
 
-const ORDERED = /^\s*\d+\.\s+/;
-const BULLET = /^\s*[-*]\s+/;
+const ORDERED = /^\s*(\d+)\.\s+(.*)$/;
+const BULLET = /^\s*[-*]\s+(.*)$/;
 
-// A non-code text segment: groups consecutive list items, else paragraphs.
-function renderMarkdownText(text: string, keyPrefix: string): ReactNode[] {
-  const lines = text.split('\n');
+// The agent often emits the whole answer on one line (steps and code fences
+// inline). Insert line breaks so the structure parser can see lists/code blocks.
+function normalizeMarkdown(text: string): string {
+  let t = text.replace(/\r\n/g, '\n');
+  // Put fenced-code delimiters on their own lines (keep the language on the opener).
+  t = t.replace(/```([a-zA-Z0-9+#.\-]*)/g, '\n```$1\n');
+  // Break inline numbered steps ("… 2. Foo") onto their own lines.
+  t = t.replace(/([^\n])\s+(\d+\.\s+)/g, '$1\n$2');
+  // Break inline " - " bullets onto their own lines (dashes inside words are safe).
+  t = t.replace(/([^\n])\s+([-*]\s+)/g, '$1\n$2');
+  return t.replace(/\n{3,}/g, '\n\n');
+}
+
+function renderContent(text: string): ReactNode[] {
+  const lines = normalizeMarkdown(text).split('\n');
   const out: ReactNode[] = [];
   let i = 0;
   let k = 0;
@@ -99,23 +111,61 @@ function renderMarkdownText(text: string, keyPrefix: string): ReactNode[] {
   while (i < lines.length) {
     const line = lines[i] ?? '';
 
-    if (ORDERED.test(line)) {
-      const items: string[] = [];
-      while (i < lines.length && ORDERED.test(lines[i] ?? '')) { items.push((lines[i] ?? '').replace(ORDERED, '')); i++; }
+    // Fenced code block
+    if (line.trimStart().startsWith('```')) {
+      i++; // skip opening fence (language hint ignored — no syntax highlighting)
+      const codeLines: string[] = [];
+      while (i < lines.length && !(lines[i] ?? '').trimStart().startsWith('```')) {
+        codeLines.push(lines[i] ?? '');
+        i++;
+      }
+      i++; // skip closing fence
+      const code = codeLines.join('\n').replace(/^\n+|\n+$/g, '');
+      if (code.trim()) {
+        out.push(
+          <pre key={`code${k++}`} className="my-2 p-3 rounded-lg bg-slate-50 border border-slate-200 overflow-x-auto">
+            <code className="font-mono text-xs text-slate-800 whitespace-pre-wrap break-words">{code}</code>
+          </pre>,
+        );
+      }
+      continue;
+    }
+
+    // Ordered list — preserve the real numbers so they stay correct even if a
+    // code block interrupts the sequence.
+    let om = line.match(ORDERED);
+    if (om) {
+      const items: Array<{ n: string; text: string }> = [];
+      while (om) {
+        items.push({ n: om[1] ?? '', text: om[2] ?? '' });
+        i++;
+        om = i < lines.length ? (lines[i] ?? '').match(ORDERED) : null;
+      }
       out.push(
-        <ol key={`${keyPrefix}-ol${k++}`} className="list-decimal pl-5 my-1.5 space-y-1">
-          {items.map((it, j) => <li key={j}>{renderInline(it, `${keyPrefix}-ol${k}i${j}`)}</li>)}
-        </ol>,
+        <div key={`ol${k++}`} className="my-1.5 space-y-1.5">
+          {items.map((it, j) => (
+            <div key={j} className="flex gap-2">
+              <span className="font-semibold text-slate-500 tabular-nums flex-shrink-0">{it.n}.</span>
+              <span className="flex-1">{renderInline(it.text, `ol${k}i${j}`)}</span>
+            </div>
+          ))}
+        </div>,
       );
       continue;
     }
 
-    if (BULLET.test(line)) {
+    // Bulleted list
+    let bm = line.match(BULLET);
+    if (bm) {
       const items: string[] = [];
-      while (i < lines.length && BULLET.test(lines[i] ?? '')) { items.push((lines[i] ?? '').replace(BULLET, '')); i++; }
+      while (bm) {
+        items.push(bm[1] ?? '');
+        i++;
+        bm = i < lines.length ? (lines[i] ?? '').match(BULLET) : null;
+      }
       out.push(
-        <ul key={`${keyPrefix}-ul${k++}`} className="list-disc pl-5 my-1.5 space-y-1">
-          {items.map((it, j) => <li key={j}>{renderInline(it, `${keyPrefix}-ul${k}i${j}`)}</li>)}
+        <ul key={`ul${k++}`} className="list-disc pl-5 my-1.5 space-y-1">
+          {items.map((it, j) => <li key={j}>{renderInline(it, `ul${k}i${j}`)}</li>)}
         </ul>,
       );
       continue;
@@ -123,46 +173,20 @@ function renderMarkdownText(text: string, keyPrefix: string): ReactNode[] {
 
     if (!line.trim()) { i++; continue; }
 
+    // Paragraph — gather consecutive plain lines.
     const para: string[] = [];
     while (i < lines.length) {
       const l = lines[i] ?? '';
-      if (!l.trim() || ORDERED.test(l) || BULLET.test(l)) break;
+      if (!l.trim() || l.trimStart().startsWith('```') || ORDERED.test(l) || BULLET.test(l)) break;
       para.push(l);
       i++;
     }
     out.push(
-      <p key={`${keyPrefix}-p${k++}`} className="my-1 first:mt-0 last:mb-0 leading-relaxed">
-        {para.map((pl, j) => <span key={j}>{renderInline(pl, `${keyPrefix}-p${k}l${j}`)}{j < para.length - 1 ? <br /> : null}</span>)}
+      <p key={`p${k++}`} className="my-1 first:mt-0 last:mb-0 leading-relaxed">
+        {para.map((pl, j) => <span key={j}>{renderInline(pl, `p${k}l${j}`)}{j < para.length - 1 ? <br /> : null}</span>)}
       </p>,
     );
   }
-
-  return out;
-}
-
-// Top level: split out fenced code blocks (odd segments), render the rest as markdown.
-function renderContent(text: string): ReactNode[] {
-  const segments = text.split(/```/);
-  const out: ReactNode[] = [];
-
-  segments.forEach((seg, idx) => {
-    if (idx % 2 === 1) {
-      // Strip an optional language hint / leading blank line, and the trailing newline.
-      let code = seg;
-      const nl = code.indexOf('\n');
-      if (nl !== -1 && /^[a-zA-Z0-9+#.-]*$/.test(code.slice(0, nl).trim())) {
-        code = code.slice(nl + 1);
-      }
-      code = code.replace(/\n$/, '');
-      out.push(
-        <pre key={`code${idx}`} className="my-2 p-3 rounded-lg bg-slate-50 border border-slate-200 overflow-x-auto">
-          <code className="font-mono text-xs text-slate-800 whitespace-pre">{code}</code>
-        </pre>,
-      );
-    } else if (seg.trim()) {
-      out.push(...renderMarkdownText(seg, `s${idx}`));
-    }
-  });
 
   return out;
 }
