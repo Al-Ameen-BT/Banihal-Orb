@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { UpdateMeSchema, InviteUserSchema, ChangeRoleSchema, PaginationSchema } from './users.schema';
+import { UpdateMeSchema, InviteUserSchema, ChangeRoleSchema, PaginationSchema, ChangePasswordSchema } from './users.schema';
 import * as usersService from './users.service';
 
 export async function getMe(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -14,6 +14,14 @@ export async function updateMe(req: Request, res: Response, next: NextFunction):
     const input = UpdateMeSchema.parse(req.body);
     const user = await usersService.updateMe(req.user.userId, input);
     res.json(user);
+  } catch (err) { next(err); }
+}
+
+export async function changeMyPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = ChangePasswordSchema.parse(req.body);
+    await usersService.changeMyPassword(req.user.userId, input);
+    res.json({ message: 'Password updated successfully' });
   } catch (err) { next(err); }
 }
 

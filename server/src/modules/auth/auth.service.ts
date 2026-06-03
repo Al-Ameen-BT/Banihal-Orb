@@ -144,6 +144,12 @@ export async function login(input: LoginInput): Promise<TokenPair> {
 
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
 
+  if (user.role === 'SADMIN' || user.role === 'ADMINISTRATOR') {
+    await prisma.auditLog.create({
+      data: { action: 'LOGIN', performedById: user.id, customerId: user.customerId },
+    }).catch(() => {});
+  }
+
   const accessToken = signAccessToken(user.id, user.customerId, user.role);
   const refreshToken = await createRefreshToken(user.id);
   return { accessToken, refreshToken };
@@ -178,9 +184,9 @@ export async function refreshTokens(rawRefreshToken: string): Promise<TokenPair>
 }
 
 export async function logout(rawRefreshToken: string): Promise<void> {
-  // Find and delete the matching token
   const tokens = await prisma.refreshToken.findMany({
     where: { expiresAt: { gt: new Date() } },
+    include: { user: { select: { id: true, customerId: true, role: true } } },
     take: 500,
   });
 
@@ -188,6 +194,11 @@ export async function logout(rawRefreshToken: string): Promise<void> {
     const ok = await bcrypt.compare(rawRefreshToken, t.tokenHash);
     if (ok) {
       await prisma.refreshToken.delete({ where: { id: t.id } });
+      if (t.user.role === 'SADMIN' || t.user.role === 'ADMINISTRATOR') {
+        await prisma.auditLog.create({
+          data: { action: 'LOGOUT', performedById: t.user.id, customerId: t.user.customerId },
+        }).catch(() => {});
+      }
       return;
     }
   }

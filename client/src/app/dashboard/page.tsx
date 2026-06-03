@@ -47,7 +47,7 @@ function ServiceCard({ svc }: { svc: OrganizationService }) {
       </div>
       <div className="flex items-center justify-between pt-3 border-t border-slate-100">
         <span className={`text-xs font-mono tabular-nums font-semibold ${renewalColor}`}>{renewalLabel}</span>
-        <span className="text-xs font-mono tabular-nums text-slate-500">${svc.monthlyPrice.toLocaleString()}/mo</span>
+        <span className="text-xs font-mono tabular-nums text-slate-500">₹{svc.monthlyPrice.toLocaleString()}/mo</span>
       </div>
       {!svc.enabled && (
         <p className="mt-2 text-[11px] font-medium text-red-600">⚠ Disabled by platform admin</p>
@@ -125,7 +125,7 @@ export default function UserDashboard() {
                 <StatTile label="Active Services" value={activeCount}  tone="emerald" />
                 <StatTile label="Expiring Soon"   value={expiringCount} tone="amber" />
                 <StatTile label="Expired"         value={expiredCount}  tone="red" />
-                <StatTile label="Monthly Cost"    value={`$${(servicesData?.monthlyTotal ?? 0).toLocaleString()}`} tone="brand" />
+                <StatTile label="Monthly Cost"    value={`₹${(servicesData?.monthlyTotal ?? 0).toLocaleString()}`} tone="brand" />
               </div>
             </motion.div>
 

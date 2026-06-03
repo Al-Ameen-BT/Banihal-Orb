@@ -215,3 +215,11 @@ export async function resetSadminPassword(req: Request, res: Response, next: Nex
     res.json(result);
   } catch (err) { next(err); }
 }
+
+export async function getSadminActivity(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const limit = Math.min(Number(req.query['limit'] ?? 60), 100);
+    const result = await saasAdminService.getSadminActivity(limit);
+    res.json(result);
+  } catch (err) { next(err); }
+}

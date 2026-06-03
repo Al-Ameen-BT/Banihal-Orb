@@ -439,8 +439,8 @@ export default function OrgDetailPage() {
             {/* KPI strip */}
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.04 }}>
               <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-                <StatCard label="Monthly Revenue" value={`$${monthlyRevenue.toLocaleString()}`} tone="emerald" />
-                <StatCard label="Annual Contract" value={`$${org.contractValue.toLocaleString()}`} tone="violet" />
+                <StatCard label="Monthly Revenue" value={`₹${monthlyRevenue.toLocaleString()}`} tone="emerald" />
+                <StatCard label="Annual Contract" value={`₹${org.contractValue.toLocaleString()}`} tone="violet" />
                 <StatCard label="Services" value={org._count.services} tone="brand" />
                 <StatCard label="Users" value={org._count.users} tone="amber" />
                 <StatCard label="Health Score" value={org.healthScore} tone={org.healthScore >= 90 ? 'emerald' : org.healthScore >= 75 ? 'amber' : 'red'} />
@@ -472,7 +472,7 @@ export default function OrgDetailPage() {
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.13 }}>
               <div className="flex items-baseline justify-between mb-4">
                 <h2 className="text-base font-semibold text-slate-900">Purchased Services</h2>
-                <span className="text-xs text-slate-400 tabular-nums">${monthlyRevenue.toLocaleString()}/mo  ·  {org.services.length} subscriptions</span>
+                <span className="text-xs text-slate-400 tabular-nums">₹{monthlyRevenue.toLocaleString()}/mo  ·  {org.services.length} subscriptions</span>
               </div>
               {/* Assign a catalog service to this customer */}
               <div className="card p-4 mb-4 flex flex-wrap items-end gap-3">
@@ -537,7 +537,7 @@ export default function OrgDetailPage() {
                               <p className="text-[11px] text-slate-400 mt-0.5">{new Date(svc.endDate).toLocaleDateString()}</p>
                             </td>
                             <td className="px-5 py-3.5 text-right font-mono tabular-nums text-sm font-semibold text-slate-900">
-                              ${svc.monthlyPrice.toLocaleString()}
+                              ₹{svc.monthlyPrice.toLocaleString()}
                             </td>
                             <td className="px-5 py-3.5 text-right whitespace-nowrap">
                               <GlowButton variant="secondary" className="py-1 px-2.5 text-xs mr-2"

@@ -42,8 +42,9 @@ router.delete('/services/:id', saasAdminController.removeService);
 router.get('/flags', saasAdminController.listFlags);
 router.patch('/flags/:key', saasAdminController.toggleFlag);
 
-// Administrator-only: manage Sadmin accounts
+// Administrator-only: SADMIN activity feed + Sadmin management
 const onlyAdministrator = requireRole('ADMINISTRATOR');
+router.get('/activity', onlyAdministrator, saasAdminController.getSadminActivity);
 router.get('/sadmins', onlyAdministrator, saasAdminController.listSadmins);
 router.patch('/sadmins/:id', onlyAdministrator, saasAdminController.updateSadmin);
 router.delete('/sadmins/:id', onlyAdministrator, saasAdminController.removeSadmin);

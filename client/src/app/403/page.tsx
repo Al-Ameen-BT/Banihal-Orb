@@ -1,6 +1,6 @@
 'use client';
 
-import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import GlowButton from '@/components/ui/GlowButton';
 
@@ -14,6 +14,7 @@ const fadeUp = {
 };
 
 export default function ForbiddenPage() {
+  const router = useRouter();
   return (
     <div className="relative min-h-screen flex items-center justify-center px-6 overflow-hidden bg-[#F8FAFC]">
 
@@ -96,20 +97,19 @@ export default function ForbiddenPage() {
 
           {/* Actions */}
           <motion.div variants={fadeUp} className="flex items-center justify-center gap-3">
-            <Link href="/dashboard">
-              <GlowButton>Back to Dashboard</GlowButton>
-            </Link>
-            <Link href="/profile">
-              <GlowButton variant="secondary">My Profile</GlowButton>
-            </Link>
+            <GlowButton onClick={() => router.push('/dashboard')}>Back to Dashboard</GlowButton>
+            <GlowButton variant="secondary" onClick={() => router.push('/profile')}>My Profile</GlowButton>
           </motion.div>
 
           {/* Help link */}
           <motion.p variants={fadeUp} className="mt-6 text-xs text-slate-400">
             Need help?{' '}
-            <Link href="/support" className="text-brand hover:text-brand-700 underline underline-offset-2 transition-colors">
+            <button
+              onClick={() => router.push('/support')}
+              className="text-brand hover:text-brand-700 underline underline-offset-2 transition-colors"
+            >
               Contact support
-            </Link>
+            </button>
           </motion.p>
         </div>
       </motion.div>

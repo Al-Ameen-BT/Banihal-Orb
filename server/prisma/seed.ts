@@ -139,7 +139,7 @@ async function main() {
   // ─── Tech (internal SaaS admin org) ────────────────────────────────────────
   const techOrg = await prisma.customer.create({
     data: {
-      name: 'Tech', slug: 'tech-internal', plan: 'ENTERPRISE',
+      name: 'Tech', slug: 'platform-platform-com', plan: 'ENTERPRISE',
       industry: 'Cybersecurity', contractValue: 0, healthScore: 100, csm: 'Internal',
       creditLimit: 99999, ssoEnabled: true, mfaRequired: true,
       mailId: 'admin@platform.com', contactPerson: 'Alex Chen',

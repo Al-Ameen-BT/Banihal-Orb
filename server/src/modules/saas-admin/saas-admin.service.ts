@@ -81,8 +81,8 @@ export async function getPlatformMetrics() {
     openRequests, criticalRequests,
     contractAgg, servicesActive, servicesExpiring, servicesExpired,
   ] = await Promise.all([
-    prisma.customer.count({ where: { suspended: false, slug: { not: 'tech-internal' } } }),
-    prisma.customer.groupBy({ by: ['plan'], _count: { id: true }, where: { slug: { not: 'tech-internal' } } }),
+    prisma.customer.count({ where: { suspended: false, slug: { not: 'platform-platform-com' } } }),
+    prisma.customer.groupBy({ by: ['plan'], _count: { id: true }, where: { slug: { not: 'platform-platform-com' } } }),
     prisma.user.count({ where: { role: 'USER' } }),
     prisma.user.count({ where: { role: 'ORG_ADMIN' } }),
     prisma.serviceRequest.count({ where: { status: { in: ['OPEN', 'IN_PROGRESS', 'ESCALATED'] } } }),
@@ -116,7 +116,7 @@ export async function getPlatformMetrics() {
 // every client org + their admin + service status breakdown + open request counts.
 export async function getOrgsOverview() {
   const orgs = await prisma.customer.findMany({
-    where: { slug: { not: 'tech-internal' } },
+    where: { slug: { not: 'platform-platform-com' } },
     select: {
       id: true, name: true, slug: true, plan: true, suspended: true,
       industry: true, contractValue: true, healthScore: true, csm: true,
@@ -550,6 +550,24 @@ export async function upsertFlag(key: string, input: ToggleFlagInput) {
     create: { key, value: input.value, description: input.description },
     update: { value: input.value, ...(input.description ? { description: input.description } : {}) },
   });
+}
+
+// ─── Administrator-only: SADMIN activity feed ───────────────────────────────
+const TRACKED_ACTIONS = ['LOGIN', 'LOGOUT', 'ADMIN_PASSWORD_RESET', 'ADMINISTRATOR_SADMIN_PASSWORD_RESET', 'ADMIN_USER_UPDATE', 'ADMINISTRATOR_SADMIN_UPDATE'];
+
+export async function getSadminActivity(limit = 60) {
+  const logs = await prisma.auditLog.findMany({
+    where: {
+      action: { in: TRACKED_ACTIONS },
+      performedBy: { role: { in: ['SADMIN', 'ADMINISTRATOR'] } },
+    },
+    include: {
+      performedBy: { select: { id: true, name: true, email: true, role: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+  });
+  return logs;
 }
 
 // ─── Administrator-only: Sadmin management ───────────────────────────────────
