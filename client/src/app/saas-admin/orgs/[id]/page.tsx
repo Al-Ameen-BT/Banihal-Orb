@@ -10,6 +10,7 @@ import type { CatalogMain } from '@/lib/schemas';
 import RoleGuard from '@/components/guards/RoleGuard';
 import Sidebar from '@/components/ui/Sidebar';
 import GlowButton from '@/components/ui/GlowButton';
+import CatalogManager from '@/components/ui/CatalogManager';
 import Toggle from '@/components/ui/Toggle';
 import { Shimmer } from '@/components/ui/Shimmer';
 
@@ -470,9 +471,12 @@ export default function OrgDetailPage() {
 
             {/* Services */}
             <motion.div id="services" className="scroll-mt-8" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.13 }}>
-              <div className="flex items-baseline justify-between mb-4">
+              <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
                 <h2 className="text-base font-semibold text-slate-900">Purchased Services</h2>
-                <span className="text-xs text-slate-400 tabular-nums">₹{monthlyRevenue.toLocaleString()}/mo  ·  {org.services.length} subscriptions</span>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-slate-400 tabular-nums">₹{monthlyRevenue.toLocaleString()}/mo  ·  {org.services.length} subscriptions</span>
+                  <CatalogManager className="!py-1.5 !px-3 text-xs" />
+                </div>
               </div>
               {/* Assign a catalog service to this customer */}
               <div className="card p-4 mb-4 flex flex-wrap items-end gap-3">
