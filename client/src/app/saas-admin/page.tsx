@@ -11,6 +11,7 @@ import Sidebar from '@/components/ui/Sidebar';
 import KpiCard from '@/components/ui/KpiCard';
 import Toggle from '@/components/ui/Toggle';
 import GlowButton from '@/components/ui/GlowButton';
+import CatalogManager from '@/components/ui/CatalogManager';
 import { ShimmerCard, ShimmerRow } from '@/components/ui/Shimmer';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -284,15 +285,18 @@ function AdminDashboard() {
   return (
     <div className="p-8 max-w-[1400px] mx-auto space-y-8">
       {/* Header */}
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.22 }}>
-        <div className="flex items-center gap-2 mb-1.5">
-          <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse-soft" />
-          <p className="text-sm font-semibold text-rose-600">Administrator · Platform Overview</p>
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.22 }} className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div className="flex items-center gap-2 mb-1.5">
+            <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse-soft" />
+            <p className="text-sm font-semibold text-rose-600">Administrator · Platform Overview</p>
+          </div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Administrator Dashboard</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Monitor Sadmin activity, platform health, and all client organizations
+          </p>
         </div>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900">Administrator Dashboard</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Monitor Sadmin activity, platform health, and all client organizations
-        </p>
+        <CatalogManager className="flex-shrink-0" />
       </motion.div>
 
       {/* KPI strip */}
@@ -503,15 +507,18 @@ function SadminPage() {
           <div className="p-8 max-w-[1400px] mx-auto space-y-8">
 
             {/* ─── Header ─────────────────────────────────────────────────── */}
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.22 }}>
-              <div className="flex items-center gap-2 mb-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse-soft" />
-                <p className="text-sm font-semibold text-emerald-600">Super Admin · Control Plane</p>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.22 }} className="flex items-start justify-between gap-4 flex-wrap">
+              <div>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse-soft" />
+                  <p className="text-sm font-semibold text-emerald-600">Super Admin · Control Plane</p>
+                </div>
+                <h1 className="text-2xl font-bold tracking-tight text-slate-900">Platform Admin</h1>
+                <p className="mt-1 text-sm text-slate-500">
+                  Manage all client organizations, their admins, users, and subscribed services
+                </p>
               </div>
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900">Platform Admin</h1>
-              <p className="mt-1 text-sm text-slate-500">
-                Manage all client organizations, their admins, users, and subscribed services
-              </p>
+              <CatalogManager className="flex-shrink-0" />
             </motion.div>
 
             {/* ─── KPI Strip ──────────────────────────────────────────────── */}

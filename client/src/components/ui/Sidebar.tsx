@@ -88,7 +88,6 @@ export default function Sidebar() {
             <SectionDivider label="Platform" />
             <NavItem href="/saas-admin" label="Control Plane" icon={icons.saas} active={path === '/saas-admin'} />
             <NavItem href="/saas-admin/services" label="Customer Services" icon={icons.services} active={path === '/saas-admin/services'} />
-            <NavItem href="/saas-admin/catalog" label="Service Catalog" icon={icons.catalog} active={path === '/saas-admin/catalog'} />
           </>
         )}
 
