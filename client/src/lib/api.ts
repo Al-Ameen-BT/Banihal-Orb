@@ -84,6 +84,7 @@ export const authApi = {
 export const usersApi = {
   getMe: () => api.get('/users/me'),
   updateMe: (data: unknown) => api.patch('/users/me', data),
+  changePassword: (data: { currentPassword: string; newPassword: string }) => api.patch('/users/me/password', data),
   list: (params?: Record<string, unknown>) => api.get('/users', { params }),
   invite: (data: unknown) => api.post('/users/invite', data),
   changeRole: (id: string, data: unknown) => api.patch(`/users/${id}/role`, data),
@@ -206,7 +207,8 @@ export const saasAdminApi = {
   deleteCatalog: (id: string) => api.delete(`/saas-admin/catalog/${id}`),
   listFlags: () => api.get('/saas-admin/flags'),
   toggleFlag: (key: string, data: unknown) => api.patch(`/saas-admin/flags/${key}`, data),
-  // Administrator-only: Sadmin management
+  // Administrator-only: activity feed + Sadmin management
+  getSadminActivity: (limit?: number) => api.get('/saas-admin/activity', { params: limit ? { limit } : undefined }),
   listSadmins: () => api.get('/saas-admin/sadmins'),
   updateSadmin: (id: string, data: unknown) => api.patch(`/saas-admin/sadmins/${id}`, data),
   removeSadmin: (id: string) => api.delete(`/saas-admin/sadmins/${id}`),

@@ -8,7 +8,13 @@
       "Bash(curl -s http://localhost:8001/api/chat -X POST -H \"Content-Type: application/json\" -d '{\"message\":\"hello\",\"history\":[]}')",
       "Bash(npx prisma *)",
       "Bash(node *)",
-      "Bash(systemctl status *)"
+      "Bash(systemctl status *)",
+      "Bash(curl -s http://localhost:3001/health)",
+      "Bash(curl -s http://localhost:3001/)",
+      "Bash(curl -s -X POST http://localhost:3001/api/auth/login -H 'Content-Type: application/json' -d '{\"email\":\"ameen@banihaltechnologies.com\",\"password\":\"Admin@1234\"}')",
+      "Bash(PGPASSWORD=postgres psql *)",
+      "Bash(curl *)",
+      "Bash(npm run *)"
     ]
   }
 }

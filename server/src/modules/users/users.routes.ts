@@ -6,6 +6,7 @@ const router = Router();
 
 router.get('/me', usersController.getMe);
 router.patch('/me', usersController.updateMe);
+router.patch('/me/password', usersController.changeMyPassword);
 
 router.get('/', requireRole('ORG_ADMIN', 'SADMIN', 'ADMINISTRATOR'), usersController.listUsers);
 router.post('/invite', requireRole('ORG_ADMIN', 'SADMIN', 'ADMINISTRATOR'), usersController.inviteUser);

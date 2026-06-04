@@ -1,7 +1,7 @@
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { prisma } from '../../config/database';
-import type { UpdateMeInput, InviteUserInput, ChangeRoleInput, PaginationInput } from './users.schema';
+import type { UpdateMeInput, InviteUserInput, ChangeRoleInput, PaginationInput, ChangePasswordInput } from './users.schema';
 
 const userSelect = {
   id: true,
@@ -23,6 +23,19 @@ export async function getMe(userId: string) {
 
 export async function updateMe(userId: string, input: UpdateMeInput) {
   return prisma.user.update({ where: { id: userId }, data: input, select: userSelect });
+}
+
+export async function changeMyPassword(userId: string, input: ChangePasswordInput) {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { passwordHash: true } });
+  if (!user) throw Object.assign(new Error('User not found'), { status: 404, code: 'NOT_FOUND' });
+
+  const valid = await bcrypt.compare(input.currentPassword, user.passwordHash);
+  if (!valid) throw Object.assign(new Error('Current password is incorrect'), { status: 400, code: 'INVALID_PASSWORD' });
+
+  const newHash = await bcrypt.hash(input.newPassword, 12);
+  await prisma.user.update({ where: { id: userId }, data: { passwordHash: newHash } });
+  // Revoke all refresh tokens so other sessions are logged out
+  await prisma.refreshToken.deleteMany({ where: { userId } });
 }
 
 export async function listUsers(input: PaginationInput) {

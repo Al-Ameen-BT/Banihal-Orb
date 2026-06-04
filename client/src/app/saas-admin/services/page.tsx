@@ -142,7 +142,7 @@ function SubscriptionsTab() {
                       <span className={`text-xs font-mono tabular-nums font-semibold ${dayColor}`}>{days < 0 ? `${Math.abs(days)}d ago` : `in ${days}d`}</span>
                       <p className="text-[11px] text-slate-400">{new Date(s.endDate).toLocaleDateString()}</p>
                     </td>
-                    <td className="px-5 py-3.5 text-right font-mono tabular-nums text-sm font-semibold text-slate-900">${s.monthlyPrice.toLocaleString()}</td>
+                    <td className="px-5 py-3.5 text-right font-mono tabular-nums text-sm font-semibold text-slate-900">₹{s.monthlyPrice.toLocaleString()}</td>
                     <td className="px-5 py-3.5 text-right whitespace-nowrap">
                       <GlowButton variant="secondary" className="py-1 px-2.5 text-xs mr-2"
                         onClick={() => renewMutation.mutate(s.id)} disabled={renewMutation.isPending}>Renew +12mo</GlowButton>
@@ -198,7 +198,7 @@ function CatalogTab() {
           <input value={mainName} onChange={(e) => setMainName(e.target.value)} placeholder="e.g. Managed XDR" className="input" />
         </div>
         <div className="w-32">
-          <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">$/mo</label>
+          <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">₹/mo</label>
           <input type="number" min={0} value={mainPrice} onChange={(e) => setMainPrice(e.target.value)} placeholder="0" className="input" />
         </div>
         <GlowButton className="py-2 px-4 text-sm" disabled={!mainName || createMutation.isPending}
@@ -244,7 +244,7 @@ function MainServiceCard({ main, onToggle, onDelete, onAddSub, onToggleSub, onDe
           <div className="flex items-center gap-2">
             <h3 className="text-sm font-bold text-slate-900">{main.name}</h3>
             <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded ${main.active ? 'text-emerald-700 bg-emerald-50' : 'text-slate-500 bg-slate-100'}`}>{main.active ? 'Active' : 'Inactive'}</span>
-            <span className="text-xs text-slate-400 font-mono">${main.monthlyPrice.toLocaleString()}/mo</span>
+            <span className="text-xs text-slate-400 font-mono">₹{main.monthlyPrice.toLocaleString()}/mo</span>
           </div>
           {main.description && <p className="text-xs text-slate-500 mt-0.5">{main.description}</p>}
         </div>
@@ -260,7 +260,7 @@ function MainServiceCard({ main, onToggle, onDelete, onAddSub, onToggleSub, onDe
         {main.children.length === 0 && <p className="text-xs text-slate-400">No sub-services yet.</p>}
         {main.children.map((sub) => (
           <div key={sub.id} className="flex items-center justify-between gap-3 text-sm">
-            <span className="text-slate-700">{sub.name} <span className="text-xs text-slate-400 font-mono">${sub.monthlyPrice.toLocaleString()}/mo</span>{!sub.active && <span className="ml-2 text-[10px] text-slate-400 uppercase">inactive</span>}</span>
+            <span className="text-slate-700">{sub.name} <span className="text-xs text-slate-400 font-mono">₹{sub.monthlyPrice.toLocaleString()}/mo</span>{!sub.active && <span className="ml-2 text-[10px] text-slate-400 uppercase">inactive</span>}</span>
             <span className="flex items-center gap-3 flex-shrink-0">
               <button onClick={() => onToggleSub(sub.id, !sub.active)} className="text-xs text-slate-500 hover:text-slate-800 cursor-pointer">{sub.active ? 'Deactivate' : 'Activate'}</button>
               <button onClick={() => onDeleteSub(sub.id)} disabled={(sub._count?.purchases ?? 0) > 0}
@@ -273,7 +273,7 @@ function MainServiceCard({ main, onToggle, onDelete, onAddSub, onToggleSub, onDe
       {/* Add sub-service */}
       <div className="mt-3 flex flex-wrap items-end gap-2">
         <input value={subName} onChange={(e) => setSubName(e.target.value)} placeholder="New sub-service" className="input flex-1 min-w-[160px] !py-1.5 text-sm" />
-        <input type="number" min={0} value={subPrice} onChange={(e) => setSubPrice(e.target.value)} placeholder="$/mo" className="input w-24 !py-1.5 text-sm" />
+        <input type="number" min={0} value={subPrice} onChange={(e) => setSubPrice(e.target.value)} placeholder="₹/mo" className="input w-24 !py-1.5 text-sm" />
         <button type="button" disabled={!subName}
           onClick={() => { onAddSub(subName, Number(subPrice) || 0); setSubName(''); setSubPrice(''); }}
           className="px-3 py-1.5 text-xs font-semibold text-brand border border-brand/30 rounded-lg hover:bg-brand/5 disabled:opacity-40 cursor-pointer">

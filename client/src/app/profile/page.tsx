@@ -22,6 +22,12 @@ export default function ProfilePage() {
   const [name, setName] = useState(user?.name ?? '');
   const [saved, setSaved] = useState(false);
 
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordSaved, setPasswordSaved] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
+
   const updateMutation = useMutation({
     mutationFn: (data: { name?: string; mfaEnabled?: boolean }) => usersApi.updateMe(data),
     onSuccess: async () => {
@@ -30,6 +36,31 @@ export default function ProfilePage() {
       setTimeout(() => setSaved(false), 2500);
     },
   });
+
+  const passwordMutation = useMutation({
+    mutationFn: (data: { currentPassword: string; newPassword: string }) => usersApi.changePassword(data),
+    onSuccess: () => {
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setPasswordError('');
+      setPasswordSaved(true);
+      setTimeout(() => setPasswordSaved(false), 2500);
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Failed to update password';
+      setPasswordError(msg);
+    },
+  });
+
+  function handlePasswordSubmit() {
+    setPasswordError('');
+    if (newPassword !== confirmPassword) {
+      setPasswordError('New passwords do not match');
+      return;
+    }
+    passwordMutation.mutate({ currentPassword, newPassword });
+  }
 
   const roleCfg = roleConfig[user?.role ?? ''] ?? roleConfig['USER']!;
 
@@ -110,6 +141,82 @@ export default function ProfilePage() {
                   onChange={(v) => updateMutation.mutate({ mfaEnabled: v })}
                   disabled={updateMutation.isPending}
                 />
+              </div>
+            </motion.div>
+
+            {/* Change Password */}
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.1, ease: [0.4,0,0.2,1] }}>
+              <h2 className="text-base font-semibold text-slate-900 mb-4">Change Password</h2>
+              <div className="card p-6 space-y-4">
+                <div>
+                  <label htmlFor="currentPassword" className="block text-sm font-medium text-slate-700 mb-1.5">Current password</label>
+                  <input
+                    id="currentPassword"
+                    type="password"
+                    autoComplete="current-password"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    className="input"
+                    placeholder="••••••••••••"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="newPassword" className="block text-sm font-medium text-slate-700 mb-1.5">New password</label>
+                  <input
+                    id="newPassword"
+                    type="password"
+                    autoComplete="new-password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    className="input"
+                    placeholder="Min. 12 chars, upper, lower, number, symbol"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="confirmPassword" className="block text-sm font-medium text-slate-700 mb-1.5">Confirm new password</label>
+                  <input
+                    id="confirmPassword"
+                    type="password"
+                    autoComplete="new-password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    className="input"
+                    placeholder="Re-enter new password"
+                  />
+                </div>
+
+                <AnimatePresence>
+                  {passwordError && (
+                    <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                      className="flex items-center gap-2 text-sm text-red-600">
+                      <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                      </svg>
+                      {passwordError}
+                    </motion.p>
+                  )}
+                </AnimatePresence>
+
+                <div className="flex items-center gap-3 pt-1">
+                  <GlowButton
+                    onClick={handlePasswordSubmit}
+                    disabled={passwordMutation.isPending || !currentPassword || !newPassword || !confirmPassword}
+                    loading={passwordMutation.isPending}
+                  >
+                    Update Password
+                  </GlowButton>
+                  <AnimatePresence>
+                    {passwordSaved && (
+                      <motion.span initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }}
+                        className="flex items-center gap-1.5 text-sm font-medium text-emerald-600">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.5 12.75l6 6 9-13.5" />
+                        </svg>
+                        Password updated
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
+                </div>
               </div>
             </motion.div>
 
