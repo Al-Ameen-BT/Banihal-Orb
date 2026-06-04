@@ -578,8 +578,9 @@ const sadminSelect = {
 } as const;
 
 export async function listSadmins() {
+  // "All platform admins" = ADMINISTRATOR + SADMIN (matches the activity feed and card header).
   return prisma.user.findMany({
-    where: { role: 'SADMIN' },
+    where: { role: { in: ['ADMINISTRATOR', 'SADMIN'] } },
     select: sadminSelect,
     orderBy: [{ customer: { name: 'asc' } }, { name: 'asc' }],
   });

@@ -244,27 +244,11 @@ const REQUEST_STATUSES = ['ALL', 'OPEN', 'IN_PROGRESS', 'ESCALATED', 'RESOLVED']
 type RequestFilter = typeof REQUEST_STATUSES[number];
 
 // ─── Administrator Dashboard ─────────────────────────────────────────────────
-interface ActivityEntry {
-  id: string;
-  action: string;
-  createdAt: string;
-  metadata: Record<string, unknown> | null;
-  performedBy: { id: string; name: string; email: string; role: string };
-}
 interface SadminUser {
   id: string; name: string; email: string; role: string;
   mfaEnabled: boolean; lastLoginAt: string | null; createdAt: string;
   customer: { id: string; name: string; slug: string; domain: string | null };
 }
-
-const ACTION_LABEL: Record<string, { label: string; cls: string; icon: string }> = {
-  LOGIN:                             { label: 'Logged in',       cls: 'text-emerald-700 bg-emerald-50', icon: '→' },
-  LOGOUT:                            { label: 'Signed out',      cls: 'text-slate-600 bg-slate-100',    icon: '←' },
-  ADMIN_PASSWORD_RESET:              { label: 'Password reset',  cls: 'text-amber-700 bg-amber-50',     icon: '🔑' },
-  ADMINISTRATOR_SADMIN_PASSWORD_RESET: { label: 'Sadmin pwd reset', cls: 'text-amber-700 bg-amber-50', icon: '🔑' },
-  ADMIN_USER_UPDATE:                 { label: 'User updated',    cls: 'text-brand-700 bg-brand-50',     icon: '✎' },
-  ADMINISTRATOR_SADMIN_UPDATE:       { label: 'Sadmin updated',  cls: 'text-brand-700 bg-brand-50',     icon: '✎' },
-};
 
 function timeAgo(iso: string) {
   const diff = (Date.now() - new Date(iso).getTime()) / 1000;
@@ -280,13 +264,8 @@ function AdminDashboard() {
     queryFn: () => saasAdminApi.getMetrics().then((r) => r.data as PlatformMetrics),
     staleTime: 30_000,
   });
-  const { data: activity, isLoading: activityLoading } = useQuery<ActivityEntry[]>({
-    queryKey: ['sadmin-activity'],
-    queryFn: () => saasAdminApi.getSadminActivity(60).then((r) => r.data as ActivityEntry[]),
-    staleTime: 15_000,
-    refetchInterval: 30_000,
-  });
-  const { data: sadmins, isLoading: sadminsLoading } = useQuery<SadminUser[]>({
+  // Sadmin count for the KPI card — the activity feed + full listing now live on the Users page.
+  const { data: sadmins } = useQuery<SadminUser[]>({
     queryKey: ['sadmin-list'],
     queryFn: () => saasAdminApi.listSadmins().then((r) => r.data as SadminUser[]),
     staleTime: 60_000,
@@ -327,99 +306,6 @@ function AdminDashboard() {
           </div>
         )}
       </motion.div>
-
-      {/* Activity + Sadmins side by side */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Sadmin Activity Feed */}
-        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.07 }}>
-          <h2 className="text-base font-semibold text-slate-900 mb-4">Sadmin Activity</h2>
-          <div className="card overflow-hidden">
-            <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Recent actions</span>
-              <span className="text-xs text-slate-400">{activity?.length ?? 0} entries</span>
-            </div>
-            <div className="overflow-y-auto max-h-[420px]">
-              {activityLoading ? (
-                <div className="p-4 space-y-3">{Array.from({ length: 5 }).map((_, i) => <ShimmerRow key={i} />)}</div>
-              ) : !activity?.length ? (
-                <p className="px-5 py-10 text-center text-sm text-slate-400">No activity yet. Sadmin login/logout events will appear here.</p>
-              ) : (
-                <ul className="divide-y divide-slate-50">
-                  {activity.map((entry) => {
-                    const cfg = ACTION_LABEL[entry.action] ?? { label: entry.action, cls: 'text-slate-600 bg-slate-100', icon: '•' };
-                    return (
-                      <li key={entry.id} className="flex items-start gap-3 px-4 py-3 hover:bg-slate-50 transition-colors">
-                        <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs flex-shrink-0 font-bold ${cfg.cls}`}>
-                          {cfg.icon}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-baseline justify-between gap-2">
-                            <p className="text-sm font-semibold text-slate-900 truncate">{entry.performedBy.name}</p>
-                            <span className="text-[11px] text-slate-400 tabular-nums flex-shrink-0">{timeAgo(entry.createdAt)}</span>
-                          </div>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-semibold ${cfg.cls}`}>{cfg.label}</span>
-                            <span className="text-xs text-slate-400 truncate">{entry.performedBy.email}</span>
-                          </div>
-                          <span className={`inline-flex items-center mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${entry.performedBy.role === 'ADMINISTRATOR' ? 'text-rose-700 bg-rose-50' : 'text-brand-700 bg-brand-50'}`}>
-                            {entry.performedBy.role}
-                          </span>
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-          </div>
-        </motion.div>
-
-        {/* Sadmins overview */}
-        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.1 }}>
-          <h2 className="text-base font-semibold text-slate-900 mb-4">Sadmins</h2>
-          <div className="card overflow-hidden">
-            <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">All platform admins</span>
-              <span className="text-xs text-slate-400">{sadmins?.length ?? 0} total</span>
-            </div>
-            <div className="overflow-y-auto max-h-[420px]">
-              {sadminsLoading ? (
-                <div className="p-4 space-y-3">{Array.from({ length: 4 }).map((_, i) => <ShimmerRow key={i} />)}</div>
-              ) : !sadmins?.length ? (
-                <p className="px-5 py-10 text-center text-sm text-slate-400">No Sadmins found.</p>
-              ) : (
-                <ul className="divide-y divide-slate-50">
-                  {sadmins.map((s) => {
-                    const lastLogin = s.lastLoginAt ? timeAgo(s.lastLoginAt) : 'Never';
-                    const isOnline = s.lastLoginAt && (Date.now() - new Date(s.lastLoginAt).getTime()) < 30 * 60 * 1000;
-                    return (
-                      <li key={s.id} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition-colors">
-                        <div className="relative flex-shrink-0">
-                          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-brand-400 to-brand-600 flex items-center justify-center text-sm font-bold text-white">
-                            {s.name.charAt(0)}
-                          </div>
-                          {isOnline && <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 rounded-full border-2 border-white" />}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-baseline gap-2">
-                            <p className="text-sm font-semibold text-slate-900 truncate">{s.name}</p>
-                            {!s.mfaEnabled && <span title="MFA disabled" className="text-amber-500 text-xs flex-shrink-0">⚠</span>}
-                          </div>
-                          <p className="text-xs text-slate-400 truncate">{s.email}</p>
-                        </div>
-                        <div className="text-right flex-shrink-0">
-                          <p className="text-xs font-mono text-slate-500">{lastLogin}</p>
-                          <p className="text-[10px] text-slate-400">{s.customer.name}</p>
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-          </div>
-        </motion.div>
-      </div>
 
       {/* Client Organizations table */}
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.13 }}>
