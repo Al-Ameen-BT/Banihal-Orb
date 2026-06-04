@@ -50,7 +50,7 @@ export default function SaasRegister() {
   const fields: Array<{ id: string; label: string; type?: string; autoComplete?: string; placeholder: string }> = [
     { id: 'name', label: 'Your full name', placeholder: 'Your Name' },
     { id: 'email', label: 'Work email', type: 'email', autoComplete: 'email', placeholder: 'you@banihal.com' },
-    { id: 'contactNumber', label: 'Contact number', type: 'tel', autoComplete: 'tel', placeholder: '+91 9876543210' },
+    { id: 'contactNumber', label: 'Contact number', type: 'tel', autoComplete: 'tel', placeholder: '+91 0000000000' },
     { id: 'password', label: 'Password', type: 'password', autoComplete: 'new-password', placeholder: 'New password' },
   ];
 
@@ -68,8 +68,8 @@ export default function SaasRegister() {
           <div className="flex justify-center mb-6">
             <img src="/banihal-logo.png" alt="Banihal Logo" className="max-h-12 w-auto object-contain" />
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 mb-1 tracking-tight">Create Sadmin Account</h1>
-          <p className="text-sm text-slate-500">Platform super-admin access</p>
+          <h1 className="text-2xl font-bold text-slate-900 mb-1 tracking-tight">Create Administrator Account</h1>
+          <p className="text-sm text-slate-500">Platform administrator access</p>
         </div>
 
         {/* Card */}

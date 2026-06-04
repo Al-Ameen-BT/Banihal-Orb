@@ -52,7 +52,7 @@ export default function RegisterPage() {
     { id: 'organizationName', label: 'Organization name', placeholder: 'Organization Name' },
     { id: 'name', label: 'Your full name', placeholder: 'Your Name' },
     { id: 'email', label: 'Work email', type: 'email', autoComplete: 'email', placeholder: 'you@organization.com' },
-    { id: 'contactNumber', label: 'Contact number', type: 'tel', autoComplete: 'tel', placeholder: '+91 9876543210' },
+    { id: 'contactNumber', label: 'Contact number', type: 'tel', autoComplete: 'tel', placeholder: '+91 0000000000' },
     { id: 'password', label: 'Password', type: 'password', autoComplete: 'new-password', placeholder: 'New password' },
   ];
 
@@ -71,7 +71,7 @@ export default function RegisterPage() {
             <img src="/banihal-logo.png" alt="Banihal Logo" className="max-h-12 w-auto object-contain" />
           </div>
           <h1 className="text-2xl font-bold text-slate-900 mb-1 tracking-tight">Create your Account</h1>
-          <p className="text-sm text-slate-500">Start managing your security operations</p>
+          <p className="text-sm text-slate-500">Start managing your operations</p>
         </div>
 
         {/* Card */}

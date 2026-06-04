@@ -71,7 +71,7 @@ export default function RegisterPage() {
             <img src="/banihal-logo.png" alt="Banihal Logo" className="max-h-12 w-auto object-contain" />
           </div>
           <h1 className="text-2xl font-bold text-slate-900 mb-1 tracking-tight">Create your organization</h1>
-          <p className="text-sm text-slate-500">Start managing your security operations</p>
+          <p className="text-sm text-slate-500">Start managing your organization's operations</p>
         </div>
 
         {/* Card */}
