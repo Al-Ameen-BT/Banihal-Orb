@@ -6,7 +6,7 @@ import type {
   ListOrgsInput, UpdateOrgInput, ToggleFlagInput,
   ListRequestsInput, UpdateRequestInput,
   ListServicesInput, UpdateServiceInput, RenewServiceInput,
-  AssignServiceInput, CreateCatalogInput, UpdateCatalogInput,
+  AssignServiceInput,
   UpdateUserInput,
 } from './saas-admin.schema';
 
@@ -241,11 +241,7 @@ export async function updateServiceRequest(requestId: string, adminUserId: strin
   return prisma.serviceRequest.update({ where: { id: requestId }, data, include: { customer: { select: { id: true, name: true } } } });
 }
 
-// ─── Customer services (purchased) — list / manage expiry ───────────────────
-function serviceLabel(s: { name: string; parent?: { name: string } | null }): string {
-  return s.parent ? `${s.parent.name} — ${s.name}` : s.name;
-}
-
+// ─── Per-customer services — list / add / manage expiry ─────────────────────
 export async function listAllServices(input: ListServicesInput) {
   const skip = (input.page - 1) * input.limit;
   const now = new Date();
@@ -262,10 +258,7 @@ export async function listAllServices(input: ListServicesInput) {
   const [rows, total] = await Promise.all([
     prisma.customerService.findMany({
       where, skip, take: input.limit,
-      include: {
-        customer: { select: { id: true, name: true, plan: true, industry: true } },
-        service: { select: { id: true, name: true, monthlyPrice: true, parent: { select: { id: true, name: true } } } },
-      },
+      include: { customer: { select: { id: true, name: true, plan: true, industry: true } } },
       orderBy: { endDate: 'asc' },
     }),
     prisma.customerService.count({ where }),
@@ -274,9 +267,8 @@ export async function listAllServices(input: ListServicesInput) {
   const services = rows.map((r) => ({
     id: r.id,
     customerId: r.customerId,
-    serviceId: r.serviceId,
-    serviceName: serviceLabel(r.service),
-    monthlyPrice: r.service.monthlyPrice,
+    serviceName: r.name,
+    monthlyPrice: r.monthlyPrice,
     purchaseDate: r.purchaseDate,
     endDate: r.endDate,
     status: deriveStatus(r.endDate),
@@ -288,12 +280,12 @@ export async function listAllServices(input: ListServicesInput) {
 }
 
 export async function updateService(serviceId: string, adminUserId: string, input: UpdateServiceInput) {
-  const existing = await prisma.customerService.findUnique({
-    where: { id: serviceId }, include: { service: { select: { name: true } } },
-  });
+  const existing = await prisma.customerService.findUnique({ where: { id: serviceId } });
   if (!existing) throw Object.assign(new Error('Service not found'), { status: 404, code: 'NOT_FOUND' });
 
   const data: Record<string, unknown> = {};
+  if (input.name !== undefined) data['name'] = input.name;
+  if (input.monthlyPrice !== undefined) data['monthlyPrice'] = input.monthlyPrice;
   if (input.endDate) data['endDate'] = input.endDate;
   if (input.notes !== undefined) data['notes'] = input.notes;
 
@@ -301,20 +293,18 @@ export async function updateService(serviceId: string, adminUserId: string, inpu
     data: {
       action: 'CUSTOMER_SERVICE_UPDATED', performedById: adminUserId, targetId: serviceId,
       customerId: existing.customerId,
-      metadata: { service: existing.service.name, changes: input },
+      metadata: { service: existing.name, changes: input },
     },
   });
 
   return prisma.customerService.update({
     where: { id: serviceId }, data,
-    include: { customer: { select: { id: true, name: true } }, service: { select: { id: true, name: true } } },
+    include: { customer: { select: { id: true, name: true } } },
   });
 }
 
 export async function renewService(serviceId: string, adminUserId: string, input: RenewServiceInput) {
-  const existing = await prisma.customerService.findUnique({
-    where: { id: serviceId }, include: { service: { select: { name: true } } },
-  });
+  const existing = await prisma.customerService.findUnique({ where: { id: serviceId } });
   if (!existing) throw Object.assign(new Error('Service not found'), { status: 404, code: 'NOT_FOUND' });
 
   // Extend from the later of (today, current endDate) so renewals stack correctly
@@ -325,41 +315,39 @@ export async function renewService(serviceId: string, adminUserId: string, input
     data: {
       action: 'SERVICE_RENEWED', performedById: adminUserId, targetId: serviceId,
       customerId: existing.customerId,
-      metadata: { service: existing.service.name, months: input.months, previousEndDate: existing.endDate, newEndDate },
+      metadata: { service: existing.name, months: input.months, previousEndDate: existing.endDate, newEndDate },
     },
   });
 
   return prisma.customerService.update({
     where: { id: serviceId }, data: { endDate: newEndDate },
-    include: { customer: { select: { id: true, name: true } }, service: { select: { id: true, name: true } } },
+    include: { customer: { select: { id: true, name: true } } },
   });
 }
 
-// ─── Assign / remove a customer's purchased service ──────────────────────────
+// ─── Add / remove a service for a customer (each org's own catalog) ──────────
 export async function assignCustomerService(customerId: string, adminUserId: string, input: AssignServiceInput) {
-  const [customer, service] = await Promise.all([
-    prisma.customer.findUnique({ where: { id: customerId }, select: { id: true, name: true } }),
-    prisma.service.findUnique({ where: { id: input.serviceId }, select: { id: true, name: true } }),
-  ]);
+  const customer = await prisma.customer.findUnique({ where: { id: customerId }, select: { id: true, name: true } });
   if (!customer) throw Object.assign(new Error('Customer not found'), { status: 404, code: 'NOT_FOUND' });
-  if (!service) throw Object.assign(new Error('Service not found'), { status: 404, code: 'NOT_FOUND' });
 
   const created = await prisma.customerService.create({
     data: {
       customerId,
-      serviceId: input.serviceId,
+      name: input.name,
+      description: input.description ?? null,
+      monthlyPrice: input.monthlyPrice ?? 0,
       purchaseDate: input.purchaseDate ?? new Date(),
       endDate: input.endDate,
       notes: input.notes ?? null,
     },
-    include: { customer: { select: { id: true, name: true } }, service: { select: { id: true, name: true } } },
+    include: { customer: { select: { id: true, name: true } } },
   });
 
   await prisma.auditLog.create({
     data: {
       action: 'SERVICE_ASSIGNED', performedById: adminUserId, targetId: created.id,
       customerId,
-      metadata: { service: service.name, customer: customer.name, endDate: input.endDate },
+      metadata: { service: input.name, customer: customer.name, endDate: input.endDate },
     },
   });
 
@@ -367,69 +355,18 @@ export async function assignCustomerService(customerId: string, adminUserId: str
 }
 
 export async function removeCustomerService(id: string, adminUserId: string) {
-  const existing = await prisma.customerService.findUnique({
-    where: { id }, include: { service: { select: { name: true } } },
-  });
+  const existing = await prisma.customerService.findUnique({ where: { id } });
   if (!existing) throw Object.assign(new Error('Service not found'), { status: 404, code: 'NOT_FOUND' });
 
   await prisma.auditLog.create({
     data: {
       action: 'SERVICE_REMOVED', performedById: adminUserId, targetId: id,
       customerId: existing.customerId,
-      metadata: { service: existing.service.name },
+      metadata: { service: existing.name },
     },
   });
 
   await prisma.customerService.delete({ where: { id } });
-}
-
-// ─── Service catalog (global, SADMIN): main services → sub-services ──────────
-export async function listCatalog() {
-  const services = await prisma.service.findMany({
-    orderBy: [{ name: 'asc' }],
-    select: {
-      id: true, name: true, description: true, parentId: true, active: true, monthlyPrice: true,
-      _count: { select: { purchases: true } },
-    },
-  });
-  const mains = services
-    .filter((s) => !s.parentId)
-    .map((m) => ({ ...m, children: services.filter((s) => s.parentId === m.id) }));
-  return { catalog: mains, total: services.length };
-}
-
-export async function createCatalogService(input: CreateCatalogInput) {
-  if (input.parentId) {
-    const parent = await prisma.service.findUnique({ where: { id: input.parentId }, select: { id: true, parentId: true } });
-    if (!parent) throw Object.assign(new Error('Parent service not found'), { status: 404, code: 'NOT_FOUND' });
-    if (parent.parentId) throw Object.assign(new Error('Sub-services cannot be nested under another sub-service'), { status: 400, code: 'INVALID_PARENT' });
-  }
-  return prisma.service.create({
-    data: {
-      name: input.name,
-      description: input.description ?? null,
-      parentId: input.parentId ?? null,
-      monthlyPrice: input.monthlyPrice ?? 0,
-      active: input.active ?? true,
-    },
-  });
-}
-
-export async function updateCatalogService(id: string, input: UpdateCatalogInput) {
-  const existing = await prisma.service.findUnique({ where: { id } });
-  if (!existing) throw Object.assign(new Error('Service not found'), { status: 404, code: 'NOT_FOUND' });
-  return prisma.service.update({ where: { id }, data: input });
-}
-
-export async function deleteCatalogService(id: string) {
-  const existing = await prisma.service.findUnique({
-    where: { id }, include: { _count: { select: { purchases: true, children: true } } },
-  });
-  if (!existing) throw Object.assign(new Error('Service not found'), { status: 404, code: 'NOT_FOUND' });
-  if (existing._count.purchases > 0) {
-    throw Object.assign(new Error('Cannot delete a service with customer purchases'), { status: 409, code: 'SERVICE_IN_USE' });
-  }
-  await prisma.service.delete({ where: { id } });  // sub-services cascade
 }
 
 // ─── Org detail (deep view for Super Admin drill-down) ─────────────────────
@@ -444,10 +381,7 @@ export async function getOrgDetail(orgId: string) {
       },
       services: {
         orderBy: { endDate: 'asc' },
-        select: {
-          id: true, purchaseDate: true, endDate: true, notes: true,
-          service: { select: { id: true, name: true, description: true, monthlyPrice: true, parent: { select: { id: true, name: true } } } },
-        },
+        select: { id: true, name: true, description: true, monthlyPrice: true, purchaseDate: true, endDate: true, notes: true },
       },
       requests: {
         where: { status: { in: ['OPEN', 'IN_PROGRESS', 'ESCALATED'] } },
@@ -462,10 +396,10 @@ export async function getOrgDetail(orgId: string) {
   // Flatten purchased services into the shape the client expects (derived status).
   const services = org.services.map((s) => ({
     id: s.id,
-    name: serviceLabel(s.service),
-    description: s.service.description,
+    name: s.name,
+    description: s.description,
     status: deriveStatus(s.endDate),
-    monthlyPrice: s.service.monthlyPrice,
+    monthlyPrice: s.monthlyPrice,
     purchaseDate: s.purchaseDate,
     endDate: s.endDate,
     notes: s.notes,
@@ -488,7 +422,7 @@ const userSelect = {
 export async function updateUser(targetUserId: string, adminUserId: string, input: UpdateUserInput) {
   const target = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, customerId: true, role: true, email: true } });
   if (!target) throw Object.assign(new Error('User not found'), { status: 404, code: 'NOT_FOUND' });
-  if (target.role === 'SADMIN' || target.role === 'ADMINISTRATOR') throw Object.assign(new Error('Platform admin accounts cannot be modified via this endpoint'), { status: 403, code: 'PROTECTED_ACCOUNT' });
+  if (target.role === 'ADMINISTRATOR') throw Object.assign(new Error('Platform admin accounts cannot be modified via this endpoint'), { status: 403, code: 'PROTECTED_ACCOUNT' });
 
   await prisma.auditLog.create({
     data: {
@@ -505,7 +439,7 @@ export async function removeUser(targetUserId: string, adminUserId: string) {
   if (targetUserId === adminUserId) throw Object.assign(new Error('Cannot remove yourself'), { status: 400, code: 'SELF_REMOVE' });
   const target = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, customerId: true, role: true, email: true, name: true } });
   if (!target) throw Object.assign(new Error('User not found'), { status: 404, code: 'NOT_FOUND' });
-  if (target.role === 'SADMIN' || target.role === 'ADMINISTRATOR') throw Object.assign(new Error('Platform admin accounts cannot be removed via this endpoint'), { status: 403, code: 'PROTECTED_ACCOUNT' });
+  if (target.role === 'ADMINISTRATOR') throw Object.assign(new Error('Platform admin accounts cannot be removed via this endpoint'), { status: 403, code: 'PROTECTED_ACCOUNT' });
 
   await prisma.auditLog.create({
     data: {
@@ -521,7 +455,7 @@ export async function removeUser(targetUserId: string, adminUserId: string) {
 export async function resetUserPassword(targetUserId: string, adminUserId: string) {
   const target = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, customerId: true, role: true, email: true } });
   if (!target) throw Object.assign(new Error('User not found'), { status: 404, code: 'NOT_FOUND' });
-  if (target.role === 'SADMIN' || target.role === 'ADMINISTRATOR') throw Object.assign(new Error('Platform admin passwords cannot be reset via this endpoint'), { status: 403, code: 'PROTECTED_ACCOUNT' });
+  if (target.role === 'ADMINISTRATOR') throw Object.assign(new Error('Platform admin passwords cannot be reset via this endpoint'), { status: 403, code: 'PROTECTED_ACCOUNT' });
 
   const tempPassword = crypto.randomBytes(9).toString('base64').replace(/[+/=]/g, '') + 'A1!';
   const passwordHash = await bcrypt.hash(tempPassword, 12);
@@ -559,7 +493,7 @@ export async function getSadminActivity(limit = 60) {
   const logs = await prisma.auditLog.findMany({
     where: {
       action: { in: TRACKED_ACTIONS },
-      performedBy: { role: { in: ['SADMIN', 'ADMINISTRATOR'] } },
+      performedBy: { role: 'ADMINISTRATOR' },
     },
     include: {
       performedBy: { select: { id: true, name: true, email: true, role: true } },
@@ -578,9 +512,9 @@ const sadminSelect = {
 } as const;
 
 export async function listSadmins() {
-  // "All platform admins" = ADMINISTRATOR + SADMIN (matches the activity feed and card header).
+  // All platform admins (ADMINISTRATOR) — matches the activity feed and card header.
   return prisma.user.findMany({
-    where: { role: { in: ['ADMINISTRATOR', 'SADMIN'] } },
+    where: { role: 'ADMINISTRATOR' },
     select: sadminSelect,
     orderBy: [{ customer: { name: 'asc' } }, { name: 'asc' }],
   });
@@ -589,7 +523,7 @@ export async function listSadmins() {
 export async function updateSadmin(targetUserId: string, administratorId: string, input: UpdateUserInput) {
   const target = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, customerId: true, role: true, email: true } });
   if (!target) throw Object.assign(new Error('User not found'), { status: 404, code: 'NOT_FOUND' });
-  if (target.role !== 'SADMIN') throw Object.assign(new Error('Target is not a Sadmin'), { status: 400, code: 'INVALID_TARGET' });
+  if (target.role !== 'ADMINISTRATOR') throw Object.assign(new Error('Target is not an Administrator'), { status: 400, code: 'INVALID_TARGET' });
 
   await prisma.auditLog.create({
     data: {
@@ -606,7 +540,7 @@ export async function removeSadmin(targetUserId: string, administratorId: string
   if (targetUserId === administratorId) throw Object.assign(new Error('Cannot remove yourself'), { status: 400, code: 'SELF_REMOVE' });
   const target = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, customerId: true, role: true, email: true, name: true } });
   if (!target) throw Object.assign(new Error('User not found'), { status: 404, code: 'NOT_FOUND' });
-  if (target.role !== 'SADMIN') throw Object.assign(new Error('Target is not a Sadmin'), { status: 400, code: 'INVALID_TARGET' });
+  if (target.role !== 'ADMINISTRATOR') throw Object.assign(new Error('Target is not an Administrator'), { status: 400, code: 'INVALID_TARGET' });
 
   await prisma.auditLog.create({
     data: {
@@ -622,7 +556,7 @@ export async function removeSadmin(targetUserId: string, administratorId: string
 export async function resetSadminPassword(targetUserId: string, administratorId: string) {
   const target = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, customerId: true, role: true, email: true } });
   if (!target) throw Object.assign(new Error('User not found'), { status: 404, code: 'NOT_FOUND' });
-  if (target.role !== 'SADMIN') throw Object.assign(new Error('Target is not a Sadmin'), { status: 400, code: 'INVALID_TARGET' });
+  if (target.role !== 'ADMINISTRATOR') throw Object.assign(new Error('Target is not an Administrator'), { status: 400, code: 'INVALID_TARGET' });
 
   const tempPassword = crypto.randomBytes(9).toString('base64').replace(/[+/=]/g, '') + 'A1!';
   const passwordHash = await bcrypt.hash(tempPassword, 12);

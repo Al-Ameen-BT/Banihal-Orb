@@ -55,7 +55,7 @@ app.use('/api/dashboard', withTenant, dashboardRoutes);
 app.use('/api/chat', withTenant, chatRoutes);
 
 // Sadmin / Administrator — platform-level access, no tenant scope
-app.use('/api/saas-admin', requireRole('SADMIN', 'ADMINISTRATOR'), saasAdminRoutes);
+app.use('/api/saas-admin', requireRole('ADMINISTRATOR'), saasAdminRoutes);
 
 // ─── 404 handler ─────────────────────────────────────────────────────────────
 app.use((_req, res) => {

@@ -128,44 +128,23 @@ model ServiceRequest {
   @@index([createdAt])
 }
 
-// ─── Service catalog (self-referential: main services → sub-services) ───
-// Global table managed by the platform (SADMIN / ADMINISTRATOR, not customer-scoped).
-// parentId null = main service; parentId set = sub-service of that parent.
-model Service {
-  id           String            @id @default(cuid())
-  name         String
-  description  String?
-  parentId     String?
-  active       Boolean           @default(true)
-  monthlyPrice Int               @default(0)
-  createdAt    DateTime          @default(now())
-  updatedAt    DateTime          @updatedAt
-  parent       Service?          @relation("ServiceHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
-  children     Service[]         @relation("ServiceHierarchy")
-  purchases    CustomerService[]
-
-  @@index([parentId])
-  @@index([active])
-  @@map("services")
-}
-
-// ─── Customer ↔ purchased service, with purchase/end dates ──────────
+// ─── Per-customer service (each org defines/manages its own services) ─────────
 // endDate drives expiry status (ACTIVE / EXPIRING / EXPIRED), derived in code.
-// Managed by the platform (SADMIN / ADMINISTRATOR); customer-scoped for org members.
+// Managed by the platform ADMINISTRATOR; customer-scoped for org members.
 model CustomerService {
   id           String   @id @default(cuid())
   customerId   String
-  serviceId    String
+  name         String
+  description  String?
+  monthlyPrice Int      @default(0)
   purchaseDate DateTime @default(now())
   endDate      DateTime
   notes        String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  service      Service  @relation(fields: [serviceId], references: [id], onDelete: Restrict)
 
   @@index([customerId])
-  @@index([serviceId])
   @@index([endDate])
   @@map("customerServices")
 }
@@ -173,7 +152,6 @@ model CustomerService {
 enum Role {
   USER
   ORG_ADMIN
-  SADMIN
   ADMINISTRATOR
 }
 

@@ -13,7 +13,6 @@ import GlowButton from '@/components/ui/GlowButton';
 const roleConfig: Record<string, { label: string; cls: string; avatar: string }> = {
   USER:          { label: 'User',          cls: 'text-slate-600 bg-slate-100',  avatar: 'from-slate-400 to-slate-500' },
   ORG_ADMIN:     { label: 'Org Admin',     cls: 'text-violet-700 bg-violet-50', avatar: 'from-violet-400 to-violet-600' },
-  SADMIN:        { label: 'Sadmin',        cls: 'text-brand-700 bg-brand-50',   avatar: 'from-brand-400 to-brand-600' },
   ADMINISTRATOR: { label: 'Administrator', cls: 'text-rose-700 bg-rose-50',     avatar: 'from-rose-500 to-rose-700' },
 };
 
@@ -65,7 +64,7 @@ export default function ProfilePage() {
   const roleCfg = roleConfig[user?.role ?? ''] ?? roleConfig['USER']!;
 
   return (
-    <RoleGuard allowedRoles={['USER', 'ORG_ADMIN', 'SADMIN', 'ADMINISTRATOR']}>
+    <RoleGuard allowedRoles={['USER', 'ORG_ADMIN', 'ADMINISTRATOR']}>
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">

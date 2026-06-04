@@ -16,7 +16,6 @@ import type { User, Customer } from '@/lib/schemas';
 const roleConfig: Record<string, { label: string; cls: string }> = {
   USER:          { label: 'User',          cls: 'text-slate-600 bg-slate-100' },
   ORG_ADMIN:     { label: 'Org Admin',     cls: 'text-violet-700 bg-violet-50' },
-  SADMIN:        { label: 'Sadmin',        cls: 'text-brand-700 bg-brand-50' },
   ADMINISTRATOR: { label: 'Administrator', cls: 'text-rose-700 bg-rose-50' },
 };
 
@@ -52,7 +51,7 @@ function timeAgo(iso: string) {
 export default function UsersPage() {
   const qc = useQueryClient();
   const { user } = useAuth();
-  const isPlatformAdmin = user?.role === 'ADMINISTRATOR' || user?.role === 'SADMIN';
+  const isPlatformAdmin = user?.role === 'ADMINISTRATOR';
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteName,  setInviteName]  = useState('');
   const [inviteRole,  setInviteRole]  = useState<'USER' | 'ORG_ADMIN'>('USER');
@@ -129,7 +128,7 @@ export default function UsersPage() {
     {
       key: 'actions', header: '',
       render: (row: User) => {
-        if (row.role === 'SADMIN' || row.role === 'ADMINISTRATOR') return <span className="text-xs text-slate-400">Protected</span>;
+        if (row.role === 'ADMINISTRATOR') return <span className="text-xs text-slate-400">Protected</span>;
         const nextRole = row.role === 'USER' ? 'ORG_ADMIN' : 'USER';
         return (
           <div className="flex gap-1.5 justify-end">
@@ -153,7 +152,7 @@ export default function UsersPage() {
   const mfaCount   = users?.users.filter((u) => u.mfaEnabled).length ?? 0;
 
   return (
-    <RoleGuard allowedRoles={['ORG_ADMIN', 'SADMIN', 'ADMINISTRATOR']}>
+    <RoleGuard allowedRoles={['ORG_ADMIN', 'ADMINISTRATOR']}>
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">

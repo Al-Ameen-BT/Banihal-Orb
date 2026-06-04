@@ -200,11 +200,6 @@ export const saasAdminApi = {
   renewService: (id: string, data?: unknown) => api.post(`/saas-admin/services/${id}/renew`, data ?? { months: 12 }),
   assignService: (customerId: string, data: unknown) => api.post(`/saas-admin/customers/${customerId}/services`, data),
   removeService: (id: string) => api.delete(`/saas-admin/services/${id}`),
-  // Service catalog (main services → sub-services)
-  listCatalog: () => api.get('/saas-admin/catalog'),
-  createCatalog: (data: unknown) => api.post('/saas-admin/catalog', data),
-  updateCatalog: (id: string, data: unknown) => api.patch(`/saas-admin/catalog/${id}`, data),
-  deleteCatalog: (id: string) => api.delete(`/saas-admin/catalog/${id}`),
   listFlags: () => api.get('/saas-admin/flags'),
   toggleFlag: (key: string, data: unknown) => api.patch(`/saas-admin/flags/${key}`, data),
   // Administrator-only: activity feed + Sadmin management

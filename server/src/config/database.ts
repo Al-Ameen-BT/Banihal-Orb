@@ -25,7 +25,7 @@ function buildPrisma() {
           const scopedOps = ['findFirst', 'findMany', 'findUnique', 'update', 'updateMany', 'delete', 'deleteMany', 'count'];
 
           // Models without customerId (global tables or tables without customerId relation)
-          const globalModels = ['FeatureFlag', 'Customer', 'RefreshToken', 'Service'];
+          const globalModels = ['FeatureFlag', 'Customer', 'RefreshToken'];
 
           if (store?.customerId && scopedOps.includes(operation) && !globalModels.includes(model)) {
             const existingWhere = (args['where'] as Record<string, unknown>) ?? {};

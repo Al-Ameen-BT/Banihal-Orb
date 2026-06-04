@@ -25,13 +25,7 @@ router.get('/top-clients', saasAdminController.getTopClients);
 router.get('/requests', saasAdminController.listRequests);
 router.patch('/requests/:id', saasAdminController.updateRequest);
 
-// Service catalog (main services → sub-services)
-router.get('/catalog', saasAdminController.listCatalog);
-router.post('/catalog', saasAdminController.createCatalog);
-router.patch('/catalog/:id', saasAdminController.updateCatalog);
-router.delete('/catalog/:id', saasAdminController.deleteCatalog);
-
-// Customer services (purchased subscriptions w/ expiry management)
+// Customer services (each org's own services w/ expiry management)
 router.get('/services', saasAdminController.listServices);
 router.post('/customers/:customerId/services', saasAdminController.assignService);
 router.patch('/services/:id', saasAdminController.updateService);

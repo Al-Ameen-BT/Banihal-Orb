@@ -44,18 +44,15 @@ export async function getMyServices(customerId: string) {
   const purchases = await prisma.customerService.findMany({
     where: { customerId },
     orderBy: { endDate: 'asc' },
-    include: {
-      service: { select: { name: true, description: true, monthlyPrice: true, parent: { select: { name: true } } } },
-    },
   });
 
   const services = purchases.map((p) => ({
     id: p.id,
-    name: p.service.parent ? `${p.service.parent.name} — ${p.service.name}` : p.service.name,
-    description: p.service.description,
+    name: p.name,
+    description: p.description,
     status: deriveStatus(p.endDate),
     enabled: true,
-    monthlyPrice: p.service.monthlyPrice,
+    monthlyPrice: p.monthlyPrice,
     purchasedAt: p.purchaseDate,
     renewsAt: p.endDate,
     lastBilledAt: null as Date | null,

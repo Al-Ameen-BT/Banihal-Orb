@@ -87,7 +87,6 @@ async function main() {
 
   // ─── Clean slate (force-reset already wiped, but be defensive) ─────────────
   await prisma.customerService.deleteMany();
-  await prisma.service.deleteMany();
   await prisma.serviceRequest.deleteMany();
   await prisma.auditLog.deleteMany();
   await prisma.refreshToken.deleteMany();
@@ -112,27 +111,18 @@ async function main() {
   });
   console.log('🚩 Created 8 global feature flags');
 
-  // ─── Service catalog (main services → sub-services) ─────────────────────────
-  const mainServiceIds: Record<string, string> = {};
-  let subCount = 0;
-  for (const [name, cat] of Object.entries(SERVICE_CATALOG)) {
-    const main = await prisma.service.create({
-      data: { name, description: cat.description, monthlyPrice: cat.price, active: true },
-    });
-    mainServiceIds[name] = main.id;
-    for (const sub of cat.subs) {
-      await prisma.service.create({
-        data: { name: sub.name, parentId: main.id, monthlyPrice: sub.price, active: true, description: `${name} — ${sub.name}` },
-      });
-      subCount++;
-    }
-  }
-  console.log(`🧩 Seeded ${Object.keys(SERVICE_CATALOG).length} main services + ${subCount} sub-services`);
-
-  // Helper: record a customer's purchase of a (main) service with an end date.
+  // Helper: add a service to a customer (per-org — name + price stored directly).
   async function purchase(customerId: string, name: keyof typeof SERVICE_CATALOG, endDate: Date, purchasedDaysAgo: number) {
+    const cat = SERVICE_CATALOG[name];
     return prisma.customerService.create({
-      data: { customerId, serviceId: mainServiceIds[name]!, purchaseDate: daysAgo(purchasedDaysAgo), endDate },
+      data: {
+        customerId,
+        name,
+        description: cat.description,
+        monthlyPrice: cat.price,
+        purchaseDate: daysAgo(purchasedDaysAgo),
+        endDate,
+      },
     });
   }
 
@@ -150,7 +140,7 @@ async function main() {
     data: {
       name: 'Alex Chen', email: 'admin@platform.com',
       passwordHash: await hash('SaasAdmin1!'),
-      role: 'SADMIN', mfaEnabled: true,
+      role: 'ADMINISTRATOR', mfaEnabled: true,
       customerId: techOrg.id, lastLoginAt: now,
     },
   });
@@ -162,7 +152,7 @@ async function main() {
       customerId: techOrg.id, lastLoginAt: now,
     },
   });
-  console.log(`✅ Tech (internal)  →  ${sadmin.email}  [SADMIN]`);
+  console.log(`✅ Tech (internal)  →  ${sadmin.email}  [ADMINISTRATOR]`);
   console.log(`✅ Tech (internal)  →  ${administrator.email}  [ADMINISTRATOR]\n`);
 
   // ─── Spec for each client org ──────────────────────────────────────────────
@@ -539,11 +529,11 @@ async function main() {
   // ─── Summary ────────────────────────────────────────────────────────────────
   const totalACV = orgSpecs.reduce((s, o) => s + o.contractValue, 0);
   console.log('\n' + '─'.repeat(72));
-  console.log('🎉 Tech cybersecurity platform seeded with 4-tier RBAC!\n');
-  console.log('  Roles  →  ADMINISTRATOR  >  SADMIN  >  ORG_ADMIN  >  USER\n');
+  console.log('🎉 Tech cybersecurity platform seeded with 3-tier RBAC!\n');
+  console.log('  Roles  →  ADMINISTRATOR  >  ORG_ADMIN  >  USER\n');
   console.log('  Platform Admins');
   console.log('    ADMINISTRATOR  superadmin@platform.com    SuperAdmin1!');
-  console.log('    SADMIN         admin@platform.com         SaasAdmin1!\n');
+  console.log('    ADMINISTRATOR  admin@platform.com         SaasAdmin1!\n');
   console.log('  Organization Admins  (all use password "Admin1234!")');
   for (const o of created) {
     console.log(`    ORG_ADMIN   ${o.admin.email.padEnd(34)} [${o.name}]`);

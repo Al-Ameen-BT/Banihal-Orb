@@ -41,8 +41,8 @@ export default function CommandMenu() {
 
   const commands: Command[] = useMemo(() => {
     const role = user?.role;
-    const isAdmin = role === 'ORG_ADMIN' || role === 'SADMIN' || role === 'ADMINISTRATOR';
-    const isSaas  = role === 'SADMIN' || role === 'ADMINISTRATOR';
+    const isAdmin = role === 'ORG_ADMIN' || role === 'ADMINISTRATOR';
+    const isSaas  = role === 'ADMINISTRATOR';
 
     return [
       { id: 'nav-dashboard', group: 'Navigation', label: 'Go to Dashboard',     shortcut: 'G D', icon: ICON.dashboard, action: () => router.push('/dashboard') },

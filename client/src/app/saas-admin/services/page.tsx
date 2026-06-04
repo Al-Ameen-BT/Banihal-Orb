@@ -8,7 +8,6 @@ import { saasAdminApi } from '@/lib/api';
 import RoleGuard from '@/components/guards/RoleGuard';
 import Sidebar from '@/components/ui/Sidebar';
 import GlowButton from '@/components/ui/GlowButton';
-import CatalogManager from '@/components/ui/CatalogManager';
 
 type Status = 'ACTIVE' | 'EXPIRING' | 'EXPIRED';
 
@@ -61,7 +60,7 @@ export default function CustomerServicesPage() {
   }, [allServices, search]);
 
   return (
-    <RoleGuard allowedRoles={['SADMIN', 'ADMINISTRATOR']}>
+    <RoleGuard allowedRoles={['ADMINISTRATOR']}>
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">
@@ -75,7 +74,6 @@ export default function CustomerServicesPage() {
                 <h1 className="text-2xl font-bold tracking-tight text-slate-900">Customer Services</h1>
                 <p className="mt-1 text-sm text-slate-500">Every customer&apos;s purchased services — manage renewals and expiries.</p>
               </div>
-              <CatalogManager className="flex-shrink-0" />
             </motion.div>
 
             {/* Filters + search */}

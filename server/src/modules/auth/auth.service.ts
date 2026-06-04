@@ -108,16 +108,13 @@ export async function registerSaas(input: RegisterSaasInput): Promise<TokenPair>
     });
   }
 
-  // First registrant under a domain becomes the ADMINISTRATOR; all subsequent ones are SADMIN.
-  const existingCount = await prisma.user.count({ where: { customerId: domainCustomer.id } });
-  const role = existingCount === 0 ? 'ADMINISTRATOR' : 'SADMIN';
-
+  // Platform self-registrants (grouped by work-email domain) are all ADMINISTRATOR.
   const user = await prisma.user.create({
     data: {
       email: input.email,
       passwordHash,
       name: input.name,
-      role,
+      role: 'ADMINISTRATOR',
       customerId: domainCustomer.id,
     },
   });
@@ -144,7 +141,7 @@ export async function login(input: LoginInput): Promise<TokenPair> {
 
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
 
-  if (user.role === 'SADMIN' || user.role === 'ADMINISTRATOR') {
+  if (user.role === 'ADMINISTRATOR') {
     await prisma.auditLog.create({
       data: { action: 'LOGIN', performedById: user.id, customerId: user.customerId },
     }).catch(() => {});
@@ -194,7 +191,7 @@ export async function logout(rawRefreshToken: string): Promise<void> {
     const ok = await bcrypt.compare(rawRefreshToken, t.tokenHash);
     if (ok) {
       await prisma.refreshToken.delete({ where: { id: t.id } });
-      if (t.user.role === 'SADMIN' || t.user.role === 'ADMINISTRATOR') {
+      if (t.user.role === 'ADMINISTRATOR') {
         await prisma.auditLog.create({
           data: { action: 'LOGOUT', performedById: t.user.id, customerId: t.user.customerId },
         }).catch(() => {});

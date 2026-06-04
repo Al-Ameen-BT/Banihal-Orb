@@ -70,9 +70,9 @@ export async function inviteUser(input: InviteUserInput, customerId: string) {
 }
 
 export async function changeRole(targetUserId: string, input: ChangeRoleInput) {
-  // SADMIN / ADMINISTRATOR roles are NEVER settable through this path
-  if ((input.role as string) === 'SADMIN' || (input.role as string) === 'ADMINISTRATOR') {
-    throw Object.assign(new Error('SADMIN / ADMINISTRATOR roles cannot be assigned via API'), { status: 403, code: 'FORBIDDEN' });
+  // ADMINISTRATOR role is NEVER settable through this path
+  if ((input.role as string) === 'ADMINISTRATOR') {
+    throw Object.assign(new Error('ADMINISTRATOR role cannot be assigned via API'), { status: 403, code: 'FORBIDDEN' });
   }
   return prisma.user.update({ where: { id: targetUserId }, data: { role: input.role }, select: userSelect });
 }

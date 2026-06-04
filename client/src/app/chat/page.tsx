@@ -41,7 +41,7 @@ export default function ChatPage() {
   }
 
   return (
-    <RoleGuard allowedRoles={['USER', 'ORG_ADMIN', 'SADMIN', 'ADMINISTRATOR']}>
+    <RoleGuard allowedRoles={['USER', 'ORG_ADMIN', 'ADMINISTRATOR']}>
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 flex flex-col overflow-hidden">

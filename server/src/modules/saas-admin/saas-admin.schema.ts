@@ -43,6 +43,8 @@ export const ListServicesSchema = z.object({
 });
 
 export const UpdateServiceSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  monthlyPrice: z.number().int().min(0).optional(),
   endDate: z.coerce.date().optional(),
   notes: z.string().max(500).optional(),
 }).refine((d) => Object.keys(d).length > 0, { message: 'At least one field required' });
@@ -51,35 +53,22 @@ export const RenewServiceSchema = z.object({
   months: z.coerce.number().int().min(1).max(60).default(12),
 });
 
+// Add a service to a customer (each org defines its own services).
 export const AssignServiceSchema = z.object({
-  serviceId: z.string().min(1),
+  name: z.string().min(1).max(120),
+  monthlyPrice: z.coerce.number().int().min(0).default(0),
   endDate: z.coerce.date(),
+  description: z.string().max(500).optional(),
   purchaseDate: z.coerce.date().optional(),
   notes: z.string().max(500).optional(),
 });
 
-// ─── Service catalog (main services → sub-services) ─────────────────────────
-export const CreateCatalogSchema = z.object({
-  name: z.string().min(2).max(120),
-  description: z.string().max(500).optional(),
-  parentId: z.string().optional(),
-  monthlyPrice: z.number().int().min(0).optional(),
-  active: z.boolean().optional(),
-});
-
-export const UpdateCatalogSchema = z.object({
-  name: z.string().min(2).max(120).optional(),
-  description: z.string().max(500).optional(),
-  monthlyPrice: z.number().int().min(0).optional(),
-  active: z.boolean().optional(),
-}).refine((d) => Object.keys(d).length > 0, { message: 'At least one field required' });
-
-// ─── Users (SADMIN edits org users; ADMINISTRATOR edits Sadmins) ─────────────
+// ─── Users (ADMINISTRATOR edits org users / admins) ─────────────────────────
 export const UpdateUserSchema = z.object({
   name: z.string().min(2).max(80).optional(),
   email: z.string().email().optional(),
   mfaEnabled: z.boolean().optional(),
-  role: z.enum(['USER', 'ORG_ADMIN']).optional(),  // SADMIN / ADMINISTRATOR never assignable via this schema
+  role: z.enum(['USER', 'ORG_ADMIN']).optional(),  // ADMINISTRATOR never assignable via this schema
 }).refine((d) => Object.keys(d).length > 0, { message: 'At least one field required' });
 
 export type ListOrgsInput = z.infer<typeof ListOrgsSchema>;
@@ -91,6 +80,4 @@ export type ListServicesInput = z.infer<typeof ListServicesSchema>;
 export type UpdateServiceInput = z.infer<typeof UpdateServiceSchema>;
 export type RenewServiceInput = z.infer<typeof RenewServiceSchema>;
 export type AssignServiceInput = z.infer<typeof AssignServiceSchema>;
-export type CreateCatalogInput = z.infer<typeof CreateCatalogSchema>;
-export type UpdateCatalogInput = z.infer<typeof UpdateCatalogSchema>;
 export type UpdateUserInput = z.infer<typeof UpdateUserSchema>;

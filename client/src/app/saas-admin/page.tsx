@@ -11,7 +11,6 @@ import Sidebar from '@/components/ui/Sidebar';
 import KpiCard from '@/components/ui/KpiCard';
 import Toggle from '@/components/ui/Toggle';
 import GlowButton from '@/components/ui/GlowButton';
-import CatalogManager from '@/components/ui/CatalogManager';
 import { ShimmerCard, ShimmerRow } from '@/components/ui/Shimmer';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -296,7 +295,6 @@ function AdminDashboard() {
             Monitor Sadmin activity, platform health, and all client organizations
           </p>
         </div>
-        <CatalogManager className="flex-shrink-0" />
       </motion.div>
 
       {/* KPI strip */}
@@ -305,7 +303,7 @@ function AdminDashboard() {
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">{Array.from({ length: 4 }).map((_, i) => <ShimmerCard key={i} />)}</div>
         ) : (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <KpiCard title="Total Sadmins"    value={sadmins?.length ?? 0}              tone="rose" />
+            <KpiCard title="Administrators"   value={sadmins?.length ?? 0}              tone="rose" />
             <KpiCard title="Client Orgs"      value={metrics?.totalOrgs ?? 0}           tone="brand" />
             <KpiCard title="Platform ARR"     value={`₹${((metrics?.arr ?? 0) / 1000).toFixed(0)}K`} tone="emerald" />
             <KpiCard title="Open Requests"    value={metrics?.openRequests ?? 0}        tone="amber"
@@ -500,7 +498,7 @@ function SadminPage() {
   }, [allOrgs, orgFilter, orgSearch]);
 
   return (
-    <RoleGuard allowedRoles={['SADMIN', 'ADMINISTRATOR']}>
+    <RoleGuard allowedRoles={['ADMINISTRATOR']}>
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">
@@ -518,7 +516,6 @@ function SadminPage() {
                   Manage all client organizations, their admins, users, and subscribed services
                 </p>
               </div>
-              <CatalogManager className="flex-shrink-0" />
             </motion.div>
 
             {/* ─── KPI Strip ──────────────────────────────────────────────── */}

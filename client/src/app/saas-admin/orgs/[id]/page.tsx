@@ -6,18 +6,16 @@ import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { saasAdminApi } from '@/lib/api';
-import type { CatalogMain } from '@/lib/schemas';
 import RoleGuard from '@/components/guards/RoleGuard';
 import Sidebar from '@/components/ui/Sidebar';
 import GlowButton from '@/components/ui/GlowButton';
-import CatalogManager from '@/components/ui/CatalogManager';
 import Toggle from '@/components/ui/Toggle';
 import { Shimmer } from '@/components/ui/Shimmer';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 interface OrgUser {
   id: string; name: string; email: string;
-  role: 'USER' | 'ORG_ADMIN' | 'SADMIN' | 'ADMINISTRATOR';
+  role: 'USER' | 'ORG_ADMIN' | 'ADMINISTRATOR';
   mfaEnabled: boolean; lastLoginAt: string | null; createdAt: string;
 }
 interface OrgService {
@@ -60,7 +58,6 @@ const priorityConfig: Record<string, { cls: string; dot: string; label: string }
 const roleConfig: Record<string, { cls: string; label: string }> = {
   USER:          { cls: 'text-slate-600 bg-slate-100',   label: 'User' },
   ORG_ADMIN:     { cls: 'text-violet-700 bg-violet-50',  label: 'Org Admin' },
-  SADMIN:        { cls: 'text-brand-700 bg-brand-50',    label: 'Sadmin' },
   ADMINISTRATOR: { cls: 'text-rose-700 bg-rose-50',      label: 'Administrator' },
 };
 const planConfig: Record<string, string> = {
@@ -290,7 +287,7 @@ function UserRow({ user, isCurrentAdmin }: { user: OrgUser; isCurrentAdmin: bool
         {new Date(user.createdAt).toLocaleDateString()}
       </td>
       <td className="px-5 py-3.5 text-right">
-        {(user.role === 'SADMIN' || user.role === 'ADMINISTRATOR') ? (
+        {(user.role === 'ADMINISTRATOR') ? (
           <span className="text-xs text-slate-400">Protected</span>
         ) : (
           <div className="flex gap-1.5 justify-end">
@@ -341,22 +338,18 @@ export default function OrgDetailPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['org-detail'] }),
   });
 
-  // Catalog for the "assign service" picker
-  const { data: catalog } = useQuery<{ catalog: CatalogMain[] }>({
-    queryKey: ['catalog'],
-    queryFn: () => saasAdminApi.listCatalog().then((r) => r.data as { catalog: CatalogMain[] }),
-    staleTime: 60_000,
-  });
-  const [assignServiceId, setAssignServiceId] = useState('');
-  const [assignEndDate, setAssignEndDate] = useState('');
+  // Add-a-service form (each org defines its own services)
+  const [svcName, setSvcName] = useState('');
+  const [svcPrice, setSvcPrice] = useState('');
+  const [svcEndDate, setSvcEndDate] = useState('');
   const assignMutation = useMutation({
-    mutationFn: () => saasAdminApi.assignService(orgId, { serviceId: assignServiceId, endDate: assignEndDate }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['org-detail'] }); setAssignServiceId(''); setAssignEndDate(''); },
+    mutationFn: () => saasAdminApi.assignService(orgId, { name: svcName.trim(), monthlyPrice: Number(svcPrice) || 0, endDate: svcEndDate }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['org-detail'] }); setSvcName(''); setSvcPrice(''); setSvcEndDate(''); },
   });
 
   if (isLoading || !data) {
     return (
-      <RoleGuard allowedRoles={['SADMIN', 'ADMINISTRATOR']}>
+      <RoleGuard allowedRoles={['ADMINISTRATOR']}>
         <div className="flex h-screen overflow-hidden bg-canvas">
           <Sidebar />
           <main className="flex-1 overflow-y-auto">
@@ -373,7 +366,7 @@ export default function OrgDetailPage() {
 
   if (error || !data?.org) {
     return (
-      <RoleGuard allowedRoles={['SADMIN', 'ADMINISTRATOR']}>
+      <RoleGuard allowedRoles={['ADMINISTRATOR']}>
         <div className="flex h-screen overflow-hidden bg-canvas">
           <Sidebar />
           <main className="flex-1 flex items-center justify-center">
@@ -391,7 +384,7 @@ export default function OrgDetailPage() {
   const otherUsers = org.users.filter((u) => u.id !== admin?.id);
 
   return (
-    <RoleGuard allowedRoles={['SADMIN', 'ADMINISTRATOR']}>
+    <RoleGuard allowedRoles={['ADMINISTRATOR']}>
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">
@@ -475,31 +468,26 @@ export default function OrgDetailPage() {
                 <h2 className="text-base font-semibold text-slate-900">Purchased Services</h2>
                 <div className="flex items-center gap-3">
                   <span className="text-xs text-slate-400 tabular-nums">₹{monthlyRevenue.toLocaleString()}/mo  ·  {org.services.length} subscriptions</span>
-                  <CatalogManager className="!py-1.5 !px-3 text-xs" />
                 </div>
               </div>
-              {/* Assign a catalog service to this customer */}
+              {/* Add a service to this customer (each org defines its own services) */}
               <div className="card p-4 mb-4 flex flex-wrap items-end gap-3">
                 <div className="flex-1 min-w-[200px]">
-                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Service</label>
-                  <select value={assignServiceId} onChange={(e) => setAssignServiceId(e.target.value)} className="input">
-                    <option value="">Select a service…</option>
-                    {(catalog?.catalog ?? []).map((m) => (
-                      <optgroup key={m.id} label={m.name}>
-                        <option value={m.id}>{m.name} (main)</option>
-                        {m.children.map((c) => <option key={c.id} value={c.id}>{m.name} — {c.name}</option>)}
-                      </optgroup>
-                    ))}
-                  </select>
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Service name</label>
+                  <input value={svcName} onChange={(e) => setSvcName(e.target.value)} placeholder="e.g. SIEM" className="input" />
+                </div>
+                <div className="w-32">
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">₹ / month</label>
+                  <input type="number" min={0} value={svcPrice} onChange={(e) => setSvcPrice(e.target.value)} placeholder="0" className="input" />
                 </div>
                 <div>
                   <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">End date</label>
-                  <input type="date" value={assignEndDate} onChange={(e) => setAssignEndDate(e.target.value)} className="input" />
+                  <input type="date" value={svcEndDate} onChange={(e) => setSvcEndDate(e.target.value)} className="input" />
                 </div>
                 <GlowButton className="py-2 px-4 text-sm"
-                  disabled={!assignServiceId || !assignEndDate || assignMutation.isPending}
+                  disabled={!svcName.trim() || !svcEndDate || assignMutation.isPending}
                   onClick={() => assignMutation.mutate()}>
-                  {assignMutation.isPending ? 'Assigning…' : 'Assign service'}
+                  {assignMutation.isPending ? 'Adding…' : 'Add service'}
                 </GlowButton>
               </div>
 

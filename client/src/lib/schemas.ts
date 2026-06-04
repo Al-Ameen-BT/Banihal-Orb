@@ -49,8 +49,8 @@ export type LoginInput = z.infer<typeof LoginSchema>;
 export type UpdateMeInput = z.infer<typeof UpdateMeSchema>;
 export type InviteUserInput = z.infer<typeof InviteUserSchema>;
 
-// ─── 4-tier RBAC: USER → ORG_ADMIN → SADMIN → ADMINISTRATOR ─────────────────
-export type Role = 'USER' | 'ORG_ADMIN' | 'SADMIN' | 'ADMINISTRATOR';
+// ─── 3-tier RBAC: USER → ORG_ADMIN → ADMINISTRATOR ──────────────────────────
+export type Role = 'USER' | 'ORG_ADMIN' | 'ADMINISTRATOR';
 export type Plan = 'FREE' | 'PRO' | 'ENTERPRISE';
 export type ServiceStatus = 'ACTIVE' | 'EXPIRING' | 'EXPIRED' | 'SUSPENDED';
 
@@ -92,19 +92,4 @@ export interface OrganizationService {
   purchasedAt: string;
   renewsAt: string;
   lastBilledAt: string | null;
-}
-
-// ─── Service catalog (main services → sub-services) ─────────────────────────
-export interface CatalogService {
-  id: string;
-  name: string;
-  description: string | null;
-  parentId: string | null;
-  active: boolean;
-  monthlyPrice: number;
-  _count?: { purchases: number };
-}
-
-export interface CatalogMain extends CatalogService {
-  children: CatalogService[];
 }
