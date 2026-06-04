@@ -52,7 +52,7 @@ export default function RegisterPage() {
     { id: 'organizationName', label: 'Organization name', placeholder: 'Organization Name' },
     { id: 'name', label: 'Your full name', placeholder: 'Your Name' },
     { id: 'email', label: 'Work email', type: 'email', autoComplete: 'email', placeholder: 'you@organization.com' },
-    { id: 'contactNumber', label: 'Contact number', type: 'tel', autoComplete: 'tel', placeholder: '+91 9876543210' },
+    { id: 'contactNumber', label: 'Contact number', type: 'tel', autoComplete: 'tel', placeholder: '+91 0000000000' },
     { id: 'password', label: 'Password', type: 'password', autoComplete: 'new-password', placeholder: 'New password' },
   ];
 
