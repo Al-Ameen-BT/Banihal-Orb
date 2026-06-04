@@ -34,7 +34,7 @@ export default function RegisterPage() {
             tab === 'saas' ? 'bg-white text-brand shadow-sm' : 'text-slate-500 hover:text-slate-900'
           }`}
         >
-          SaaS Admin
+          Administrartor
         </button>
       </div>
 
