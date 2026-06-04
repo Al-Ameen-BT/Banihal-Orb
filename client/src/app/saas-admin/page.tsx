@@ -217,6 +217,9 @@ function OrgRow({ org, onSuspendToggle, suspendPending, onImpersonate, impersona
           <Link href={`/saas-admin/orgs/${org.id}`}>
             <GlowButton variant="secondary" className="py-1 px-2.5 text-xs">View →</GlowButton>
           </Link>
+          <Link href={`/saas-admin/orgs/${org.id}#services`}>
+            <GlowButton variant="ghost" className="py-1 px-2.5 text-xs">Services</GlowButton>
+          </Link>
           {org.admin && (
             <GlowButton variant="ghost" className="py-1 px-2.5 text-xs"
               onClick={onImpersonate} disabled={impersonatePending}>
@@ -371,7 +374,10 @@ function AdminDashboard() {
                         <span className="font-mono tabular-nums text-sm text-slate-600">{org.openRequests}</span>
                         {org.criticalRequests > 0 && <span className="ml-1.5 text-[10px] font-semibold text-red-700 bg-red-50 px-1.5 py-0.5 rounded">{org.criticalRequests} CRIT</span>}
                       </td>
-                      <td className="px-5 py-3.5 text-right">
+                      <td className="px-5 py-3.5 text-right whitespace-nowrap">
+                        <Link href={`/saas-admin/orgs/${org.id}#services`} className="mr-2">
+                          <GlowButton variant="ghost" className="py-1 px-2.5 text-xs">Services</GlowButton>
+                        </Link>
                         <Link href={`/saas-admin/orgs/${org.id}`}>
                           <GlowButton variant="secondary" className="py-1 px-2.5 text-xs">View →</GlowButton>
                         </Link>

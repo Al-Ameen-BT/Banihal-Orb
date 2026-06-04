@@ -469,7 +469,7 @@ export default function OrgDetailPage() {
             </div>
 
             {/* Services */}
-            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.13 }}>
+            <motion.div id="services" className="scroll-mt-8" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.13 }}>
               <div className="flex items-baseline justify-between mb-4">
                 <h2 className="text-base font-semibold text-slate-900">Purchased Services</h2>
                 <span className="text-xs text-slate-400 tabular-nums">₹{monthlyRevenue.toLocaleString()}/mo  ·  {org.services.length} subscriptions</span>
