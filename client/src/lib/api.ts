@@ -202,6 +202,11 @@ export const saasAdminApi = {
   removeService: (id: string) => api.delete(`/saas-admin/services/${id}`),
   listFlags: () => api.get('/saas-admin/flags'),
   toggleFlag: (key: string, data: unknown) => api.patch(`/saas-admin/flags/${key}`, data),
+  // Service catalog (platform master list)
+  listCatalog: () => api.get('/saas-admin/catalog'),
+  createCatalogItem: (data: unknown) => api.post('/saas-admin/catalog', data),
+  updateCatalogItem: (id: string, data: unknown) => api.patch(`/saas-admin/catalog/${id}`, data),
+  deleteCatalogItem: (id: string) => api.delete(`/saas-admin/catalog/${id}`),
   // Administrator-only: activity feed + Sadmin management
   getSadminActivity: (limit?: number) => api.get('/saas-admin/activity', { params: limit ? { limit } : undefined }),
   listSadmins: () => api.get('/saas-admin/sadmins'),

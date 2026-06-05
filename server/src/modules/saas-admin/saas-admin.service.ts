@@ -7,6 +7,7 @@ import type {
   ListRequestsInput, UpdateRequestInput,
   ListServicesInput, UpdateServiceInput, RenewServiceInput,
   AssignServiceInput,
+  CreateCatalogServiceInput, UpdateCatalogServiceInput,
   UpdateUserInput,
 } from './saas-admin.schema';
 
@@ -484,6 +485,27 @@ export async function upsertFlag(key: string, input: ToggleFlagInput) {
     create: { key, value: input.value, description: input.description },
     update: { value: input.value, ...(input.description ? { description: input.description } : {}) },
   });
+}
+
+// ─── Service catalog (platform-level master list) ───────────────────────────
+export async function listCatalogServices() {
+  return prisma.serviceCatalog.findMany({ orderBy: [{ category: 'asc' }, { name: 'asc' }] });
+}
+
+export async function createCatalogService(input: CreateCatalogServiceInput) {
+  return prisma.serviceCatalog.create({ data: input });
+}
+
+export async function updateCatalogService(id: string, input: UpdateCatalogServiceInput) {
+  const existing = await prisma.serviceCatalog.findUnique({ where: { id } });
+  if (!existing) throw Object.assign(new Error('Catalog service not found'), { status: 404, code: 'NOT_FOUND' });
+  return prisma.serviceCatalog.update({ where: { id }, data: input });
+}
+
+export async function deleteCatalogService(id: string) {
+  const existing = await prisma.serviceCatalog.findUnique({ where: { id } });
+  if (!existing) throw Object.assign(new Error('Catalog service not found'), { status: 404, code: 'NOT_FOUND' });
+  await prisma.serviceCatalog.delete({ where: { id } });
 }
 
 // ─── Administrator-only: SADMIN activity feed ───────────────────────────────

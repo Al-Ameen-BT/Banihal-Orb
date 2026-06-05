@@ -63,6 +63,23 @@ export const AssignServiceSchema = z.object({
   notes: z.string().max(500).optional(),
 });
 
+// ─── Service catalog (platform-level master list) ───────────────────────────
+export const CreateCatalogServiceSchema = z.object({
+  name: z.string().min(1).max(120),
+  description: z.string().max(500).optional(),
+  category: z.string().max(80).optional(),
+  basePrice: z.coerce.number().int().min(0).default(0),
+  enabled: z.boolean().default(true),
+});
+
+export const UpdateCatalogServiceSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  description: z.string().max(500).optional(),
+  category: z.string().max(80).optional(),
+  basePrice: z.coerce.number().int().min(0).optional(),
+  enabled: z.boolean().optional(),
+}).refine((d) => Object.keys(d).length > 0, { message: 'At least one field required' });
+
 // ─── Users (ADMINISTRATOR edits org users / admins) ─────────────────────────
 export const UpdateUserSchema = z.object({
   name: z.string().min(2).max(80).optional(),
@@ -80,4 +97,6 @@ export type ListServicesInput = z.infer<typeof ListServicesSchema>;
 export type UpdateServiceInput = z.infer<typeof UpdateServiceSchema>;
 export type RenewServiceInput = z.infer<typeof RenewServiceSchema>;
 export type AssignServiceInput = z.infer<typeof AssignServiceSchema>;
+export type CreateCatalogServiceInput = z.infer<typeof CreateCatalogServiceSchema>;
+export type UpdateCatalogServiceInput = z.infer<typeof UpdateCatalogServiceSchema>;
 export type UpdateUserInput = z.infer<typeof UpdateUserSchema>;

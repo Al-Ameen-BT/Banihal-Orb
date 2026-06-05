@@ -32,6 +32,12 @@ router.patch('/services/:id', saasAdminController.updateService);
 router.post('/services/:id/renew', saasAdminController.renewService);
 router.delete('/services/:id', saasAdminController.removeService);
 
+// Service catalog (platform master list)
+router.get('/catalog', saasAdminController.listCatalog);
+router.post('/catalog', saasAdminController.createCatalogItem);
+router.patch('/catalog/:id', saasAdminController.updateCatalogItem);
+router.delete('/catalog/:id', saasAdminController.deleteCatalogItem);
+
 // Feature flags
 router.get('/flags', saasAdminController.listFlags);
 router.patch('/flags/:key', saasAdminController.toggleFlag);

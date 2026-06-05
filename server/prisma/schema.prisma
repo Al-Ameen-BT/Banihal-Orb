@@ -128,6 +128,21 @@ model ServiceRequest {
   @@index([createdAt])
 }
 
+// ─── Platform service catalog (global; managed by ADMINISTRATOR) ─────────────
+model ServiceCatalog {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  category    String?
+  basePrice   Int      @default(0)
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([enabled])
+  @@map("serviceCatalog")
+}
+
 // ─── Per-customer service (each org defines/manages its own services) ─────────
 // endDate drives expiry status (ACTIVE / EXPIRING / EXPIRED), derived in code.
 // Managed by the platform ADMINISTRATOR; customer-scoped for org members.

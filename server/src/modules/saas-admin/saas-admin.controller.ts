@@ -4,6 +4,7 @@ import {
   ListRequestsSchema, UpdateRequestSchema,
   ListServicesSchema, UpdateServiceSchema, RenewServiceSchema,
   AssignServiceSchema,
+  CreateCatalogServiceSchema, UpdateCatalogServiceSchema,
   UpdateUserSchema,
 } from './saas-admin.schema';
 import * as saasAdminService from './saas-admin.service';
@@ -153,6 +154,34 @@ export async function toggleFlag(req: Request, res: Response, next: NextFunction
     const input = ToggleFlagSchema.parse(req.body);
     const flag = await saasAdminService.upsertFlag(req.params['key']!, input);
     res.json(flag);
+  } catch (err) { next(err); }
+}
+
+// ─── Service catalog ────────────────────────────────────────────────────────
+export async function listCatalog(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try { res.json(await saasAdminService.listCatalogServices()); } catch (err) { next(err); }
+}
+
+export async function createCatalogItem(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = CreateCatalogServiceSchema.parse(req.body);
+    const item = await saasAdminService.createCatalogService(input);
+    res.status(201).json(item);
+  } catch (err) { next(err); }
+}
+
+export async function updateCatalogItem(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = UpdateCatalogServiceSchema.parse(req.body);
+    const item = await saasAdminService.updateCatalogService(req.params['id']!, input);
+    res.json(item);
+  } catch (err) { next(err); }
+}
+
+export async function deleteCatalogItem(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    await saasAdminService.deleteCatalogService(req.params['id']!);
+    res.status(204).end();
   } catch (err) { next(err); }
 }
 
