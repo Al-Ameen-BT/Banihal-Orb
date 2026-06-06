@@ -74,7 +74,7 @@ export default function LoginPage() {
           <div className="flex justify-center mb-6">
             <img src="/banihal-logo.png" alt="Banihal Logo" className="max-h-12 w-auto object-contain" />
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 mb-1 tracking-tight">Welcome back</h1>
+          <h1 className="text-2xl font-bold text-slate-900 text-slate-900 mb-1 tracking-tight">Welcome back</h1>
           <p className="text-sm text-slate-500">Sign in to your console</p>
         </div>
 

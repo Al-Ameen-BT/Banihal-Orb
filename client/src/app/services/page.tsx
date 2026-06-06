@@ -61,7 +61,7 @@ export default function ServicesPage() {
                 <SummaryTile label="Active"        value={activeCount}   tone="emerald" />
                 <SummaryTile label="Expiring Soon" value={expiringCount} tone="amber" />
                 <SummaryTile label="Action Needed" value={issuesCount}   tone="red" />
-                <SummaryTile label="Monthly Cost"  value={`$${monthlyTotal.toLocaleString()}`} tone="brand" />
+                <SummaryTile label="Monthly Cost"  value={`₹${monthlyTotal.toLocaleString()}`} tone="brand" />
               </div>
             </motion.div>
 
@@ -69,7 +69,7 @@ export default function ServicesPage() {
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.1 }}>
               <div className="flex items-baseline justify-between mb-4">
                 <h2 className="text-base font-semibold text-slate-900">Subscribed Services</h2>
-                <span className="text-xs text-slate-400 tabular-nums">${monthlyTotal.toLocaleString()}/mo · {services.length} services</span>
+                <span className="text-xs text-slate-400 tabular-nums">₹{monthlyTotal.toLocaleString()}/mo · {services.length} services</span>
               </div>
 
               <div className="card overflow-hidden">
@@ -114,7 +114,7 @@ export default function ServicesPage() {
                               <p className="text-[11px] text-slate-400 mt-0.5">{new Date(svc.renewsAt).toLocaleDateString()}</p>
                             </td>
                             <td className="px-5 py-3.5 text-right font-mono tabular-nums text-sm font-semibold text-slate-900">
-                              ${svc.monthlyPrice.toLocaleString()}
+                              ₹{svc.monthlyPrice.toLocaleString()}
                             </td>
                           </tr>
                         );

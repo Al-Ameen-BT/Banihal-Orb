@@ -9,12 +9,11 @@ import { ShimmerCard } from '@/components/ui/Shimmer';
 import { useAuth } from '@/contexts/AuthContext';
 import type { Customer, OrganizationService } from '@/lib/schemas';
 
-// ─── Status config (light theme) ────────────────────────────────────────────
 const statusConfig: Record<string, { cls: string; dot: string; label: string }> = {
   ACTIVE:    { cls: 'text-emerald-700 bg-emerald-50', dot: 'bg-emerald-500', label: 'Active' },
-  EXPIRING:  { cls: 'text-amber-700 bg-amber-50',     dot: 'bg-amber-500',   label: 'Expiring Soon' },
-  EXPIRED:   { cls: 'text-red-700 bg-red-50',         dot: 'bg-red-500',     label: 'Expired' },
-  SUSPENDED: { cls: 'text-slate-600 bg-slate-100',    dot: 'bg-slate-400',   label: 'Suspended' },
+  EXPIRING:  { cls: 'text-amber-700 bg-amber-50',         dot: 'bg-amber-500',   label: 'Expiring Soon' },
+  EXPIRED:   { cls: 'text-red-700 bg-red-50',                 dot: 'bg-red-500',     label: 'Expired' },
+  SUSPENDED: { cls: 'text-slate-600 bg-slate-100',           dot: 'bg-slate-400',   label: 'Suspended' },
 };
 
 function daysUntil(iso: string): number {
