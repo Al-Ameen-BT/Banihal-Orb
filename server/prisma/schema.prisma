@@ -20,7 +20,7 @@ model Customer {
   mailId        String
   contactPerson String
   contactNumber String
-  domain        String?               // derived from mailId (null for gmail.com)
+  domain        String?               @unique // derived from mailId (null for gmail.com); one org per domain
   // ─── B2B / Cybersecurity fields ───────────────────────────────
   industry      String?
   contractValue Int                   @default(0)

@@ -5,7 +5,7 @@ import {
   ListServicesSchema, UpdateServiceSchema, RenewServiceSchema,
   AssignServiceSchema,
   CreateCatalogServiceSchema, UpdateCatalogServiceSchema,
-  UpdateUserSchema,
+  UpdateUserSchema, SystemActivitySchema,
 } from './saas-admin.schema';
 import * as saasAdminService from './saas-admin.service';
 
@@ -219,6 +219,14 @@ export async function getSadminActivity(req: Request, res: Response, next: NextF
   try {
     const limit = Math.min(Number(req.query['limit'] ?? 60), 100);
     const result = await saasAdminService.getSadminActivity(limit);
+    res.json(result);
+  } catch (err) { next(err); }
+}
+
+export async function getSystemActivity(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = SystemActivitySchema.parse(req.query);
+    const result = await saasAdminService.getSystemActivity(input);
     res.json(result);
   } catch (err) { next(err); }
 }

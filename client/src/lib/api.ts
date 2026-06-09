@@ -76,6 +76,7 @@ export default api;
 // Typed API helpers
 export const authApi = {
   register: (data: unknown) => api.post('/auth/register', data),
+  registerUser: (data: unknown) => api.post('/auth/register-user', data),
   registerSaas: (data: unknown) => api.post('/auth/register-saas', data),
   login: (data: unknown) => api.post('/auth/login', data),
   logout: () => api.post('/auth/logout'),
@@ -209,6 +210,7 @@ export const saasAdminApi = {
   deleteCatalogItem: (id: string) => api.delete(`/saas-admin/catalog/${id}`),
   // Administrator-only: activity feed + Sadmin management
   getSadminActivity: (limit?: number) => api.get('/saas-admin/activity', { params: limit ? { limit } : undefined }),
+  getSystemActivity: (params?: Record<string, unknown>) => api.get('/saas-admin/system-activity', { params }),
   listSadmins: () => api.get('/saas-admin/sadmins'),
   updateSadmin: (id: string, data: unknown) => api.patch(`/saas-admin/sadmins/${id}`, data),
   removeSadmin: (id: string) => api.delete(`/saas-admin/sadmins/${id}`),

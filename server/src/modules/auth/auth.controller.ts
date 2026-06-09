@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { RegisterSchema, RegisterSaasSchema, LoginSchema } from './auth.schema';
+import { RegisterSchema, RegisterSaasSchema, RegisterUserSchema, LoginSchema } from './auth.schema';
 import * as authService from './auth.service';
 import { env } from '../../config/env';
 
@@ -18,6 +18,17 @@ export async function register(req: Request, res: Response, next: NextFunction):
   try {
     const input = RegisterSchema.parse(req.body);
     const tokens = await authService.register(input);
+    setTokenCookies(res, tokens);
+    res.status(201).json({ message: 'Registration successful' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function registerUser(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = RegisterUserSchema.parse(req.body);
+    const tokens = await authService.registerUser(input);
     setTokenCookies(res, tokens);
     res.status(201).json({ message: 'Registration successful' });
   } catch (err) {

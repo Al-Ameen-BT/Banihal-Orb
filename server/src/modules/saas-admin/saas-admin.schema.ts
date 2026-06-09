@@ -80,6 +80,17 @@ export const UpdateCatalogServiceSchema = z.object({
   enabled: z.boolean().optional(),
 }).refine((d) => Object.keys(d).length > 0, { message: 'At least one field required' });
 
+// ─── System-wide activity log (ADMINISTRATOR audit console) ─────────────────
+export const SystemActivitySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  action: z.string().max(60).optional(),                          // exact action match
+  role: z.enum(['USER', 'ORG_ADMIN', 'ADMINISTRATOR']).optional(), // performer's role
+  orgId: z.string().optional(),
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+});
+
 // ─── Users (ADMINISTRATOR edits org users / admins) ─────────────────────────
 export const UpdateUserSchema = z.object({
   name: z.string().min(2).max(80).optional(),
@@ -100,3 +111,4 @@ export type AssignServiceInput = z.infer<typeof AssignServiceSchema>;
 export type CreateCatalogServiceInput = z.infer<typeof CreateCatalogServiceSchema>;
 export type UpdateCatalogServiceInput = z.infer<typeof UpdateCatalogServiceSchema>;
 export type UpdateUserInput = z.infer<typeof UpdateUserSchema>;
+export type SystemActivityInput = z.infer<typeof SystemActivitySchema>;

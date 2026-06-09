@@ -7,6 +7,7 @@ const router = Router();
 router.use(authRateLimiter);
 
 router.post('/register', authController.register);
+router.post('/register-user', authController.registerUser);
 router.post('/register-saas', authController.registerSaas);
 router.post('/login', authController.login);
 router.post('/refresh', authController.refresh);

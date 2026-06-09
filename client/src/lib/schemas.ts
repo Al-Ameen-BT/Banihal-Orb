@@ -14,6 +14,20 @@ export const RegisterSchema = z.object({
   contactNumber: z.string().min(7, 'Contact number is required').max(20),
 });
 
+// Joining an existing organization — the org is resolved from the work-email
+// domain server-side, so no organization name is collected here.
+export const RegisterUserSchema = z.object({
+  name: z.string().min(2).max(80),
+  email: z.string().email(),
+  password: z
+    .string()
+    .min(12)
+    .regex(
+      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])/,
+      'Password must contain uppercase, lowercase, number, and special character',
+    ),
+});
+
 export const RegisterSaasSchema = z.object({
   name: z.string().min(2).max(80),
   email: z.string().email(),
@@ -44,6 +58,7 @@ export const InviteUserSchema = z.object({
 });
 
 export type RegisterInput = z.infer<typeof RegisterSchema>;
+export type RegisterUserInput = z.infer<typeof RegisterUserSchema>;
 export type RegisterSaasInput = z.infer<typeof RegisterSaasSchema>;
 export type LoginInput = z.infer<typeof LoginSchema>;
 export type UpdateMeInput = z.infer<typeof UpdateMeSchema>;

@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import { Role } from '@prisma/client';
 import { prisma, customerContext } from '../../config/database';
 import { env } from '../../config/env';
-import type { RegisterInput, RegisterSaasInput, LoginInput } from './auth.schema';
+import type { RegisterInput, RegisterSaasInput, RegisterUserInput, LoginInput } from './auth.schema';
 
 const BCRYPT_ROUNDS = 12;
 
@@ -70,6 +70,78 @@ export async function register(input: RegisterInput): Promise<TokenPair> {
   });
 
   const user = customer.users[0]!;
+
+  await prisma.auditLog.create({
+    data: {
+      action: 'CUSTOMER_CREATED',
+      performedById: user.id,
+      customerId: customer.id,
+      metadata: {
+        orgName: customer.name,
+        email: user.email,
+        role: user.role,
+        ...(customer.domain ? { domain: customer.domain } : {}),
+      },
+    },
+  }).catch(() => {});
+
+  const accessToken = signAccessToken(user.id, customer.id, user.role);
+  const refreshToken = await createRefreshToken(user.id);
+  return { accessToken, refreshToken };
+}
+
+// Self-registration for a member joining an existing organization. The org is
+// resolved from the work-email domain — no organization name is collected.
+export async function registerUser(input: RegisterUserInput): Promise<TokenPair> {
+  const existing = await prisma.user.findUnique({ where: { email: input.email } });
+  if (existing) {
+    throw Object.assign(new Error('Email already registered'), { status: 409, code: 'EMAIL_EXISTS' });
+  }
+
+  const domain = deriveDomain(input.email);
+  if (!domain) {
+    throw Object.assign(
+      new Error('Please register with your work email, not a personal address.'),
+      { status: 400, code: 'WORK_EMAIL_REQUIRED' },
+    );
+  }
+
+  // Match the domain to its registered organization (domain is unique per org,
+  // enforced by the @unique constraint on Customer.domain).
+  const customer = await prisma.customer.findFirst({ where: { domain } });
+  if (!customer) {
+    throw Object.assign(
+      new Error(`No organization is registered for "${domain}". Ask your administrator to register the organization first.`),
+      { status: 404, code: 'ORG_NOT_FOUND' },
+    );
+  }
+  if (customer.suspended) {
+    throw Object.assign(
+      new Error('This organization is suspended. Contact your administrator.'),
+      { status: 403, code: 'ORG_SUSPENDED' },
+    );
+  }
+
+  const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
+  const user = await prisma.user.create({
+    data: {
+      email: input.email,
+      passwordHash,
+      name: input.name,
+      role: 'USER',
+      customerId: customer.id,
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      action: 'USER_REGISTERED',
+      performedById: user.id,
+      customerId: customer.id,
+      metadata: { email: user.email, name: user.name, role: user.role, domain },
+    },
+  }).catch(() => {});
+
   const accessToken = signAccessToken(user.id, customer.id, user.role);
   const refreshToken = await createRefreshToken(user.id);
   return { accessToken, refreshToken };
@@ -141,11 +213,9 @@ export async function login(input: LoginInput): Promise<TokenPair> {
 
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
 
-  if (user.role === 'ADMINISTRATOR') {
-    await prisma.auditLog.create({
-      data: { action: 'LOGIN', performedById: user.id, customerId: user.customerId },
-    }).catch(() => {});
-  }
+  await prisma.auditLog.create({
+    data: { action: 'LOGIN', performedById: user.id, customerId: user.customerId, metadata: { role: user.role } },
+  }).catch(() => {});
 
   const accessToken = signAccessToken(user.id, user.customerId, user.role);
   const refreshToken = await createRefreshToken(user.id);
@@ -191,11 +261,9 @@ export async function logout(rawRefreshToken: string): Promise<void> {
     const ok = await bcrypt.compare(rawRefreshToken, t.tokenHash);
     if (ok) {
       await prisma.refreshToken.delete({ where: { id: t.id } });
-      if (t.user.role === 'ADMINISTRATOR') {
-        await prisma.auditLog.create({
-          data: { action: 'LOGOUT', performedById: t.user.id, customerId: t.user.customerId },
-        }).catch(() => {});
-      }
+      await prisma.auditLog.create({
+        data: { action: 'LOGOUT', performedById: t.user.id, customerId: t.user.customerId, metadata: { role: t.user.role } },
+      }).catch(() => {});
       return;
     }
   }

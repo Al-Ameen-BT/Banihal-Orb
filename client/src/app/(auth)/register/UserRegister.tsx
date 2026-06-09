@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { authApi } from '@/lib/api';
-import { RegisterSchema } from '@/lib/schemas';
+import { RegisterUserSchema } from '@/lib/schemas';
 import GlowButton from '@/components/ui/GlowButton';
 import AmbientBackdrop from '@/components/ui/AmbientBackdrop';
 
@@ -25,11 +25,9 @@ export default function RegisterPage() {
       name: fd.get('name') as string,
       email: fd.get('email') as string,
       password: fd.get('password') as string,
-      organizationName: fd.get('organizationName') as string,
-      contactNumber: fd.get('contactNumber') as string,
     };
 
-    const result = RegisterSchema.safeParse(data);
+    const result = RegisterUserSchema.safeParse(data);
     if (!result.success) {
       const flat = result.error.flatten().fieldErrors;
       setErrors(Object.fromEntries(Object.entries(flat).map(([k, v]) => [k, v?.[0] ?? ''])));
@@ -38,7 +36,7 @@ export default function RegisterPage() {
 
     setLoading(true);
     try {
-      await authApi.register(result.data);
+      await authApi.registerUser(result.data);
       router.push('/login?registered=1');
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Registration failed';
@@ -49,10 +47,8 @@ export default function RegisterPage() {
   }
 
   const fields: Array<{ id: string; label: string; type?: string; autoComplete?: string; placeholder: string }> = [
-    { id: 'organizationName', label: 'Organization name', placeholder: 'Organization Name' },
     { id: 'name', label: 'Your full name', placeholder: 'Your Name' },
     { id: 'email', label: 'Work email', type: 'email', autoComplete: 'email', placeholder: 'you@organization.com' },
-    { id: 'contactNumber', label: 'Contact number', type: 'tel', autoComplete: 'tel', placeholder: '+91 0000000000' },
     { id: 'password', label: 'Password', type: 'password', autoComplete: 'new-password', placeholder: 'New password' },
   ];
 
@@ -70,8 +66,8 @@ export default function RegisterPage() {
           <div className="flex justify-center mb-6">
             <img src="/banihal-logo.png" alt="Banihal Logo" className="max-h-12 w-auto object-contain" />
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 mb-1 tracking-tight">Create your Account</h1>
-          <p className="text-sm text-slate-500">Start managing your operations</p>
+          <h1 className="text-2xl font-bold text-slate-900 mb-1 tracking-tight">Join your organization</h1>
+          <p className="text-sm text-slate-500">We&apos;ll match you to your organization by your work email</p>
         </div>
 
         {/* Card */}
@@ -99,7 +95,7 @@ export default function RegisterPage() {
             ))}
 
             <GlowButton type="submit" loading={loading} className="w-full !mt-6">
-              {loading ? 'Creating organization…' : 'Create organization'}
+              {loading ? 'Creating account…' : 'Create account'}
             </GlowButton>
           </form>
         </div>

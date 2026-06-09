@@ -8,7 +8,7 @@ import type {
   ListServicesInput, UpdateServiceInput, RenewServiceInput,
   AssignServiceInput,
   CreateCatalogServiceInput, UpdateCatalogServiceInput,
-  UpdateUserInput,
+  UpdateUserInput, SystemActivityInput,
 } from './saas-admin.schema';
 
 // All queries in this module bypass tenant scope intentionally (SADMIN / ADMINISTRATOR global access)
@@ -524,6 +524,43 @@ export async function getSadminActivity(limit = 60) {
     take: limit,
   });
   return logs;
+}
+
+// ─── Administrator-only: system-wide activity log (audit console) ───────────
+// Default scope is account-lifecycle + session events across ALL orgs:
+// org creation, user registration, and every role's login / logout.
+const SYSTEM_ACTIONS = ['CUSTOMER_CREATED', 'USER_REGISTERED', 'LOGIN', 'LOGOUT'];
+
+export async function getSystemActivity(input: SystemActivityInput) {
+  const where = {
+    ...(input.action ? { action: input.action } : { action: { in: SYSTEM_ACTIONS } }),
+    ...(input.role ? { performedBy: { role: input.role } } : {}),
+    ...(input.orgId ? { customerId: input.orgId } : {}),
+    ...(input.from || input.to
+      ? { createdAt: { ...(input.from ? { gte: input.from } : {}), ...(input.to ? { lte: input.to } : {}) } }
+      : {}),
+  };
+
+  const [logs, total] = await Promise.all([
+    prisma.auditLog.findMany({
+      where,
+      include: { performedBy: { select: { id: true, name: true, email: true, role: true } } },
+      orderBy: { createdAt: 'desc' },
+      skip: (input.page - 1) * input.limit,
+      take: input.limit,
+    }),
+    prisma.auditLog.count({ where }),
+  ]);
+
+  // Resolve org names in one round-trip (customerId is a scalar, not a relation here).
+  const orgIds = [...new Set(logs.map((l) => l.customerId))];
+  const orgs = orgIds.length
+    ? await prisma.customer.findMany({ where: { id: { in: orgIds } }, select: { id: true, name: true, slug: true } })
+    : [];
+  const orgMap = new Map(orgs.map((o) => [o.id, o] as const));
+  const items = logs.map((l) => ({ ...l, organization: orgMap.get(l.customerId) ?? null }));
+
+  return { items, total, page: input.page, limit: input.limit };
 }
 
 // ─── Administrator-only: Sadmin management ───────────────────────────────────
