@@ -16,7 +16,7 @@ const fadeUp = {
 export default function ForbiddenPage() {
   const router = useRouter();
   return (
-    <div className="relative min-h-screen flex items-center justify-center px-6 overflow-hidden bg-[#F8FAFC]">
+    <div className="relative min-h-screen flex items-center justify-center px-6 overflow-hidden bg-[var(--canvas)]">
 
       {/* Background layer */}
       <div className="fixed inset-0 -z-10 pointer-events-none" aria-hidden>
@@ -30,6 +30,13 @@ export default function ForbiddenPage() {
           className="absolute inset-0 opacity-[0.45]"
           style={{
             backgroundImage: 'radial-gradient(circle, rgba(15,23,42,0.05) 1px, transparent 1px)',
+            backgroundSize: '28px 28px',
+          }}
+        />
+        <div
+          className="absolute inset-0 opacity-0"
+          style={{
+            backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.6) 1px, transparent 1px)',
             backgroundSize: '28px 28px',
           }}
         />

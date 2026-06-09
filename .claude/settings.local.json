@@ -14,7 +14,8 @@
       "Bash(curl -s -X POST http://localhost:3001/api/auth/login -H 'Content-Type: application/json' -d '{\"email\":\"ameen@banihaltechnologies.com\",\"password\":\"Admin@1234\"}')",
       "Bash(PGPASSWORD=postgres psql *)",
       "Bash(curl *)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Skill(run)"
     ]
   }
 }
