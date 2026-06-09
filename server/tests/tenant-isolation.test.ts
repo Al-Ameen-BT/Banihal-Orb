@@ -11,7 +11,7 @@ describe('Tenant isolation', () => {
     const orgB = await createTestOrg('Org B');
 
     const userA = await createTestUser(orgA.id, 'usera@example.com', 'ORG_ADMIN');
-    const userB = await createTestUser(orgB.id, 'userb@example.com', 'MEMBER');
+    const userB = await createTestUser(orgB.id, 'userb@example.com', 'USER');
 
     // Login as Org A admin
     const cookiesA = await loginAs('usera@example.com');

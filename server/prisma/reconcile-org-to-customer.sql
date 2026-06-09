@@ -8,7 +8,7 @@
 -- Scope (exactly what was requested):
 --   1. Rename table  "Organization"            -> "customers"
 --   2. Rename column "User"."organizationId"   -> "customerId"
---  2b. Add "AuditLog"."customerId" (+ backfill + index) for the audit-log feature
+--  2b. Rename "AuditLog"."organizationId" -> "customerId" (+ index)
 --   3. Add columns   domain, mailId, contactPerson, contactNumber to customers
 --   4. Backfill domain (and mailId/contactPerson) from each org's ORG_ADMIN work email
 --   5. Add the UNIQUE index on customers.domain
@@ -39,24 +39,14 @@ ALTER TABLE "User" RENAME COLUMN "organizationId" TO "customerId";
 ALTER TABLE "User" RENAME CONSTRAINT "User_organizationId_fkey" TO "User_customerId_fkey";
 ALTER INDEX "User_organizationId_idx" RENAME TO "User_customerId_idx";
 
--- ── 2b. AuditLog.customerId (required by the audit-log feature) ─────────────
--- Add the scoping column, backfill from each entry's performer org, enforce
--- NOT NULL, and add the index Prisma expects (@@index([customerId])).
-ALTER TABLE "AuditLog" ADD COLUMN "customerId" TEXT;
-
-UPDATE "AuditLog" a
-SET "customerId" = u."customerId"
-FROM "User" u
-WHERE u.id = a."performedById";
-
--- Safety net: any orphaned audit rows (performer no longer exists) get pinned
--- to the earliest org so NOT NULL can be enforced without dropping history.
-UPDATE "AuditLog"
-SET "customerId" = (SELECT id FROM "customers" ORDER BY "createdAt" ASC LIMIT 1)
-WHERE "customerId" IS NULL;
-
-ALTER TABLE "AuditLog" ALTER COLUMN "customerId" SET NOT NULL;
-CREATE INDEX "AuditLog_customerId_idx" ON "AuditLog" ("customerId");
+-- ── 2b. AuditLog.organizationId -> customerId (rename; preserves data) ──────
+-- The old AuditLog table already has a NOT NULL "organizationId". The Prisma
+-- model only knows "customerId", so this MUST be a rename — adding a new
+-- customerId alongside would leave organizationId NOT NULL with no default and
+-- every audit insert would fail with a null-constraint violation.
+ALTER TABLE "AuditLog" RENAME COLUMN "organizationId" TO "customerId";
+ALTER INDEX IF EXISTS "AuditLog_organizationId_idx" RENAME TO "AuditLog_customerId_idx";
+CREATE INDEX IF NOT EXISTS "AuditLog_customerId_idx" ON "AuditLog" ("customerId");
 
 -- ── 3. Add the new columns (nullable for now, so existing rows don't break) ──
 ALTER TABLE "customers"

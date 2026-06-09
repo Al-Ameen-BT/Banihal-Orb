@@ -22,9 +22,10 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
 
   if (err instanceof Error) {
     const status = (err as Error & { status?: number }).status ?? 500;
+    const code = (err as Error & { code?: string }).code;
     res.status(status).json({
       error: status === 500 ? 'Internal server error' : err.message,
-      code: status === 500 ? 'INTERNAL_ERROR' : 'ERROR',
+      code: status === 500 ? 'INTERNAL_ERROR' : (code ?? 'ERROR'),
       ...(env.NODE_ENV !== 'production' && status === 500 ? { stack: err.stack } : {}),
     });
     return;

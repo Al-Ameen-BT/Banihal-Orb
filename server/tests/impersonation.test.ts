@@ -10,8 +10,8 @@ describe('Impersonation audit trail', () => {
     const adminOrg = await createTestOrg('SaaS Admin Org');
     const targetOrg = await createTestOrg('Target Org');
 
-    const saasAdmin = await createTestUser(adminOrg.id, 'saasadmin@example.com', 'SAAS_ADMIN');
-    const targetUser = await createTestUser(targetOrg.id, 'target@example.com', 'MEMBER');
+    const saasAdmin = await createTestUser(adminOrg.id, 'saasadmin@example.com', 'ADMINISTRATOR');
+    const targetUser = await createTestUser(targetOrg.id, 'target@example.com', 'USER');
 
     const cookies = await loginAs('saasadmin@example.com');
 
@@ -35,8 +35,8 @@ describe('Impersonation audit trail', () => {
     const adminOrg = await createTestOrg('SaaS Org 2');
     const targetOrg = await createTestOrg('Target Org 2');
 
-    await createTestUser(adminOrg.id, 'saasadmin2@example.com', 'SAAS_ADMIN');
-    const targetUser = await createTestUser(targetOrg.id, 'target2@example.com', 'MEMBER');
+    await createTestUser(adminOrg.id, 'saasadmin2@example.com', 'ADMINISTRATOR');
+    const targetUser = await createTestUser(targetOrg.id, 'target2@example.com', 'USER');
 
     const cookies = await loginAs('saasadmin2@example.com');
 
