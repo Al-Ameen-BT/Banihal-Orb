@@ -164,6 +164,11 @@ export default function UsersPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
   });
 
+  const removeSadminMutation = useMutation({
+    mutationFn: (id: string) => saasAdminApi.removeSadmin(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['sadmin-list'] }),
+  });
+
   const userColumns = [
     { key: 'name',  header: 'Name', render: (row: User) => <span className="font-medium text-slate-900">{row.name}</span> },
     { key: 'email', header: 'Email', render: (row: User) => <span className="text-slate-500">{row.email}</span> },
@@ -379,6 +384,19 @@ export default function UsersPage() {
                                 <div className="text-right flex-shrink-0">
                                   <p className="text-xs font-mono text-slate-500">{lastLogin}</p>
                                   <p className="text-[10px] text-slate-400">{s.customer.name}</p>
+                                  {user?.id !== s.id && (
+                                    <button
+                                      className="text-[10px] text-red-600 font-semibold hover:text-red-700 mt-1 cursor-pointer"
+                                      onClick={() => {
+                                        if (confirm(`Remove administrator ${s.name}?`)) {
+                                          removeSadminMutation.mutate(s.id);
+                                        }
+                                      }}
+                                      disabled={removeSadminMutation.isPending}
+                                    >
+                                      Remove
+                                    </button>
+                                  )}
                                 </div>
                               </li>
                             );
