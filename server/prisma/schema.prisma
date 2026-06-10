@@ -72,12 +72,12 @@ model RefreshToken {
 model AuditLog {
   id            String   @id @default(cuid())
   action        String
-  performedById String
+  performedById String?
   targetId      String?
   metadata      Json?
   createdAt     DateTime @default(now())
   customerId    String
-  performedBy   User     @relation(fields: [performedById], references: [id])
+  performedBy   User?    @relation(fields: [performedById], references: [id], onDelete: SetNull)
 
   @@index([customerId])
   @@index([performedById])

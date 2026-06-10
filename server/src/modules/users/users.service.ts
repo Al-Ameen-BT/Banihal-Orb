@@ -81,5 +81,23 @@ export async function removeUser(targetUserId: string, requestingUserId: string)
   if (targetUserId === requestingUserId) {
     throw Object.assign(new Error('Cannot remove yourself'), { status: 400, code: 'SELF_REMOVE' });
   }
+
+  const target = await prisma.user.findUnique({
+    where: { id: targetUserId },
+    select: { id: true, customerId: true, email: true, name: true, role: true }
+  });
+
+  if (target) {
+    await prisma.auditLog.create({
+      data: {
+        action: 'USER_REMOVED',
+        performedById: requestingUserId,
+        targetId: targetUserId,
+        customerId: target.customerId,
+        metadata: { targetEmail: target.email, targetName: target.name, targetRole: target.role }
+      }
+    });
+  }
+
   await prisma.user.delete({ where: { id: targetUserId } });
 }

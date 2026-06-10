@@ -51,6 +51,9 @@ const ACTION_LABEL: Record<string, { label: string; cls: string; icon: string }>
   ADMINISTRATOR_SADMIN_PASSWORD_RESET: { label: 'Sadmin pwd reset', cls: 'text-amber-700 bg-amber-50',     icon: '🔑' },
   ADMIN_USER_UPDATE:                   { label: 'User updated',     cls: 'text-brand-700 bg-brand-50',     icon: '✎' },
   ADMINISTRATOR_SADMIN_UPDATE:         { label: 'Sadmin updated',   cls: 'text-brand-700 bg-brand-50',     icon: '✎' },
+  ADMINISTRATOR_SADMIN_REMOVE:         { label: 'Sadmin removed',   cls: 'text-red-700 bg-red-50',         icon: '🗑' },
+  ADMIN_USER_REMOVE:                   { label: 'User removed',     cls: 'text-red-700 bg-red-50',         icon: '🗑' },
+  USER_REMOVED:                        { label: 'User removed',     cls: 'text-red-700 bg-red-50',         icon: '🗑' },
 };
 const roleBadgeCls: Record<string, string> = {
   USER:          'text-slate-600 bg-slate-100',
@@ -102,7 +105,7 @@ export default function UsersPage() {
   });
   const { data: sadmins, isLoading: sadminsLoading } = useQuery<SadminUser[]>({
     queryKey: ['sadmin-list'],
-    queryFn: () => saasAdminApi.listSadmins().then((r) => r.data as SadminUser[]),
+    queryFn: () => saasAdminApi.listSadmins().then((r) => (r.data as { sadmins: SadminUser[] }).sadmins),
     enabled: isPlatformAdmin,
     staleTime: 15_000,
     refetchInterval: 30_000,

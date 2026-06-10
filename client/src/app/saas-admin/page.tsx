@@ -297,7 +297,7 @@ function AdminDashboard() {
   // Sadmin count for the KPI card — the activity feed + full listing now live on the Users page.
   const { data: sadmins } = useQuery<SadminUser[]>({
     queryKey: ['sadmin-list'],
-    queryFn: () => saasAdminApi.listSadmins().then((r) => r.data as SadminUser[]),
+    queryFn: () => saasAdminApi.listSadmins().then((r) => (r.data as { sadmins: SadminUser[] }).sadmins),
     staleTime: 60_000,
   });
   const { data: orgsData, isLoading: orgsLoading } = useQuery<{ orgs: OrgOverview[]; total: number }>({
