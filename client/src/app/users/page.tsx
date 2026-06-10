@@ -1,8 +1,9 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { usersApi, orgsApi, saasAdminApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import RoleGuard from '@/components/guards/RoleGuard';
@@ -12,6 +13,68 @@ import GlowButton from '@/components/ui/GlowButton';
 import Toggle from '@/components/ui/Toggle';
 import { ShimmerRow } from '@/components/ui/Shimmer';
 import type { User, Customer } from '@/lib/schemas';
+
+// ─── Confirmation Modal ─────────────────────────────────────────────────────
+function ConfirmDeleteModal({
+  userName,
+  userEmail,
+  isPending,
+  onConfirm,
+  onCancel,
+}: {
+  userName: string;
+  userEmail: string;
+  isPending: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.15 }}
+        className="absolute inset-0 bg-black/30 backdrop-blur-sm"
+        onClick={onCancel}
+      />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 10 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 10 }}
+        transition={{ duration: 0.18 }}
+        className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden"
+      >
+        {/* Header */}
+        <div className="px-6 pt-6 pb-4 flex items-start gap-4">
+          <div className="w-11 h-11 rounded-full bg-red-50 flex items-center justify-center flex-shrink-0">
+            <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+            </svg>
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="text-base font-semibold text-slate-900">Remove User</h3>
+            <p className="mt-1.5 text-sm text-slate-500 leading-relaxed">
+              Are you sure you want to remove <span className="font-semibold text-slate-700">{userName}</span>?
+              This action cannot be undone.
+            </p>
+            <p className="mt-1 text-xs text-slate-400 font-mono">{userEmail}</p>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="px-6 py-4 bg-slate-50/80 border-t border-slate-100 flex items-center justify-end gap-3">
+          <GlowButton variant="ghost" onClick={onCancel} disabled={isPending}>
+            Cancel
+          </GlowButton>
+          <GlowButton variant="danger" onClick={onConfirm} disabled={isPending} loading={isPending}>
+            Yes, Remove
+          </GlowButton>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
 
 const roleConfig: Record<string, { label: string; cls: string }> = {
   USER:          { label: 'User',          cls: 'text-slate-600 bg-slate-100' },
@@ -77,11 +140,15 @@ function timeAgo(iso: string) {
 
 export default function UsersPage() {
   const qc = useQueryClient();
+  const router = useRouter();
   const { user } = useAuth();
   const isPlatformAdmin = user?.role === 'ADMINISTRATOR';
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteName,  setInviteName]  = useState('');
   const [inviteRole,  setInviteRole]  = useState<'USER' | 'ORG_ADMIN'>('USER');
+
+  // Confirmation modal state
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string; email: string; type: 'user' | 'sadmin' } | null>(null);
 
   const { data: users, isLoading: usersLoading } = useQuery<{ users: User[] }>({
     queryKey: ['users'],
@@ -164,12 +231,20 @@ export default function UsersPage() {
 
   const removeMutation = useMutation({
     mutationFn: (id: string) => usersApi.remove(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+    onSuccess: () => {
+      setDeleteTarget(null);
+      qc.invalidateQueries({ queryKey: ['users'] });
+      router.push('/users');
+    },
   });
 
   const removeSadminMutation = useMutation({
     mutationFn: (id: string) => saasAdminApi.removeSadmin(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['sadmin-list'] }),
+    onSuccess: () => {
+      setDeleteTarget(null);
+      qc.invalidateQueries({ queryKey: ['sadmin-list'] });
+      router.push('/users');
+    },
   });
 
   const userColumns = [
@@ -206,7 +281,7 @@ export default function UsersPage() {
               {nextRole === 'ORG_ADMIN' ? 'Promote' : 'Demote'}
             </GlowButton>
             <GlowButton variant="danger" className="py-1 px-2.5 text-xs"
-              onClick={() => removeMutation.mutate(row.id)} disabled={removeMutation.isPending}>
+              onClick={() => setDeleteTarget({ id: row.id, name: row.name, email: row.email, type: 'user' })} disabled={removeMutation.isPending}>
               Remove
             </GlowButton>
           </div>
@@ -390,11 +465,7 @@ export default function UsersPage() {
                                   {user?.id !== s.id && (
                                     <button
                                       className="text-[10px] text-red-600 font-semibold hover:text-red-700 mt-1 cursor-pointer"
-                                      onClick={() => {
-                                        if (confirm(`Remove administrator ${s.name}?`)) {
-                                          removeSadminMutation.mutate(s.id);
-                                        }
-                                      }}
+                                      onClick={() => setDeleteTarget({ id: s.id, name: s.name, email: s.email, type: 'sadmin' })}
                                       disabled={removeSadminMutation.isPending}
                                     >
                                       Remove
@@ -521,6 +592,25 @@ export default function UsersPage() {
           </div>
         </main>
       </div>
+
+      {/* Confirmation Modal */}
+      <AnimatePresence>
+        {deleteTarget && (
+          <ConfirmDeleteModal
+            userName={deleteTarget.name}
+            userEmail={deleteTarget.email}
+            isPending={deleteTarget.type === 'user' ? removeMutation.isPending : removeSadminMutation.isPending}
+            onConfirm={() => {
+              if (deleteTarget.type === 'user') {
+                removeMutation.mutate(deleteTarget.id);
+              } else {
+                removeSadminMutation.mutate(deleteTarget.id);
+              }
+            }}
+            onCancel={() => setDeleteTarget(null)}
+          />
+        )}
+      </AnimatePresence>
     </RoleGuard>
   );
 }

@@ -112,7 +112,7 @@ export async function assignService(req: Request, res: Response, next: NextFunct
 export async function removeService(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     await saasAdminService.removeCustomerService(req.params['id']!, req.user.userId);
-    res.status(204).end();
+    res.status(200).json({ success: true });
   } catch (err) { next(err); }
 }
 
@@ -134,7 +134,7 @@ export async function updateUser(req: Request, res: Response, next: NextFunction
 export async function removeUser(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     await saasAdminService.removeUser(req.params['id']!, req.user.userId);
-    res.status(204).end();
+    res.status(200).json({ success: true });
   } catch (err) { next(err); }
 }
 
@@ -181,7 +181,7 @@ export async function updateCatalogItem(req: Request, res: Response, next: NextF
 export async function deleteCatalogItem(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     await saasAdminService.deleteCatalogService(req.params['id']!);
-    res.status(204).end();
+    res.status(200).json({ success: true });
   } catch (err) { next(err); }
 }
 
@@ -204,7 +204,7 @@ export async function updateSadmin(req: Request, res: Response, next: NextFuncti
 export async function removeSadmin(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     await saasAdminService.removeSadmin(req.params['id']!, req.user.userId);
-    res.status(204).end();
+    res.status(200).json({ success: true });
   } catch (err) { next(err); }
 }
 

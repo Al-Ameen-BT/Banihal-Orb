@@ -52,6 +52,6 @@ export async function changeRole(req: Request, res: Response, next: NextFunction
 export async function removeUser(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     await usersService.removeUser(req.params['id']!, req.user.userId);
-    res.status(204).send();
+    res.status(200).json({ success: true });
   } catch (err) { next(err); }
 }

@@ -364,6 +364,7 @@ function UserRow({ user, isCurrentAdmin }: { user: OrgUser; isCurrentAdmin: bool
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(user.name);
   const [email, setEmail] = useState(user.email);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const cfg = roleConfig[user.role] ?? roleConfig['USER']!;
 
@@ -442,13 +443,61 @@ function UserRow({ user, isCurrentAdmin }: { user: OrgUser; isCurrentAdmin: bool
               </GlowButton>
             )}
             <GlowButton variant="danger" className="py-1 px-2 text-xs"
-              onClick={() => { if (confirm(`Remove ${user.name}?`)) removeMutation.mutate(); }}
+              onClick={() => setConfirmDelete(true)}
               disabled={removeMutation.isPending}>
               Remove
             </GlowButton>
           </div>
         )}
       </td>
+
+      {/* Confirmation Modal */}
+      <AnimatePresence>
+        {confirmDelete && (
+          <td style={{ position: 'fixed', inset: 0, zIndex: 50 }} className="flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              className="absolute inset-0 bg-black/30 backdrop-blur-sm"
+              onClick={() => setConfirmDelete(false)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              transition={{ duration: 0.18 }}
+              className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden"
+              style={{ margin: 'auto' }}
+            >
+              <div className="px-6 pt-6 pb-4 flex items-start gap-4">
+                <div className="w-11 h-11 rounded-full bg-red-50 flex items-center justify-center flex-shrink-0">
+                  <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                  </svg>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-base font-semibold text-slate-900">Remove User</h3>
+                  <p className="mt-1.5 text-sm text-slate-500 leading-relaxed">
+                    Are you sure you want to remove <span className="font-semibold text-slate-700">{user.name}</span>?
+                    This action cannot be undone.
+                  </p>
+                  <p className="mt-1 text-xs text-slate-400 font-mono">{user.email}</p>
+                </div>
+              </div>
+              <div className="px-6 py-4 bg-slate-50/80 border-t border-slate-100 flex items-center justify-end gap-3">
+                <GlowButton variant="ghost" onClick={() => setConfirmDelete(false)} disabled={removeMutation.isPending}>
+                  Cancel
+                </GlowButton>
+                <GlowButton variant="danger" onClick={() => removeMutation.mutate()} disabled={removeMutation.isPending} loading={removeMutation.isPending}>
+                  Yes, Remove
+                </GlowButton>
+              </div>
+            </motion.div>
+          </td>
+        )}
+      </AnimatePresence>
     </tr>
   );
 }
