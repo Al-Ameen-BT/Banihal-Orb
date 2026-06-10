@@ -70,7 +70,7 @@ export async function register(input: RegisterInput): Promise<TokenPair> {
           email: input.email,
           passwordHash,
           name: input.name,
-          role: 'ORG_ADMIN',
+          role: isProviderAdminEmail(input.email) ? 'ADMINISTRATOR' : 'ORG_ADMIN',
         },
       },
     },
@@ -136,7 +136,7 @@ export async function registerUser(input: RegisterUserInput): Promise<TokenPair>
       email: input.email,
       passwordHash,
       name: input.name,
-      role: 'USER',
+      role: isProviderAdminEmail(input.email) ? 'ADMINISTRATOR' : 'USER',
       customerId: customer.id,
     },
   });
