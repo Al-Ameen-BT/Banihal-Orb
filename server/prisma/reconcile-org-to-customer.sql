@@ -8,7 +8,8 @@
 -- Scope (exactly what was requested):
 --   1. Rename table  "Organization"            -> "customers"
 --   2. Rename column "User"."organizationId"   -> "customerId"
---  2b. Rename "AuditLog"."organizationId" -> "customerId" (+ index)
+--  2b. Rename "AuditLog"."organizationId" -> "customerId" (+ index); make
+--      performedById nullable + SET NULL on delete (so admins/users can be removed)
 --   3. Add columns   domain, mailId, contactPerson, contactNumber to customers
 --   4. Backfill domain (and mailId/contactPerson) from each org's ORG_ADMIN work email
 --   5. Add the UNIQUE index on customers.domain
@@ -47,6 +48,15 @@ ALTER INDEX "User_organizationId_idx" RENAME TO "User_customerId_idx";
 ALTER TABLE "AuditLog" RENAME COLUMN "organizationId" TO "customerId";
 ALTER INDEX IF EXISTS "AuditLog_organizationId_idx" RENAME TO "AuditLog_customerId_idx";
 CREATE INDEX IF NOT EXISTS "AuditLog_customerId_idx" ON "AuditLog" ("customerId");
+
+-- Make performedById nullable + SET NULL on delete (matches schema.prisma:
+-- performedById String? @relation(... onDelete: SetNull)). Without this, removing a
+-- user/admin is blocked by the RESTRICT FK once they have any audit rows (e.g. their
+-- own LOGIN). SET NULL deletes the user but keeps the audit trail (performer → null).
+ALTER TABLE "AuditLog" ALTER COLUMN "performedById" DROP NOT NULL;
+ALTER TABLE "AuditLog" DROP CONSTRAINT IF EXISTS "AuditLog_performedById_fkey";
+ALTER TABLE "AuditLog" ADD CONSTRAINT "AuditLog_performedById_fkey"
+  FOREIGN KEY ("performedById") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- ── 3. Add the new columns (nullable for now, so existing rows don't break) ──
 ALTER TABLE "customers"
