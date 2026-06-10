@@ -16,6 +16,7 @@ import orgsRoutes from './modules/organizations/organizations.routes';
 import dashboardRoutes from './modules/dashboard/dashboard.routes';
 import saasAdminRoutes from './modules/saas-admin/saas-admin.routes';
 import chatRoutes from './modules/chat/chat.routes';
+import requestsRoutes from './modules/requests/requests.routes';
 
 const app = express();
 
@@ -53,6 +54,7 @@ app.use('/api/users', withTenant, usersRoutes);
 app.use('/api/organizations', withTenant, orgsRoutes);
 app.use('/api/dashboard', withTenant, dashboardRoutes);
 app.use('/api/chat', withTenant, chatRoutes);
+app.use('/api/requests', withTenant, requestsRoutes);
 
 // Sadmin / Administrator — platform-level access, no tenant scope
 app.use('/api/saas-admin', requireRole('ADMINISTRATOR'), saasAdminRoutes);

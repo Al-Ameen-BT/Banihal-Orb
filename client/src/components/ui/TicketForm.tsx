@@ -2,16 +2,14 @@
 
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useQueryClient } from '@tanstack/react-query';
 import GlowButton from './GlowButton';
-import type { OrganizationService } from '@/lib/schemas';
-
-// Backend types (matches Prisma enums) — values used directly when wiring API later.
-type RequestType = 'SUPPORT' | 'INCIDENT' | 'FEATURE_REQUEST' | 'BILLING' | 'ONBOARDING';
-type Priority   = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+import { requestsApi } from '@/lib/api';
+import type { OrganizationService, RequestType, Priority, ServiceRequest } from '@/lib/schemas';
 
 interface TicketFormProps {
   services?: OrganizationService[];
-  /** Wire this to your real submit handler later (POST /api/requests, etc.). */
+  /** Optional override; by default the form POSTs to /api/requests directly. */
   onSubmit?: (data: { subject: string; type: RequestType; priority: Priority; service: string | null; description: string }) => Promise<void> | void;
 }
 
@@ -35,6 +33,7 @@ const priorityOptions: Array<{ value: Priority; label: string; cls: string; acti
 ];
 
 export default function TicketForm({ services = [], onSubmit }: TicketFormProps) {
+  const queryClient = useQueryClient();
   const [subject, setSubject]         = useState('');
   const [type, setType]               = useState<RequestType>('SUPPORT');
   const [priority, setPriority]       = useState<Priority>('MEDIUM');
@@ -42,6 +41,7 @@ export default function TicketForm({ services = [], onSubmit }: TicketFormProps)
   const [description, setDescription] = useState('');
   const [submitting, setSubmitting]   = useState(false);
   const [successId, setSuccessId]     = useState<string | null>(null);
+  const [error, setError]             = useState<string | null>(null);
 
   const eligibleServices = services.filter((s) => s.enabled && (s.status === 'ACTIVE' || s.status === 'EXPIRING'));
   const isValid = subject.trim().length >= 5;
@@ -50,30 +50,38 @@ export default function TicketForm({ services = [], onSubmit }: TicketFormProps)
     e.preventDefault();
     if (!isValid || submitting) return;
     setSubmitting(true);
+    setError(null);
 
     const payload = {
       subject: subject.trim(),
       type,
       priority,
       service: service || null,
-      description: description.trim(),
+      description: description.trim() || undefined,
     };
 
     try {
+      let ticketId: string;
       if (onSubmit) {
-        await onSubmit(payload);
+        await onSubmit({ ...payload, description: description.trim() });
+        ticketId = 'submitted';
       } else {
-        // Mock delay for realistic feedback before the backend is wired.
-        await new Promise((r) => setTimeout(r, 600));
+        const { data } = await requestsApi.create(payload);
+        ticketId = (data as ServiceRequest).id;
+        await queryClient.invalidateQueries({ queryKey: ['my-requests'] });
       }
-      const mockId = 'TKT-' + Math.random().toString(36).slice(2, 8).toUpperCase();
-      setSuccessId(mockId);
+      setSuccessId(ticketId);
       setSubject(''); setDescription(''); setService(''); setType('SUPPORT'); setPriority('MEDIUM');
       setTimeout(() => setSuccessId(null), 6000);
+    } catch {
+      setError('Could not create the ticket. Please try again.');
     } finally {
       setSubmitting(false);
     }
   }
+
+  // Short, human-friendly reference derived from the real ticket id.
+  const reference = successId ? `TKT-${successId.slice(-8).toUpperCase()}` : '';
 
   return (
     <div className="card p-6">
@@ -106,8 +114,8 @@ export default function TicketForm({ services = [], onSubmit }: TicketFormProps)
             </div>
             <p className="text-sm font-semibold text-slate-900 mb-1">Ticket created</p>
             <p className="text-xs text-slate-500">Reference</p>
-            <p className="font-mono text-base font-bold text-brand mt-1 tracking-wider">{successId}</p>
-            <p className="text-xs text-slate-400 mt-3">A confirmation has been logged. Your CSM will reach out shortly.</p>
+            <p className="font-mono text-base font-bold text-brand mt-1 tracking-wider">{reference}</p>
+            <p className="text-xs text-slate-400 mt-3">Your ticket is now open and visible below. Your CSM will reach out shortly.</p>
           </motion.div>
         ) : (
           <motion.form
@@ -201,6 +209,7 @@ export default function TicketForm({ services = [], onSubmit }: TicketFormProps)
                 {submitting ? 'Creating…' : 'Submit Ticket'}
               </GlowButton>
               {!isValid && <span className="text-xs text-slate-400">Subject required (5+ chars)</span>}
+              {error && <span className="text-xs text-red-600">{error}</span>}
             </div>
           </motion.form>
         )}

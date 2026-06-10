@@ -94,3 +94,53 @@ export interface OrganizationService {
   renewsAt: string;
   lastBilledAt: string | null;
 }
+
+// ─── Support tickets (user-initiated service requests) ──────────────────────
+export type RequestType = 'SUPPORT' | 'INCIDENT' | 'FEATURE_REQUEST' | 'ONBOARDING' | 'BILLING';
+export type RequestStatus = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED' | 'ESCALATED';
+export type Priority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+
+export interface ServiceRequest {
+  id: string;
+  customerId: string;
+  createdById: string | null;
+  type: RequestType;
+  status: RequestStatus;
+  priority: Priority;
+  subject: string;
+  description: string | null;
+  service: string | null;
+  assignedTo: string | null;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt: string | null;
+}
+
+// Org-admin view: a ticket plus the user who raised it.
+export interface OrgServiceRequest extends ServiceRequest {
+  createdBy: { id: string; name: string; email: string } | null;
+}
+
+// ─── Chat history (persisted assistant conversations) ───────────────────────
+export interface ChatSessionSummary {
+  id: string;
+  title: string | null;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+}
+
+export interface ChatSessionMessage {
+  id: string;
+  role: 'USER' | 'ASSISTANT';
+  content: string;
+  createdAt: string;
+}
+
+export interface ChatSessionDetail {
+  id: string;
+  title: string | null;
+  createdAt: string;
+  updatedAt: string;
+  messages: ChatSessionMessage[];
+}

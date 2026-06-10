@@ -103,26 +103,41 @@ export const dashboardApi = {
   getQueue: (params?: Record<string, unknown>) => api.get('/dashboard/queue', { params }),
 };
 
+export const requestsApi = {
+  create: (data: unknown) => api.post('/requests', data),
+  list: (params?: Record<string, unknown>) => api.get('/requests', { params }),
+  listOrg: (params?: Record<string, unknown>) => api.get('/requests/org', { params }),
+  get: (id: string) => api.get(`/requests/${id}`),
+  close: (id: string) => api.patch(`/requests/${id}/close`),
+};
+
 export interface ChatTurn {
   role: 'user' | 'assistant';
   content: string;
+}
+
+export interface StreamOptions {
+  sessionId?: string;
+  onToken: (token: string) => void;
+  onSession?: (sessionId: string) => void;
+  onDone?: () => void;
+  onError?: (msg: string) => void;
 }
 
 export const chatApi = {
   stream: async (
     message: string,
     history: ChatTurn[] = [],
-    onToken: (token: string) => void,
-    onDone?: () => void,
-    onError?: (msg: string) => void,
+    opts: StreamOptions,
   ): Promise<void> => {
+    const { sessionId, onToken, onSession, onDone, onError } = opts;
     let response: Response;
     try {
       response = await fetch(`${BASE}/api/chat`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, history }),
+        body: JSON.stringify({ message, history, ...(sessionId ? { sessionId } : {}) }),
       });
     } catch {
       onError?.('The assistant is unavailable. Please try again.');
@@ -162,11 +177,12 @@ export const chatApi = {
           }
 
           try {
-            const event = JSON.parse(dataStr) as { token?: string; error?: string };
+            const event = JSON.parse(dataStr) as { token?: string; error?: string; sessionId?: string };
             if (event.error) {
               onError?.(event.error);
               return;
             }
+            if (event.sessionId) onSession?.(event.sessionId);
             if (event.token) onToken(event.token);
           } catch {
             /* ignore keep-alives / non-JSON frames */
@@ -179,6 +195,9 @@ export const chatApi = {
 
     onDone?.();
   },
+  listSessions: () => api.get('/chat/sessions'),
+  getSession: (id: string) => api.get(`/chat/sessions/${id}`),
+  deleteSession: (id: string) => api.delete(`/chat/sessions/${id}`),
 };
 
 export const saasAdminApi = {

@@ -33,6 +33,7 @@ model Customer {
   users         User[]
   requests      ServiceRequest[]
   services      CustomerService[]
+  chatSessions  ChatSession[]
 
   @@index([slug])
   @@map("customers")
@@ -51,6 +52,8 @@ model User {
   customerId    String
   auditLogs     AuditLog[]
   refreshTokens RefreshToken[]
+  requests      ServiceRequest[] @relation("UserRequests")
+  chatSessions  ChatSession[]
   customer      Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
   @@index([customerId])
@@ -110,6 +113,7 @@ model OrgFeatureFlag {
 model ServiceRequest {
   id          String        @id @default(cuid())
   customerId  String
+  createdById String?
   type        RequestType   @default(SUPPORT)
   status      RequestStatus @default(OPEN)
   priority    Priority      @default(MEDIUM)
@@ -121,11 +125,43 @@ model ServiceRequest {
   updatedAt   DateTime      @updatedAt
   resolvedAt  DateTime?
   customer    Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  createdBy   User?         @relation("UserRequests", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([customerId])
+  @@index([createdById])
   @@index([status])
   @@index([priority])
   @@index([createdAt])
+}
+
+// ─── Chat history (assistant conversations, persisted per user) ───────────────
+model ChatSession {
+  id         String        @id @default(cuid())
+  customerId String
+  userId     String
+  title      String?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  customer   Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages   ChatMessage[]
+
+  @@index([customerId])
+  @@index([userId])
+  @@index([updatedAt])
+}
+
+model ChatMessage {
+  id         String      @id @default(cuid())
+  customerId String
+  sessionId  String
+  role       ChatRole
+  content    String
+  createdAt  DateTime    @default(now())
+  session    ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([customerId])
 }
 
 // ─── Platform service catalog (global; managed by ADMINISTRATOR) ─────────────
@@ -204,4 +240,9 @@ enum Priority {
   HIGH
   MEDIUM
   LOW
+}
+
+enum ChatRole {
+  USER
+  ASSISTANT
 }

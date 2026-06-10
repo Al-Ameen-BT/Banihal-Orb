@@ -25,6 +25,8 @@ interface ChatbotProps {
     history: ChatTurn[],
     onToken?: (token: string) => void,
   ) => Promise<string>;
+  /** Seed the thread with a resumed conversation; replaces the greeting when non-empty. */
+  initialMessages?: Array<{ role: 'user' | 'bot'; content: string }>;
   userName?: string;
   orgName?: string;
   className?: string;
@@ -195,19 +197,24 @@ function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-export default function Chatbot({ onUserMessage, userName, orgName, className }: ChatbotProps) {
+export default function Chatbot({ onUserMessage, initialMessages, userName, orgName, className }: ChatbotProps) {
   const greeting = useMemo(() => {
     const who = userName ? `, ${userName.split(' ')[0]}` : '';
     const where = orgName ? ` at ${orgName}` : '';
     return `Hi${who}! I'm the Tech security assistant${where ? where : ''}. I can answer quick questions about your services, point you to your Org Admin or CSM team, and help you decide when to open a ticket. What can I help you with?`;
   }, [userName, orgName]);
 
-  const [messages, setMessages] = useState<Message[]>(() => [{
-    id: 'bot-greet',
-    role: 'bot',
-    content: greeting,
-    timestamp: Date.now(),
-  }]);
+  const [messages, setMessages] = useState<Message[]>(() => {
+    if (initialMessages && initialMessages.length > 0) {
+      return initialMessages.map((m, i) => ({
+        id: `seed-${i}`,
+        role: m.role,
+        content: m.content,
+        timestamp: Date.now(),
+      }));
+    }
+    return [{ id: 'bot-greet', role: 'bot', content: greeting, timestamp: Date.now() }];
+  });
   const [input, setInput] = useState('');
   const [typing, setTyping] = useState(false);
   const [streamingMsgId, setStreamingMsgId] = useState<string | null>(null);
