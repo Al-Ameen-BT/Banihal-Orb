@@ -3,10 +3,9 @@
 import { useState } from 'react';
 import UserRegister from './UserRegister';
 import OrgRegister from './OrgRegister';
-import SaasRegister from './SaasRegister';
 
 export default function RegisterPage() {
-  const [tab, setTab] = useState<'user' | 'org' | 'saas'>('user');
+  const [tab, setTab] = useState<'user' | 'org'>('user');
 
   return (
     <div className="relative min-h-screen">
@@ -28,19 +27,10 @@ export default function RegisterPage() {
         >
           Organization
         </button>
-        <button
-          onClick={() => setTab('saas')}
-          className={`px-4 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
-            tab === 'saas' ? 'bg-white text-brand shadow-sm' : 'text-slate-500 hover:text-slate-900'
-          }`}
-        >
-          Administrator
-        </button>
       </div>
 
       {tab === 'user' && <UserRegister />}
       {tab === 'org' && <OrgRegister />}
-      {tab === 'saas' && <SaasRegister />}
     </div>
   );
 }

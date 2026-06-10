@@ -77,7 +77,6 @@ export default api;
 export const authApi = {
   register: (data: unknown) => api.post('/auth/register', data),
   registerUser: (data: unknown) => api.post('/auth/register-user', data),
-  registerSaas: (data: unknown) => api.post('/auth/register-saas', data),
   login: (data: unknown) => api.post('/auth/login', data),
   logout: () => api.post('/auth/logout'),
 };

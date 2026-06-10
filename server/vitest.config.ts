@@ -2,6 +2,9 @@ import { defineConfig } from 'vitest/config';
 import { config } from 'dotenv';
 
 config(); // Load .env before vitest starts
+// The suite provisions ADMINISTRATOR fixtures on @example.com; login enforces that
+// admins sit on a provider domain, so allow example.com for the test runtime.
+process.env.ADMIN_DOMAINS = 'example.com';
 
 export default defineConfig({
   test: {

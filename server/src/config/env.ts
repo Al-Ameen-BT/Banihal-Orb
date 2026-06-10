@@ -10,6 +10,9 @@ const EnvSchema = z.object({
   PORT: z.coerce.number().default(3001),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   ALLOWED_ORIGINS: z.string().default('http://localhost:3000'),
+  // Comma-separated work-email domains allowed to hold the ADMINISTRATOR (software
+  // provider) role. REQUIRED for admin login — when empty, admin login is disabled.
+  ADMIN_DOMAINS: z.string().default(''),
   COOKIE_SECURE: z.preprocess((val) => {
     if (val === 'true') return true;
     if (val === 'false') return false;

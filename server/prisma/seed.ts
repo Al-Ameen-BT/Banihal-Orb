@@ -127,18 +127,24 @@ async function main() {
   }
 
   // ─── Tech (internal SaaS admin org) ────────────────────────────────────────
+  // Admins must sit on a domain in ADMIN_DOMAINS or login (which enforces it) will
+  // reject them. Use the first configured provider domain, falling back to platform.com.
+  const ADMIN_DOMAIN = (process.env.ADMIN_DOMAINS ?? '').split(',')[0]?.trim().toLowerCase() || 'platform.com';
+  const adminEmail = `admin@${ADMIN_DOMAIN}`;
+  const superAdminEmail = `superadmin@${ADMIN_DOMAIN}`;
+
   const techOrg = await prisma.customer.create({
     data: {
-      name: 'Tech', slug: 'platform-platform-com', plan: 'ENTERPRISE',
+      name: 'Tech', slug: `platform-${ADMIN_DOMAIN.replace(/\./g, '-')}`, plan: 'ENTERPRISE',
       industry: 'Cybersecurity', contractValue: 0, healthScore: 100, csm: 'Internal',
       creditLimit: 99999, ssoEnabled: true, mfaRequired: true,
-      mailId: 'admin@platform.com', contactPerson: 'Alex Chen',
-      contactNumber: '+1-555-0100', domain: deriveDomain('admin@platform.com'),
+      mailId: adminEmail, contactPerson: 'Alex Chen',
+      contactNumber: '+1-555-0100', domain: deriveDomain(adminEmail),
     },
   });
   const sadmin = await prisma.user.create({
     data: {
-      name: 'Alex Chen', email: 'admin@platform.com',
+      name: 'Alex Chen', email: adminEmail,
       passwordHash: await hash('SaasAdmin1!'),
       role: 'ADMINISTRATOR', mfaEnabled: true,
       customerId: techOrg.id, lastLoginAt: now,
@@ -146,7 +152,7 @@ async function main() {
   });
   const administrator = await prisma.user.create({
     data: {
-      name: 'Super Admin', email: 'superadmin@platform.com',
+      name: 'Super Admin', email: superAdminEmail,
       passwordHash: await hash('SuperAdmin1!'),
       role: 'ADMINISTRATOR', mfaEnabled: true,
       customerId: techOrg.id, lastLoginAt: now,
@@ -532,8 +538,8 @@ async function main() {
   console.log('🎉 Tech cybersecurity platform seeded with 3-tier RBAC!\n');
   console.log('  Roles  →  ADMINISTRATOR  >  ORG_ADMIN  >  USER\n');
   console.log('  Platform Admins');
-  console.log('    ADMINISTRATOR  superadmin@platform.com    SuperAdmin1!');
-  console.log('    ADMINISTRATOR  admin@platform.com         SaasAdmin1!\n');
+  console.log(`    ADMINISTRATOR  ${superAdminEmail.padEnd(28)}SuperAdmin1!`);
+  console.log(`    ADMINISTRATOR  ${adminEmail.padEnd(28)}SaasAdmin1!\n`);
   console.log('  Organization Admins  (all use password "Admin1234!")');
   for (const o of created) {
     console.log(`    ORG_ADMIN   ${o.admin.email.padEnd(34)} [${o.name}]`);

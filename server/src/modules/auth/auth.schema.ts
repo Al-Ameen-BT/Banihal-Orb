@@ -19,19 +19,6 @@ export const LoginSchema = z.object({
   password: z.string().min(1),
 });
 
-export const RegisterSaasSchema = z.object({
-  name: z.string().min(2).max(80),
-  email: z.string().email(),
-  password: z
-    .string()
-    .min(12)
-    .regex(
-      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])/,
-      'Password must contain uppercase, lowercase, number, and special character',
-    ),
-  contactNumber: z.string().min(7).max(20),
-});
-
 // Self-registration for a member joining an EXISTING organization. No org name:
 // the organization is resolved server-side from the work-email domain.
 export const RegisterUserSchema = z.object({
@@ -49,6 +36,5 @@ export const RegisterUserSchema = z.object({
 export const RefreshSchema = z.object({});
 
 export type RegisterInput = z.infer<typeof RegisterSchema>;
-export type RegisterSaasInput = z.infer<typeof RegisterSaasSchema>;
 export type RegisterUserInput = z.infer<typeof RegisterUserSchema>;
 export type LoginInput = z.infer<typeof LoginSchema>;

@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import { Role } from '@prisma/client';
 import { prisma, customerContext } from '../../config/database';
 import { env } from '../../config/env';
-import type { RegisterInput, RegisterSaasInput, RegisterUserInput, LoginInput } from './auth.schema';
+import type { RegisterInput, RegisterUserInput, LoginInput } from './auth.schema';
 
 const BCRYPT_ROUNDS = 12;
 
@@ -32,6 +32,14 @@ export function deriveDomain(email: string): string | null {
   const domain = email.split('@')[1]?.toLowerCase().trim();
   if (!domain || domain === 'gmail.com') return null;
   return domain;
+}
+
+// Work-email domains permitted to hold the ADMINISTRATOR (software provider) role.
+// Fail closed: an empty ADMIN_DOMAINS means no email qualifies (admin login disabled).
+const adminDomains = env.ADMIN_DOMAINS.split(',').map((d) => d.trim().toLowerCase()).filter(Boolean);
+export function isProviderAdminEmail(email: string): boolean {
+  const domain = deriveDomain(email);
+  return !!domain && adminDomains.includes(domain);
 }
 
 async function createRefreshToken(userId: string): Promise<string> {
@@ -147,59 +155,10 @@ export async function registerUser(input: RegisterUserInput): Promise<TokenPair>
   return { accessToken, refreshToken };
 }
 
-// Derive a stable customer slug from a Sadmin's email domain.
-// e.g. admin@acompany.in → platform-acompany-in
-function domainSlug(email: string): string {
-  const domain = email.split('@')[1]?.toLowerCase().trim() ?? 'unknown';
-  return `platform-${domain.replace(/\./g, '-')}`;
-}
-
-export async function registerSaas(input: RegisterSaasInput): Promise<TokenPair> {
-  const existing = await prisma.user.findUnique({ where: { email: input.email } });
-  if (existing) {
-    throw Object.assign(new Error('Email already registered'), { status: 409, code: 'EMAIL_EXISTS' });
-  }
-
-  const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
-
-  // Group Sadmins by work-email domain: admin@acompany.in → customer slug "platform-acompany-in"
-  const slug = domainSlug(input.email);
-  const domain = input.email.split('@')[1]?.toLowerCase().trim() ?? 'unknown';
-
-  let domainCustomer = await prisma.customer.findUnique({ where: { slug } });
-  if (!domainCustomer) {
-    domainCustomer = await prisma.customer.create({
-      data: {
-        name: `${domain} Platform`,
-        slug,
-        mailId: input.email,
-        contactPerson: input.name,
-        contactNumber: input.contactNumber,
-        domain: deriveDomain(input.email),
-      },
-    });
-  }
-
-  // Platform self-registrants (grouped by work-email domain) are all ADMINISTRATOR.
-  const user = await prisma.user.create({
-    data: {
-      email: input.email,
-      passwordHash,
-      name: input.name,
-      role: 'ADMINISTRATOR',
-      customerId: domainCustomer.id,
-    },
-  });
-
-  const accessToken = signAccessToken(user.id, domainCustomer.id, user.role);
-  const refreshToken = await createRefreshToken(user.id);
-  return { accessToken, refreshToken };
-}
-
 export async function login(input: LoginInput): Promise<TokenPair> {
   const user = await prisma.user.findUnique({
     where: { email: input.email },
-    select: { id: true, customerId: true, role: true, passwordHash: true },
+    select: { id: true, email: true, customerId: true, role: true, passwordHash: true },
   });
 
   if (!user) {
@@ -209,6 +168,14 @@ export async function login(input: LoginInput): Promise<TokenPair> {
   const valid = await bcrypt.compare(input.password, user.passwordHash);
   if (!valid) {
     throw Object.assign(new Error('Invalid credentials'), { status: 401, code: 'INVALID_CREDENTIALS' });
+  }
+
+  // The ADMINISTRATOR (provider) role is restricted to the configured provider domain(s).
+  if (user.role === 'ADMINISTRATOR' && !isProviderAdminEmail(user.email)) {
+    throw Object.assign(
+      new Error('Administrator access is restricted to the provider organization.'),
+      { status: 403, code: 'ADMIN_DOMAIN_FORBIDDEN' },
+    );
   }
 
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
