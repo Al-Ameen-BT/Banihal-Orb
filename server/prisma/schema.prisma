@@ -34,6 +34,7 @@ model Customer {
   requests      ServiceRequest[]
   services      CustomerService[]
   chatSessions  ChatSession[]
+  announcements Announcement[]
 
   @@index([slug])
   @@map("customers")
@@ -54,6 +55,7 @@ model User {
   refreshTokens RefreshToken[]
   requests      ServiceRequest[] @relation("UserRequests")
   chatSessions  ChatSession[]
+  announcements Announcement[] @relation("UserAnnouncements")
   customer      Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
   @@index([customerId])
@@ -111,21 +113,23 @@ model OrgFeatureFlag {
 }
 
 model ServiceRequest {
-  id          String        @id @default(cuid())
-  customerId  String
-  createdById String?
-  type        RequestType   @default(SUPPORT)
-  status      RequestStatus @default(OPEN)
-  priority    Priority      @default(MEDIUM)
-  subject     String
-  description String?
-  service     String?
-  assignedTo  String?
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-  resolvedAt  DateTime?
-  customer    Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  createdBy   User?         @relation("UserRequests", fields: [createdById], references: [id], onDelete: SetNull)
+  id            String        @id @default(cuid())
+  customerId    String
+  createdById   String?
+  type          RequestType   @default(SUPPORT)
+  status        RequestStatus @default(OPEN)
+  priority      Priority      @default(MEDIUM)
+  subject       String
+  description   String?
+  service       String?
+  assignedTo    String?
+  // Platform-admin working notes — never returned on org-facing endpoints.
+  internalNotes String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  resolvedAt    DateTime?
+  customer      Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  createdBy     User?         @relation("UserRequests", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([customerId])
   @@index([createdById])
@@ -162,6 +166,28 @@ model ChatMessage {
 
   @@index([sessionId])
   @@index([customerId])
+}
+
+// ─── Platform announcements (broadcast by ADMINISTRATOR) ──────────────────────
+// customerId null = visible to ALL organizations; set = targeted to one org.
+// Listed in the tenant extension's globalModels — visibility is scoped manually
+// in the announcements service (auto-injection would hide global rows).
+model Announcement {
+  id          String            @id @default(cuid())
+  title       String
+  message     String
+  level       AnnouncementLevel @default(INFO)
+  customerId  String?
+  active      Boolean           @default(true)
+  expiresAt   DateTime?
+  createdById String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  customer    Customer?         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  createdBy   User?             @relation("UserAnnouncements", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([active])
 }
 
 // ─── Platform service catalog (global; managed by ADMINISTRATOR) ─────────────
@@ -245,4 +271,10 @@ enum Priority {
 enum ChatRole {
   USER
   ASSISTANT
+}
+
+enum AnnouncementLevel {
+  INFO
+  WARNING
+  CRITICAL
 }

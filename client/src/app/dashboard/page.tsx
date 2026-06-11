@@ -4,15 +4,15 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
-import { orgsApi, requestsApi, chatApi } from '@/lib/api';
+import { orgsApi, requestsApi, chatApi, announcementsApi } from '@/lib/api';
 import RoleGuard from '@/components/guards/RoleGuard';
 import Sidebar from '@/components/ui/Sidebar';
-import TicketForm from '@/components/ui/TicketForm';
 import { ShimmerCard } from '@/components/ui/Shimmer';
 import { useAuth } from '@/contexts/AuthContext';
+import AdminPlatformDashboard from './AdminDashboard';
 import type {
   Customer, OrganizationService, ServiceRequest, OrgServiceRequest, RequestStatus,
-  ChatSessionSummary, ChatSessionDetail,
+  ChatSessionSummary, ChatSessionDetail, Announcement, AnnouncementLevel,
 } from '@/lib/schemas';
 
 // ─── Status / priority presentation ─────────────────────────────────────────
@@ -290,8 +290,72 @@ function ChatHistoryModal({ sessionId, onClose }: { sessionId: string; onClose: 
   );
 }
 
-// ─── Page ───────────────────────────────────────────────────────────────────
-export default function UserDashboard() {
+// ─── Announcement banner (platform broadcasts shown to org members) ─────────
+const bannerCfg: Record<AnnouncementLevel, { wrap: string; dot: string }> = {
+  INFO:     { wrap: 'bg-cyan-50 border-cyan-200 text-cyan-800',   dot: 'bg-cyan-500' },
+  WARNING:  { wrap: 'bg-amber-50 border-amber-200 text-amber-800', dot: 'bg-amber-500' },
+  CRITICAL: { wrap: 'bg-red-50 border-red-200 text-red-800',       dot: 'bg-red-500' },
+};
+
+function AnnouncementBanners() {
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const { data } = useQuery<{ announcements: Announcement[] }>({
+    queryKey: ['announcements'],
+    queryFn: () => announcementsApi.list().then((r) => r.data as { announcements: Announcement[] }),
+    staleTime: 60_000,
+  });
+
+  const visible = (data?.announcements ?? []).filter((a) => !dismissed.has(a.id));
+  if (visible.length === 0) return null;
+
+  return (
+    <div className="space-y-2.5">
+      {visible.map((a) => {
+        const cfg = bannerCfg[a.level];
+        return (
+          <motion.div key={a.id} initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
+            className={`flex items-start gap-3 px-4 py-3 rounded-xl border ${cfg.wrap}`}>
+            <span className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${cfg.dot} animate-pulse-soft`} />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold leading-tight">{a.title}</p>
+              <p className="text-xs mt-0.5 leading-relaxed opacity-90">{a.message}</p>
+            </div>
+            <button type="button" aria-label="Dismiss announcement"
+              onClick={() => setDismissed((prev) => new Set(prev).add(a.id))}
+              className="opacity-50 hover:opacity-100 transition-opacity cursor-pointer flex-shrink-0">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </motion.div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Page (role-branched) ────────────────────────────────────────────────────
+// ADMINISTRATOR gets the platform-wide monitoring dashboard; org members get
+// the member dashboard below.
+export default function DashboardPage() {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-canvas">
+        <div className="relative w-9 h-9">
+          <div className="absolute inset-0 rounded-full border-2 border-slate-200" />
+          <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-brand animate-spin" />
+        </div>
+      </div>
+    );
+  }
+
+  if (user?.role === 'ADMINISTRATOR') return <AdminPlatformDashboard />;
+  return <MemberDashboard />;
+}
+
+function MemberDashboard() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<RequestStatus | 'ALL'>('ALL');
@@ -376,6 +440,9 @@ export default function UserDashboard() {
               )}
             </motion.div>
 
+            {/* Platform announcements */}
+            <AnnouncementBanners />
+
             {/* Organization tickets (org-admin only) */}
             {isAdmin && (
               <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.03 }} className="space-y-4">
@@ -430,17 +497,12 @@ export default function UserDashboard() {
               </div>
             </motion.div>
 
-            {/* Two-column: ticket form + ticket history */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-              {/* Create ticket */}
-              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.07 }}>
-                <TicketForm services={services} />
-              </motion.div>
-
-              {/* Ticket history */}
-              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.1 }} className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-base font-semibold text-slate-900">Your Tickets</h2>
+            {/* Ticket history */}
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.1 }} className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h2 className="text-base font-semibold text-slate-900">Your Tickets</h2>
+                <div className="flex items-center gap-3">
+                  <Link href="/support" className="text-xs font-semibold text-brand hover:text-brand-700 transition-colors">New ticket →</Link>
                   <select
                     value={statusFilter}
                     onChange={(e) => setStatusFilter(e.target.value as RequestStatus | 'ALL')}
@@ -454,20 +516,22 @@ export default function UserDashboard() {
                     <option value="ESCALATED">Escalated</option>
                   </select>
                 </div>
+              </div>
 
-                {ticketsLoading ? (
-                  <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <ShimmerCard key={i} />)}</div>
-                ) : filteredTickets.length === 0 ? (
-                  <div className="card p-8 text-center text-sm text-slate-500">
-                    {tickets.length === 0 ? 'No tickets yet. Use the form to open your first request.' : 'No tickets match this filter.'}
-                  </div>
-                ) : (
-                  <div className="space-y-2.5">
-                    {filteredTickets.map((t) => <TicketRow key={t.id} ticket={t} />)}
-                  </div>
-                )}
-              </motion.div>
-            </div>
+              {ticketsLoading ? (
+                <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <ShimmerCard key={i} />)}</div>
+              ) : filteredTickets.length === 0 ? (
+                <div className="card p-8 text-center text-sm text-slate-500">
+                  {tickets.length === 0 ? (
+                    <>No tickets yet. Open one from the <Link href="/support" className="text-brand font-semibold">Support</Link> page.</>
+                  ) : 'No tickets match this filter.'}
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {filteredTickets.map((t) => <TicketRow key={t.id} ticket={t} />)}
+                </div>
+              )}
+            </motion.div>
 
             {/* Chat history */}
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.12 }}>

@@ -5,8 +5,14 @@ import type { CreateRequestInput, ListMyRequestsInput, ListOrgRequestsInput } fr
 // tenant Prisma extension (only find*/update*/delete*/count are). All read ops
 // below run under tenant context and get customerId injected automatically.
 
+// internalNotes is platform-admin-only — never expose it on org-facing endpoints.
+function stripInternal<T extends { internalNotes?: unknown }>(r: T): Omit<T, 'internalNotes'> {
+  const { internalNotes: _internal, ...rest } = r;
+  return rest;
+}
+
 export async function createRequest(customerId: string, userId: string, input: CreateRequestInput) {
-  return prisma.serviceRequest.create({
+  const created = await prisma.serviceRequest.create({
     data: {
       customerId,
       createdById: userId,
@@ -17,6 +23,7 @@ export async function createRequest(customerId: string, userId: string, input: C
       description: input.description ?? null,
     },
   });
+  return stripInternal(created);
 }
 
 export async function listMyRequests(userId: string, input: ListMyRequestsInput) {
@@ -34,7 +41,7 @@ export async function listMyRequests(userId: string, input: ListMyRequestsInput)
     prisma.serviceRequest.count({ where }),
   ]);
 
-  return { requests, total, page: input.page, limit: input.limit, pages: Math.ceil(total / input.limit) };
+  return { requests: requests.map(stripInternal), total, page: input.page, limit: input.limit, pages: Math.ceil(total / input.limit) };
 }
 
 // Org-admin view — every ticket in the organization. customerId is set explicitly
@@ -64,13 +71,13 @@ export async function listOrgRequests(customerId: string, input: ListOrgRequests
     return acc;
   }, {});
 
-  return { requests, total, counts, page: input.page, limit: input.limit, pages: Math.ceil(total / input.limit) };
+  return { requests: requests.map(stripInternal), total, counts, page: input.page, limit: input.limit, pages: Math.ceil(total / input.limit) };
 }
 
 export async function getMyRequest(id: string, userId: string) {
   const request = await prisma.serviceRequest.findFirst({ where: { id, createdById: userId } });
   if (!request) throw Object.assign(new Error('Request not found'), { status: 404, code: 'NOT_FOUND' });
-  return request;
+  return stripInternal(request);
 }
 
 export async function closeMyRequest(id: string, userId: string) {
@@ -78,8 +85,9 @@ export async function closeMyRequest(id: string, userId: string) {
   const existing = await prisma.serviceRequest.findFirst({ where: { id, createdById: userId } });
   if (!existing) throw Object.assign(new Error('Request not found'), { status: 404, code: 'NOT_FOUND' });
 
-  return prisma.serviceRequest.update({
+  const updated = await prisma.serviceRequest.update({
     where: { id },
     data: { status: 'CLOSED', resolvedAt: existing.resolvedAt ?? new Date() },
   });
+  return stripInternal(updated);
 }

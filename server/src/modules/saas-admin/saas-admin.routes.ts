@@ -20,6 +20,14 @@ router.post('/users/:id/reset-password', saasAdminController.resetUserPassword);
 // Metrics
 router.get('/metrics', saasAdminController.getMetrics);
 router.get('/top-clients', saasAdminController.getTopClients);
+router.get('/sla-breaches', saasAdminController.getSlaBreaches);
+router.get('/chat-analytics', saasAdminController.getChatAnalytics);
+
+// Announcements (platform broadcasts)
+router.get('/announcements', saasAdminController.listAnnouncements);
+router.post('/announcements', saasAdminController.createAnnouncement);
+router.patch('/announcements/:id', saasAdminController.updateAnnouncement);
+router.delete('/announcements/:id', saasAdminController.deleteAnnouncement);
 
 // Service requests
 router.get('/requests', saasAdminController.listRequests);

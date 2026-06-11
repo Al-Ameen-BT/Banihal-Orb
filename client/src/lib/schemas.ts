@@ -144,3 +144,52 @@ export interface ChatSessionDetail {
   updatedAt: string;
   messages: ChatSessionMessage[];
 }
+
+// ─── Platform announcements (ADMINISTRATOR broadcasts) ──────────────────────
+export type AnnouncementLevel = 'INFO' | 'WARNING' | 'CRITICAL';
+
+export interface Announcement {
+  id: string;
+  title: string;
+  message: string;
+  level: AnnouncementLevel;
+  createdAt: string;
+  // Admin-management fields (absent on the org-facing feed)
+  customerId?: string | null;
+  active?: boolean;
+  expiresAt?: string | null;
+  customer?: { id: string; name: string } | null;
+}
+
+// ─── SLA breach monitor (ADMINISTRATOR) ──────────────────────────────────────
+export interface SlaTicket {
+  id: string;
+  subject: string;
+  type: RequestType;
+  status: RequestStatus;
+  priority: Priority;
+  service: string | null;
+  assignedTo: string | null;
+  createdAt: string;
+  slaHours: number;
+  slaDeadline: string;
+  overdueMs: number;
+  customer: { id: string; name: string; plan: Plan };
+  createdBy: { id: string; name: string; email: string } | null;
+}
+
+export interface SlaBreachReport {
+  breached: SlaTicket[];
+  approaching: SlaTicket[];
+  counts: Record<string, number>;
+  totalOpen: number;
+}
+
+// ─── Chat analytics (ADMINISTRATOR) ──────────────────────────────────────────
+export interface ChatAnalytics {
+  totalSessions: number;
+  totalMessages: number;
+  activeChatUsers: number;
+  perOrg: Array<{ customerId: string; name: string; sessions: number; messages: number }>;
+  daily: Array<{ date: string; messages: number }>;
+}

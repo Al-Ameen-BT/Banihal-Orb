@@ -9,6 +9,7 @@ import type {
   AssignServiceInput,
   CreateCatalogServiceInput, UpdateCatalogServiceInput,
   UpdateUserInput, SystemActivityInput,
+  CreateAnnouncementInput, UpdateAnnouncementInput,
 } from './saas-admin.schema';
 
 // All queries in this module bypass tenant scope intentionally (SADMIN / ADMINISTRATOR global access)
@@ -215,7 +216,10 @@ export async function listServiceRequests(input: ListRequestsInput) {
   const [requests, total] = await Promise.all([
     prisma.serviceRequest.findMany({
       where, skip, take: input.limit,
-      include: { customer: { select: { id: true, name: true, industry: true, plan: true } } },
+      include: {
+        customer: { select: { id: true, name: true, industry: true, plan: true } },
+        createdBy: { select: { id: true, name: true, email: true } },
+      },
       orderBy: [{ priority: 'asc' }, { status: 'asc' }, { createdAt: 'desc' }],
     }),
     prisma.serviceRequest.count({ where }),
@@ -532,8 +536,14 @@ export async function getSadminActivity(limit = 60) {
 const SYSTEM_ACTIONS = ['CUSTOMER_CREATED', 'USER_REGISTERED', 'LOGIN', 'LOGOUT'];
 
 export async function getSystemActivity(input: SystemActivityInput) {
+  // action '*' = every audit action (full audit search); a specific action = exact
+  // match; omitted = the default session/lifecycle scope (SYSTEM_ACTIONS).
   const where = {
-    ...(input.action ? { action: input.action } : { action: { in: SYSTEM_ACTIONS } }),
+    ...(input.action === '*'
+      ? {}
+      : input.action
+        ? { action: input.action }
+        : { action: { in: SYSTEM_ACTIONS } }),
     ...(input.role ? { performedBy: { role: input.role } } : {}),
     ...(input.orgId ? { customerId: input.orgId } : {}),
     ...(input.from || input.to
@@ -632,4 +642,135 @@ export async function resetSadminPassword(targetUserId: string, administratorId:
   });
 
   return { tempPassword, message: 'Password reset. Communicate this temporary password securely; all existing sessions have been revoked.' };
+}
+
+// ─── SLA breach monitor ──────────────────────────────────────────────────────
+// Response-SLA windows by priority (hours) — mirrors the client-facing SLA table.
+const SLA_HOURS: Record<string, number> = { CRITICAL: 1, HIGH: 4, MEDIUM: 24, LOW: 72 };
+
+export async function getSlaBreaches() {
+  const open = await prisma.serviceRequest.findMany({
+    where: { status: { in: ['OPEN', 'IN_PROGRESS', 'ESCALATED'] } },
+    include: {
+      customer: { select: { id: true, name: true, plan: true } },
+      createdBy: { select: { id: true, name: true, email: true } },
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  const now = Date.now();
+  const enriched = open.map((r) => {
+    const slaHours = SLA_HOURS[r.priority] ?? 72;
+    const deadline = new Date(r.createdAt.getTime() + slaHours * 3600_000);
+    return { ...r, slaHours, slaDeadline: deadline, overdueMs: now - deadline.getTime() };
+  });
+
+  const breached = enriched.filter((r) => r.overdueMs > 0).sort((a, b) => b.overdueMs - a.overdueMs);
+  // Not yet breached but less than 25% of the SLA window remains.
+  const approaching = enriched
+    .filter((r) => r.overdueMs <= 0 && -r.overdueMs < r.slaHours * 3600_000 * 0.25)
+    .sort((a, b) => b.overdueMs - a.overdueMs);
+
+  const counts = breached.reduce<Record<string, number>>((acc, r) => {
+    acc[r.priority] = (acc[r.priority] ?? 0) + 1;
+    return acc;
+  }, {});
+
+  return { breached, approaching, counts, totalOpen: open.length };
+}
+
+// ─── Chat / assistant analytics ──────────────────────────────────────────────
+export async function getChatAnalytics() {
+  const since = new Date(Date.now() - 14 * 86400_000);
+  const [totalSessions, totalMessages, sessionsByOrg, messagesByOrg, userGroups, recentMessages] = await Promise.all([
+    prisma.chatSession.count(),
+    prisma.chatMessage.count(),
+    prisma.chatSession.groupBy({ by: ['customerId'], _count: { _all: true } }),
+    prisma.chatMessage.groupBy({ by: ['customerId'], _count: { _all: true } }),
+    prisma.chatSession.groupBy({ by: ['userId'], _count: { _all: true } }),
+    prisma.chatMessage.findMany({ where: { createdAt: { gte: since } }, select: { createdAt: true } }),
+  ]);
+
+  const orgIds = [...new Set(sessionsByOrg.map((g) => g.customerId))];
+  const orgs = orgIds.length
+    ? await prisma.customer.findMany({ where: { id: { in: orgIds } }, select: { id: true, name: true } })
+    : [];
+  const nameMap = new Map(orgs.map((o) => [o.id, o.name] as const));
+  const msgMap = new Map(messagesByOrg.map((g) => [g.customerId, g._count._all] as const));
+
+  const perOrg = sessionsByOrg
+    .map((g) => ({
+      customerId: g.customerId,
+      name: nameMap.get(g.customerId) ?? 'Unknown',
+      sessions: g._count._all,
+      messages: msgMap.get(g.customerId) ?? 0,
+    }))
+    .sort((a, b) => b.messages - a.messages);
+
+  // Daily message volume, last 14 days (bucketed in code — tiny result set).
+  const daily: Array<{ date: string; messages: number }> = [];
+  for (let i = 13; i >= 0; i--) {
+    daily.push({ date: new Date(Date.now() - i * 86400_000).toISOString().slice(0, 10), messages: 0 });
+  }
+  const dayIndex = new Map(daily.map((d, i) => [d.date, i] as const));
+  for (const m of recentMessages) {
+    const i = dayIndex.get(m.createdAt.toISOString().slice(0, 10));
+    if (i !== undefined) daily[i]!.messages++;
+  }
+
+  return { totalSessions, totalMessages, activeChatUsers: userGroups.length, perOrg, daily };
+}
+
+// ─── Announcements (platform broadcasts) ─────────────────────────────────────
+const announcementInclude = { customer: { select: { id: true, name: true } } } as const;
+
+export async function listAnnouncements() {
+  return prisma.announcement.findMany({
+    include: announcementInclude,
+    orderBy: { createdAt: 'desc' },
+  });
+}
+
+export async function createAnnouncement(adminUserId: string, adminCustomerId: string, input: CreateAnnouncementInput) {
+  const announcement = await prisma.announcement.create({
+    data: {
+      title: input.title,
+      message: input.message,
+      level: input.level,
+      customerId: input.customerId ?? null,
+      expiresAt: input.expiresAt ?? null,
+      createdById: adminUserId,
+    },
+    include: announcementInclude,
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      action: 'ANNOUNCEMENT_CREATED', performedById: adminUserId, targetId: announcement.id,
+      customerId: input.customerId ?? adminCustomerId,
+      metadata: { title: input.title, level: input.level, scope: input.customerId ? 'org' : 'all-orgs' },
+    },
+  }).catch(() => {});
+
+  return announcement;
+}
+
+export async function updateAnnouncement(id: string, input: UpdateAnnouncementInput) {
+  const existing = await prisma.announcement.findUnique({ where: { id } });
+  if (!existing) throw Object.assign(new Error('Announcement not found'), { status: 404, code: 'NOT_FOUND' });
+  return prisma.announcement.update({ where: { id }, data: input, include: announcementInclude });
+}
+
+export async function deleteAnnouncement(id: string, adminUserId: string, adminCustomerId: string) {
+  const existing = await prisma.announcement.findUnique({ where: { id } });
+  if (!existing) throw Object.assign(new Error('Announcement not found'), { status: 404, code: 'NOT_FOUND' });
+
+  await prisma.announcement.delete({ where: { id } });
+  await prisma.auditLog.create({
+    data: {
+      action: 'ANNOUNCEMENT_DELETED', performedById: adminUserId, targetId: id,
+      customerId: existing.customerId ?? adminCustomerId,
+      metadata: { title: existing.title },
+    },
+  }).catch(() => {});
 }

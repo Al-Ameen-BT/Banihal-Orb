@@ -6,6 +6,7 @@ import {
   AssignServiceSchema,
   CreateCatalogServiceSchema, UpdateCatalogServiceSchema,
   UpdateUserSchema, SystemActivitySchema,
+  CreateAnnouncementSchema, UpdateAnnouncementSchema,
 } from './saas-admin.schema';
 import * as saasAdminService from './saas-admin.service';
 
@@ -228,5 +229,52 @@ export async function getSystemActivity(req: Request, res: Response, next: NextF
     const input = SystemActivitySchema.parse(req.query);
     const result = await saasAdminService.getSystemActivity(input);
     res.json(result);
+  } catch (err) { next(err); }
+}
+
+// ─── SLA breach monitor ──────────────────────────────────────────────────────
+export async function getSlaBreaches(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const result = await saasAdminService.getSlaBreaches();
+    res.json(result);
+  } catch (err) { next(err); }
+}
+
+// ─── Chat analytics ──────────────────────────────────────────────────────────
+export async function getChatAnalytics(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const result = await saasAdminService.getChatAnalytics();
+    res.json(result);
+  } catch (err) { next(err); }
+}
+
+// ─── Announcements ───────────────────────────────────────────────────────────
+export async function listAnnouncements(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const announcements = await saasAdminService.listAnnouncements();
+    res.json({ announcements });
+  } catch (err) { next(err); }
+}
+
+export async function createAnnouncement(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = CreateAnnouncementSchema.parse(req.body);
+    const announcement = await saasAdminService.createAnnouncement(req.user.userId, req.user.customerId, input);
+    res.status(201).json(announcement);
+  } catch (err) { next(err); }
+}
+
+export async function updateAnnouncement(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = UpdateAnnouncementSchema.parse(req.body);
+    const announcement = await saasAdminService.updateAnnouncement(req.params['id']!, input);
+    res.json(announcement);
+  } catch (err) { next(err); }
+}
+
+export async function deleteAnnouncement(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    await saasAdminService.deleteAnnouncement(req.params['id']!, req.user.userId, req.user.customerId);
+    res.status(204).end();
   } catch (err) { next(err); }
 }

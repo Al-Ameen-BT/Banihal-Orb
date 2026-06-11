@@ -31,8 +31,27 @@ export const ListRequestsSchema = z.object({
 export const UpdateRequestSchema = z.object({
   status: z.enum(['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED', 'ESCALATED']).optional(),
   priority: z.enum(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']).optional(),
-  assignedTo: z.string().max(200).optional(),
+  assignedTo: z.string().max(200).nullable().optional(),
+  // Platform-admin working notes; stripped from all org-facing responses.
+  internalNotes: z.string().max(4000).nullable().optional(),
 });
+
+// ─── Announcements (platform broadcasts) ─────────────────────────────────────
+export const CreateAnnouncementSchema = z.object({
+  title: z.string().min(3).max(120),
+  message: z.string().min(3).max(1000),
+  level: z.enum(['INFO', 'WARNING', 'CRITICAL']).default('INFO'),
+  customerId: z.string().nullable().optional(), // null / omitted = all organizations
+  expiresAt: z.coerce.date().nullable().optional(),
+});
+
+export const UpdateAnnouncementSchema = z.object({
+  title: z.string().min(3).max(120).optional(),
+  message: z.string().min(3).max(1000).optional(),
+  level: z.enum(['INFO', 'WARNING', 'CRITICAL']).optional(),
+  active: z.boolean().optional(),
+  expiresAt: z.coerce.date().nullable().optional(),
+}).refine((d) => Object.keys(d).length > 0, { message: 'At least one field required' });
 
 // ─── Customer services (purchased) ──────────────────────────────────────────
 export const ListServicesSchema = z.object({
@@ -84,7 +103,7 @@ export const UpdateCatalogServiceSchema = z.object({
 export const SystemActivitySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(200).default(50),
-  action: z.string().max(60).optional(),                          // exact action match
+  action: z.string().max(60).optional(),                          // exact action match; '*' = all actions
   role: z.enum(['USER', 'ORG_ADMIN', 'ADMINISTRATOR']).optional(), // performer's role
   orgId: z.string().optional(),
   from: z.coerce.date().optional(),
@@ -112,3 +131,5 @@ export type CreateCatalogServiceInput = z.infer<typeof CreateCatalogServiceSchem
 export type UpdateCatalogServiceInput = z.infer<typeof UpdateCatalogServiceSchema>;
 export type UpdateUserInput = z.infer<typeof UpdateUserSchema>;
 export type SystemActivityInput = z.infer<typeof SystemActivitySchema>;
+export type CreateAnnouncementInput = z.infer<typeof CreateAnnouncementSchema>;
+export type UpdateAnnouncementInput = z.infer<typeof UpdateAnnouncementSchema>;

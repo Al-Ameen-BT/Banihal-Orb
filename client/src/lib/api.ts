@@ -111,6 +111,10 @@ export const requestsApi = {
   close: (id: string) => api.patch(`/requests/${id}/close`),
 };
 
+export const announcementsApi = {
+  list: () => api.get('/announcements'),
+};
+
 export interface ChatTurn {
   role: 'user' | 'assistant';
   content: string;
@@ -206,6 +210,12 @@ export const saasAdminApi = {
   impersonate: (userId: string) => api.post(`/saas-admin/impersonate/${userId}`),
   getMetrics: () => api.get('/saas-admin/metrics'),
   getTopClients: (limit?: number) => api.get('/saas-admin/top-clients', { params: limit ? { limit } : undefined }),
+  getSlaBreaches: () => api.get('/saas-admin/sla-breaches'),
+  getChatAnalytics: () => api.get('/saas-admin/chat-analytics'),
+  listAnnouncements: () => api.get('/saas-admin/announcements'),
+  createAnnouncement: (data: unknown) => api.post('/saas-admin/announcements', data),
+  updateAnnouncement: (id: string, data: unknown) => api.patch(`/saas-admin/announcements/${id}`, data),
+  deleteAnnouncement: (id: string) => api.delete(`/saas-admin/announcements/${id}`),
   getOrgsOverview: () => api.get('/saas-admin/orgs/overview'),
   listAdmins: () => api.get('/saas-admin/admins'),
   getOrgDetail: (id: string) => api.get(`/saas-admin/orgs/${id}/detail`),
