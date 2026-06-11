@@ -203,6 +203,23 @@ export async function listOrgAdmins() {
   return admins;
 }
 
+// ─── All Users list (for Administrator Users page) ──────────────────────────
+export async function listAllOrgUsers() {
+  const users = await prisma.user.findMany({
+    where: { role: { not: 'ADMINISTRATOR' } },
+    select: {
+      id: true, name: true, email: true, role: true, mfaEnabled: true, lastLoginAt: true, createdAt: true,
+      customer: {
+        select: {
+          id: true, name: true, slug: true, plan: true,
+        },
+      },
+    },
+    orderBy: [{ customer: { name: 'asc' } }, { role: 'asc' }, { name: 'asc' }],
+  });
+  return users;
+}
+
 // ─── Service requests ───────────────────────────────────────────────────────
 export async function listServiceRequests(input: ListRequestsInput) {
   const skip = (input.page - 1) * input.limit;

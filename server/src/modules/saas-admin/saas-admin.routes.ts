@@ -3,6 +3,7 @@ import * as saasAdminController from './saas-admin.controller';
 import { requireRole } from '../../middleware/rbac.middleware';
 
 const router = Router();
+const onlyAdministrator = requireRole('ADMINISTRATOR');
 
 // Organizations
 router.get('/orgs', saasAdminController.listOrgs);
@@ -12,6 +13,7 @@ router.get('/orgs/:id/detail', saasAdminController.getOrgDetail);
 
 // People (org admins / impersonation / cross-org user mgmt)
 router.get('/admins', saasAdminController.listOrgAdmins);
+router.get('/all-users', onlyAdministrator, saasAdminController.listAllOrgUsers);
 router.post('/impersonate/:userId', saasAdminController.impersonateUser);
 router.patch('/users/:id', saasAdminController.updateUser);
 router.delete('/users/:id', saasAdminController.removeUser);
@@ -51,7 +53,6 @@ router.get('/flags', saasAdminController.listFlags);
 router.patch('/flags/:key', saasAdminController.toggleFlag);
 
 // Administrator-only: SADMIN activity feed + Sadmin management
-const onlyAdministrator = requireRole('ADMINISTRATOR');
 router.get('/activity', onlyAdministrator, saasAdminController.getSadminActivity);
 router.get('/system-activity', onlyAdministrator, saasAdminController.getSystemActivity);
 router.get('/sadmins', onlyAdministrator, saasAdminController.listSadmins);

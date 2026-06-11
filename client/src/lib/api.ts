@@ -218,6 +218,7 @@ export const saasAdminApi = {
   deleteAnnouncement: (id: string) => api.delete(`/saas-admin/announcements/${id}`),
   getOrgsOverview: () => api.get('/saas-admin/orgs/overview'),
   listAdmins: () => api.get('/saas-admin/admins'),
+  listAllUsers: () => api.get('/saas-admin/all-users'),
   getOrgDetail: (id: string) => api.get(`/saas-admin/orgs/${id}/detail`),
   updateUser: (id: string, data: unknown) => api.patch(`/saas-admin/users/${id}`, data),
   removeUser: (id: string) => api.delete(`/saas-admin/users/${id}`),

@@ -62,6 +62,13 @@ export async function listOrgAdmins(_req: Request, res: Response, next: NextFunc
   } catch (err) { next(err); }
 }
 
+export async function listAllOrgUsers(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const users = await saasAdminService.listAllOrgUsers();
+    res.json({ users });
+  } catch (err) { next(err); }
+}
+
 export async function listRequests(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const input = ListRequestsSchema.parse(req.query);

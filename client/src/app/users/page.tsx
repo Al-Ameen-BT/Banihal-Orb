@@ -90,10 +90,10 @@ interface ActivityEntry {
   metadata: Record<string, unknown> | null;
   performedBy: { id: string; name: string; email: string; role: string };
 }
-interface SadminUser {
+interface PlatformUser {
   id: string; name: string; email: string; role: string;
   mfaEnabled: boolean; lastLoginAt: string | null; createdAt: string;
-  customer: { id: string; name: string; slug: string; domain: string | null };
+  customer: { id: string; name: string; slug: string; domain?: string | null; plan?: string | null };
 }
 // System-wide audit log (Administrator console)
 interface SystemLogEntry {
@@ -150,6 +150,9 @@ export default function UsersPage() {
   // Confirmation modal state
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string; email: string; type: 'user' | 'sadmin' } | null>(null);
 
+  // Platform admin view state
+  const [platformTab, setPlatformTab] = useState<'USERS' | 'ORG_ADMINS' | 'SADMINS'>('USERS');
+
   const { data: users, isLoading: usersLoading } = useQuery<{ users: User[] }>({
     queryKey: ['users'],
     queryFn: () => usersApi.list().then((r) => r.data as { users: User[] }),
@@ -170,12 +173,20 @@ export default function UsersPage() {
     staleTime: 10_000,
     refetchInterval: 15_000,
   });
-  const { data: sadmins, isLoading: sadminsLoading } = useQuery<SadminUser[]>({
+  const { data: sadmins, isLoading: sadminsLoading } = useQuery<PlatformUser[]>({
     queryKey: ['sadmin-list'],
-    queryFn: () => saasAdminApi.listSadmins().then((r) => (r.data as { sadmins: SadminUser[] }).sadmins),
+    queryFn: () => saasAdminApi.listSadmins().then((r) => (r.data as { sadmins: PlatformUser[] }).sadmins),
     enabled: isPlatformAdmin,
     staleTime: 15_000,
     refetchInterval: 30_000,
+  });
+
+  const { data: allUsers, isLoading: allUsersLoading } = useQuery<PlatformUser[]>({
+    queryKey: ['all-users'],
+    queryFn: () => saasAdminApi.listAllUsers().then((r) => (r.data as { users: PlatformUser[] }).users),
+    enabled: isPlatformAdmin,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
   });
 
   // ─── System-wide activity log (Administrator audit console) ───────────────
@@ -369,8 +380,9 @@ export default function UsersPage() {
               </div>
             </motion.div>
 
-            {/* Team */}
-            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.13 }}>
+            {/* Team Members - For Org Admins */}
+            {!isPlatformAdmin && (
+              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.13 }}>
               <div className="flex items-baseline justify-between mb-4">
                 <h2 className="text-base font-semibold text-slate-900">Team Members</h2>
                 <span className="text-xs text-slate-400">{userCount} {userCount === 1 ? 'member' : 'members'}</span>
@@ -384,10 +396,90 @@ export default function UsersPage() {
                 />
               </div>
             </motion.div>
+            )}
 
-            {/* ─── Platform admins (Sadmin) — platform admins only, live ──────── */}
+            {/* ─── Platform admins: Unified Directory + Activity ──────── */}
             {isPlatformAdmin && (
-              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.16 }} className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.16 }} className="space-y-6">
+                
+                {/* Platform Users Directory */}
+                <div>
+                  <h2 className="text-base font-semibold text-slate-900 mb-4">Platform Users Directory</h2>
+                  <div className="card overflow-hidden">
+                    <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                      <div className="flex gap-2">
+                        {(['USERS', 'ORG_ADMINS', 'SADMINS'] as const).map((tab) => (
+                          <button
+                            key={tab}
+                            onClick={() => setPlatformTab(tab)}
+                            className={`px-3 py-1.5 text-xs font-semibold rounded-full transition-colors ${
+                              platformTab === tab ? 'bg-brand text-white' : 'bg-white text-slate-600 border border-slate-200 hover:border-slate-300'
+                            }`}
+                          >
+                            {tab === 'USERS' ? 'All Users' : tab === 'ORG_ADMINS' ? 'Org Admins' : 'Platform Admins'}
+                          </button>
+                        ))}
+                      </div>
+                      <span className="text-xs text-slate-400">
+                        {platformTab === 'SADMINS' ? sadmins?.length ?? 0 : allUsers?.filter(u => platformTab === 'ORG_ADMINS' ? u.role === 'ORG_ADMIN' : u.role === 'USER').length ?? 0} total
+                      </span>
+                    </div>
+                    
+                    <div className="overflow-y-auto max-h-[500px]">
+                      {(platformTab === 'SADMINS' ? sadminsLoading : allUsersLoading) ? (
+                        <div className="p-4 space-y-3">{Array.from({ length: 4 }).map((_, i) => <ShimmerRow key={i} />)}</div>
+                      ) : (
+                        <ul className="divide-y divide-slate-50">
+                          {(() => {
+                            const list = platformTab === 'SADMINS'
+                              ? sadmins ?? []
+                              : (allUsers ?? []).filter(u => platformTab === 'ORG_ADMINS' ? u.role === 'ORG_ADMIN' : u.role === 'USER');
+                            
+                            if (list.length === 0) {
+                              return <p className="px-5 py-10 text-center text-sm text-slate-400">No users found in this category.</p>;
+                            }
+
+                            return list.map((u) => {
+                              const lastLogin = u.lastLoginAt ? timeAgo(u.lastLoginAt) : 'Never';
+                              const isOnline = u.lastLoginAt && (Date.now() - new Date(u.lastLoginAt).getTime()) < 30 * 60 * 1000;
+                              return (
+                                <li key={u.id} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition-colors">
+                                  <div className="relative flex-shrink-0">
+                                    <div className={`w-9 h-9 rounded-full bg-gradient-to-br ${u.role === 'ADMINISTRATOR' ? 'from-brand-400 to-brand-600' : u.role === 'ORG_ADMIN' ? 'from-violet-400 to-violet-600' : 'from-slate-300 to-slate-400'} flex items-center justify-center text-sm font-bold text-white`}>
+                                      {u.name.charAt(0)}
+                                    </div>
+                                    {isOnline && <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 rounded-full border-2 border-white" />}
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-baseline gap-2">
+                                      <p className="text-sm font-semibold text-slate-900 truncate">{u.name}</p>
+                                      {!u.mfaEnabled && <span title="MFA disabled" className="text-amber-500 text-xs flex-shrink-0">⚠</span>}
+                                    </div>
+                                    <p className="text-xs text-slate-400 truncate">{u.email}</p>
+                                  </div>
+                                  <div className="text-right flex-shrink-0">
+                                    <p className="text-xs font-mono text-slate-500">{lastLogin}</p>
+                                    <p className="text-[10px] text-slate-400 truncate max-w-[150px]" title={u.customer.name}>{u.customer.name}</p>
+                                    {user?.id !== u.id && u.role === 'ADMINISTRATOR' && (
+                                      <button
+                                        className="text-[10px] text-red-600 font-semibold hover:text-red-700 mt-1 cursor-pointer"
+                                        onClick={() => setDeleteTarget({ id: u.id, name: u.name, email: u.email, type: 'sadmin' })}
+                                        disabled={removeSadminMutation.isPending}
+                                      >
+                                        Remove
+                                      </button>
+                                    )}
+                                  </div>
+                                </li>
+                              );
+                            });
+                          })()}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
                 {/* Sadmin Activity */}
                 <div>
                   <h2 className="text-base font-semibold text-slate-900 mb-4">Sadmin Activity</h2>
@@ -396,9 +488,9 @@ export default function UsersPage() {
                       <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Recent actions · live</span>
                       <span className="text-xs text-slate-400">{activity?.length ?? 0} entries</span>
                     </div>
-                    <div className="overflow-y-auto max-h-[420px]">
+                    <div className="overflow-y-auto max-h-[300px]">
                       {activityLoading ? (
-                        <div className="p-4 space-y-3">{Array.from({ length: 5 }).map((_, i) => <ShimmerRow key={i} />)}</div>
+                        <div className="p-4 space-y-3">{Array.from({ length: 3 }).map((_, i) => <ShimmerRow key={i} />)}</div>
                       ) : !activity?.length ? (
                         <p className="px-5 py-10 text-center text-sm text-slate-400">No activity yet. Sadmin login/logout events will appear here.</p>
                       ) : (
@@ -417,60 +509,6 @@ export default function UsersPage() {
                                     <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-semibold ${cfg.cls}`}>{cfg.label}</span>
                                     <span className="text-xs text-slate-400 truncate">{entry.performedBy.email}</span>
                                   </div>
-                                  <span className={`inline-flex items-center mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${entry.performedBy.role === 'ADMINISTRATOR' ? 'text-rose-700 bg-rose-50' : 'text-brand-700 bg-brand-50'}`}>{entry.performedBy.role}</span>
-                                </div>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Sadmins listing */}
-                <div>
-                  <h2 className="text-base font-semibold text-slate-900 mb-4">Sadmins</h2>
-                  <div className="card overflow-hidden">
-                    <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between">
-                      <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">All platform admins</span>
-                      <span className="text-xs text-slate-400">{sadmins?.length ?? 0} total</span>
-                    </div>
-                    <div className="overflow-y-auto max-h-[420px]">
-                      {sadminsLoading ? (
-                        <div className="p-4 space-y-3">{Array.from({ length: 4 }).map((_, i) => <ShimmerRow key={i} />)}</div>
-                      ) : !sadmins?.length ? (
-                        <p className="px-5 py-10 text-center text-sm text-slate-400">No Sadmins found.</p>
-                      ) : (
-                        <ul className="divide-y divide-slate-50">
-                          {sadmins.map((s) => {
-                            const lastLogin = s.lastLoginAt ? timeAgo(s.lastLoginAt) : 'Never';
-                            const isOnline = s.lastLoginAt && (Date.now() - new Date(s.lastLoginAt).getTime()) < 30 * 60 * 1000;
-                            return (
-                              <li key={s.id} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition-colors">
-                                <div className="relative flex-shrink-0">
-                                  <div className="w-9 h-9 rounded-full bg-gradient-to-br from-brand-400 to-brand-600 flex items-center justify-center text-sm font-bold text-white">{s.name.charAt(0)}</div>
-                                  {isOnline && <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 rounded-full border-2 border-white" />}
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-baseline gap-2">
-                                    <p className="text-sm font-semibold text-slate-900 truncate">{s.name}</p>
-                                    {!s.mfaEnabled && <span title="MFA disabled" className="text-amber-500 text-xs flex-shrink-0">⚠</span>}
-                                  </div>
-                                  <p className="text-xs text-slate-400 truncate">{s.email}</p>
-                                </div>
-                                <div className="text-right flex-shrink-0">
-                                  <p className="text-xs font-mono text-slate-500">{lastLogin}</p>
-                                  <p className="text-[10px] text-slate-400">{s.customer.name}</p>
-                                  {user?.id !== s.id && (
-                                    <button
-                                      className="text-[10px] text-red-600 font-semibold hover:text-red-700 mt-1 cursor-pointer"
-                                      onClick={() => setDeleteTarget({ id: s.id, name: s.name, email: s.email, type: 'sadmin' })}
-                                      disabled={removeSadminMutation.isPending}
-                                    >
-                                      Remove
-                                    </button>
-                                  )}
                                 </div>
                               </li>
                             );
