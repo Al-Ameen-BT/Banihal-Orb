@@ -149,10 +149,54 @@ function CatalogDrawer({
   );
 }
 
+// ─── Delete Confirmation Modal ───────────────────────────────────────────────
+function ConfirmDeleteModal({
+  item,
+  onClose,
+  onConfirm,
+  isPending,
+}: {
+  item: CatalogItem | null;
+  onClose: () => void;
+  onConfirm: () => void;
+  isPending: boolean;
+}) {
+  if (!item) return null;
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={!isPending ? onClose : undefined} />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+        className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden"
+      >
+        <div className="p-6">
+          <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center mb-4">
+            <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-bold text-slate-900 mb-2">Delete Service</h3>
+          <p className="text-sm text-slate-500">
+            Are you sure you want to delete <span className="font-semibold text-slate-700">{item.name}</span>? This action cannot be undone and will remove the service from the catalog.
+          </p>
+        </div>
+        <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-3">
+          <GlowButton variant="ghost" onClick={onClose} disabled={isPending}>Cancel</GlowButton>
+          <GlowButton variant="danger" onClick={onConfirm} disabled={isPending} loading={isPending}>Delete</GlowButton>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 // ─── Main page ───────────────────────────────────────────────────────────────
 export default function CatalogPage() {
   const qc = useQueryClient();
   const [drawerItem, setDrawerItem] = useState<CatalogItem | 'new' | null>(null);
+  const [itemToDelete, setItemToDelete] = useState<CatalogItem | null>(null);
   const [filterCategory, setFilterCategory] = useState('ALL');
   const [search, setSearch] = useState('');
 
@@ -164,7 +208,10 @@ export default function CatalogPage() {
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => saasAdminApi.deleteCatalogItem(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['catalog'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['catalog'] });
+      setItemToDelete(null);
+    },
   });
 
   const toggleMutation = useMutation({
@@ -266,7 +313,7 @@ export default function CatalogPage() {
                       item={item}
                       onEdit={() => setDrawerItem(item)}
                       onToggle={() => toggleMutation.mutate({ id: item.id, enabled: !item.enabled })}
-                      onDelete={() => { if (confirm(`Delete "${item.name}" from the catalog?`)) deleteMutation.mutate(item.id); }}
+                      onDelete={() => setItemToDelete(item)}
                       isToggling={toggleMutation.isPending && (toggleMutation.variables as { id: string })?.id === item.id}
                     />
                   ))}
@@ -284,6 +331,17 @@ export default function CatalogPage() {
           <CatalogDrawer
             item={drawerItem === 'new' ? null : drawerItem}
             onClose={() => setDrawerItem(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {itemToDelete !== null && (
+          <ConfirmDeleteModal
+            item={itemToDelete}
+            onClose={() => setItemToDelete(null)}
+            onConfirm={() => deleteMutation.mutate(itemToDelete.id)}
+            isPending={deleteMutation.isPending}
           />
         )}
       </AnimatePresence>
