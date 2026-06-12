@@ -57,7 +57,10 @@ function parseCurrentSession(req: Request): authService.CurrentSession | null {
 export async function login(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const input = LoginSchema.parse(req.body);
-    const tokens = await authService.login(input, parseCurrentSession(req));
+    // Refresh cookie (path /api/auth) is the durable same-browser proof — the
+    // access cookie expires after 15 minutes and may be absent here.
+    const rawRefresh = (req.cookies['refreshToken'] as string | undefined) ?? null;
+    const tokens = await authService.login(input, parseCurrentSession(req), rawRefresh);
     setTokenCookies(res, tokens);
     res.json({ message: 'Login successful' });
   } catch (err) {

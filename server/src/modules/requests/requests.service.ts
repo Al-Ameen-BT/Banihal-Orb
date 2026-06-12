@@ -1,13 +1,17 @@
 import { prisma } from '../../config/database';
+import { syncTicketCreated, syncTicketUpdated } from './ticketing.provider';
 import type { CreateRequestInput, ListMyRequestsInput, ListOrgRequestsInput } from './requests.schema';
 
 // customerId is passed explicitly because `create` is not auto-scoped by the
 // tenant Prisma extension (only find*/update*/delete*/count are). All read ops
 // below run under tenant context and get customerId injected automatically.
 
-// internalNotes is platform-admin-only — never expose it on org-facing endpoints.
-function stripInternal<T extends { internalNotes?: unknown }>(r: T): Omit<T, 'internalNotes'> {
-  const { internalNotes: _internal, ...rest } = r;
+// internalNotes is platform-admin-only and externalSyncError is an ops detail —
+// never expose either on org-facing endpoints.
+function stripInternal<T extends { internalNotes?: unknown; externalSyncError?: unknown }>(
+  r: T,
+): Omit<T, 'internalNotes' | 'externalSyncError'> {
+  const { internalNotes: _internal, externalSyncError: _syncErr, ...rest } = r;
   return rest;
 }
 
@@ -23,6 +27,8 @@ export async function createRequest(customerId: string, userId: string, input: C
       description: input.description ?? null,
     },
   });
+  // Mirror to the external ticketing system (no-op until configured; never blocks).
+  syncTicketCreated(created);
   return stripInternal(created);
 }
 
@@ -89,5 +95,6 @@ export async function closeMyRequest(id: string, userId: string) {
     where: { id },
     data: { status: 'CLOSED', resolvedAt: existing.resolvedAt ?? new Date() },
   });
+  syncTicketUpdated(updated);
   return stripInternal(updated);
 }

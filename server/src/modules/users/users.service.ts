@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { prisma } from '../../config/database';
+import { chatPrisma } from '../../config/chatDatabase';
 import type { UpdateMeInput, InviteUserInput, ChangeRoleInput, PaginationInput, ChangePasswordInput } from './users.schema';
 
 const userSelect = {
@@ -100,4 +101,7 @@ export async function removeUser(targetUserId: string, requestingUserId: string)
   }
 
   await prisma.user.delete({ where: { id: targetUserId } });
+  // Chat history lives in the dedicated chat DB — no cross-database cascade,
+  // so clean it up explicitly (messages cascade from sessions within that DB).
+  await chatPrisma.chatSession.deleteMany({ where: { userId: targetUserId } }).catch(() => {});
 }

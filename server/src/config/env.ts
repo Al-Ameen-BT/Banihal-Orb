@@ -2,6 +2,10 @@ import { z } from 'zod';
 
 const EnvSchema = z.object({
   DATABASE_URL: z.string().url(),
+  // Dedicated databases: chat history and the ticketing tool each get their own
+  // PostgreSQL database, linked to the main DB via customerId/userId keys.
+  CHAT_DATABASE_URL: z.string().url(),
+  TICKETING_DATABASE_URL: z.string().url(),
   JWT_ACCESS_SECRET: z.string().min(32),
   JWT_REFRESH_SECRET: z.string().min(32),
   JWT_ACCESS_EXPIRES_IN: z.string().default('15m'),
@@ -16,6 +20,10 @@ const EnvSchema = z.object({
   // Single-session enforcement: a session idle longer than this no longer blocks
   // a new login (prevents 7-day lockout when a browser closes without logout).
   SESSION_INACTIVITY_MINUTES: z.coerce.number().min(1).default(30),
+  // External ticketing API (mirror + sync). The integration is fully disabled
+  // while TICKETING_API_URL is unset — local tickets keep working standalone.
+  TICKETING_API_URL: z.string().url().optional(),
+  TICKETING_API_KEY: z.string().optional(),
   COOKIE_SECURE: z.preprocess((val) => {
     if (val === 'true') return true;
     if (val === 'false') return false;

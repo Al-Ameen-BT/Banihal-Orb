@@ -112,10 +112,10 @@ export default function ForbiddenPage() {
           <motion.p variants={fadeUp} className="mt-6 text-xs text-slate-400">
             Need help?{' '}
             <button
-              onClick={() => router.push('/support')}
+              onClick={() => router.push('/ticketing')}
               className="text-brand hover:text-brand-700 underline underline-offset-2 transition-colors"
             >
-              Contact support
+              Raise a ticket
             </button>
           </motion.p>
         </div>

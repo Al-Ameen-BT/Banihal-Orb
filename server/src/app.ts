@@ -4,6 +4,9 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 
 import { corsOptions } from './config/security';
+import { prisma } from './config/database';
+import { chatPrisma } from './config/chatDatabase';
+import { ticketingPrisma } from './config/ticketingDatabase';
 import { globalRateLimiter } from './middleware/rateLimiter';
 import { authMiddleware } from './middleware/auth.middleware';
 import { tenantMiddleware } from './middleware/tenant.middleware';
@@ -18,6 +21,7 @@ import saasAdminRoutes from './modules/saas-admin/saas-admin.routes';
 import chatRoutes from './modules/chat/chat.routes';
 import requestsRoutes from './modules/requests/requests.routes';
 import announcementsRoutes from './modules/announcements/announcements.routes';
+import ticketingRoutes from './modules/ticketing/ticketing.routes';
 
 const app = express();
 
@@ -43,8 +47,22 @@ app.use(express.json({ limit: '1mb' }));
 // ─── Public routes (no auth required) ───────────────────────────────────────
 app.use('/api/auth', authRoutes);
 
-// ─── Health check ────────────────────────────────────────────────────────────
-app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+// ─── Health check (verifies all three databases) ─────────────────────────────
+app.get('/health', async (_req, res) => {
+  const ping = async (fn: () => Promise<unknown>): Promise<'connected' | 'down'> => {
+    try { await fn(); return 'connected'; } catch { return 'down'; }
+  };
+  const [main, chat, ticketing] = await Promise.all([
+    ping(() => prisma.$queryRaw`SELECT 1`),
+    ping(() => chatPrisma.$queryRaw`SELECT 1`),
+    ping(() => ticketingPrisma.$queryRaw`SELECT 1`),
+  ]);
+  const ok = main === 'connected' && chat === 'connected' && ticketing === 'connected';
+  res.status(ok ? 200 : 503).json({
+    status: ok ? 'ok' : 'degraded',
+    databases: { main, chat, ticketing },
+  });
+});
 
 // ─── Protected routes ────────────────────────────────────────────────────────
 app.use('/api', authMiddleware as express.RequestHandler);
@@ -57,6 +75,7 @@ app.use('/api/dashboard', withTenant, dashboardRoutes);
 app.use('/api/chat', withTenant, chatRoutes);
 app.use('/api/requests', withTenant, requestsRoutes);
 app.use('/api/announcements', withTenant, announcementsRoutes);
+app.use('/api/ticketing', withTenant, ticketingRoutes);
 
 // Sadmin / Administrator — platform-level access, no tenant scope
 app.use('/api/saas-admin', requireRole('ADMINISTRATOR'), saasAdminRoutes);

@@ -1,7 +1,9 @@
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { prisma } from '../../config/database';
+import { chatPrisma } from '../../config/chatDatabase';
 import { signImpersonationToken } from '../auth/auth.service';
+import { syncTicketUpdated } from '../requests/ticketing.provider';
 import type {
   ListOrgsInput, UpdateOrgInput, ToggleFlagInput,
   ListRequestsInput, UpdateRequestInput,
@@ -10,6 +12,7 @@ import type {
   CreateCatalogServiceInput, UpdateCatalogServiceInput,
   UpdateUserInput, SystemActivityInput,
   CreateAnnouncementInput, UpdateAnnouncementInput,
+  ListEscalationsInput, UpdateEscalationInput,
 } from './saas-admin.schema';
 
 // All queries in this module bypass tenant scope intentionally (SADMIN / ADMINISTRATOR global access)
@@ -260,7 +263,11 @@ export async function updateServiceRequest(requestId: string, adminUserId: strin
     },
   });
 
-  return prisma.serviceRequest.update({ where: { id: requestId }, data, include: { customer: { select: { id: true, name: true } } } });
+  const updated = await prisma.serviceRequest.update({ where: { id: requestId }, data, include: { customer: { select: { id: true, name: true } } } });
+  // Mirror workflow changes (status/priority/assignee) to the external ticketing
+  // system — no-op until configured; never blocks the admin flow.
+  syncTicketUpdated(updated);
+  return updated;
 }
 
 // ─── Per-customer services — list / add / manage expiry ─────────────────────
@@ -472,6 +479,8 @@ export async function removeUser(targetUserId: string, adminUserId: string) {
   });
 
   await prisma.user.delete({ where: { id: targetUserId } });
+  // Chat history lives in the dedicated chat DB — no cross-database cascade.
+  await chatPrisma.chatSession.deleteMany({ where: { userId: targetUserId } }).catch(() => {});
 }
 
 export async function resetUserPassword(targetUserId: string, adminUserId: string) {
@@ -699,13 +708,15 @@ export async function getSlaBreaches() {
 // ─── Chat / assistant analytics ──────────────────────────────────────────────
 export async function getChatAnalytics() {
   const since = new Date(Date.now() - 14 * 86400_000);
+  // Chat data lives in the dedicated chat DB; org names are joined from the
+  // main DB below (cross-database join happens in code).
   const [totalSessions, totalMessages, sessionsByOrg, messagesByOrg, userGroups, recentMessages] = await Promise.all([
-    prisma.chatSession.count(),
-    prisma.chatMessage.count(),
-    prisma.chatSession.groupBy({ by: ['customerId'], _count: { _all: true } }),
-    prisma.chatMessage.groupBy({ by: ['customerId'], _count: { _all: true } }),
-    prisma.chatSession.groupBy({ by: ['userId'], _count: { _all: true } }),
-    prisma.chatMessage.findMany({ where: { createdAt: { gte: since } }, select: { createdAt: true } }),
+    chatPrisma.chatSession.count(),
+    chatPrisma.chatMessage.count(),
+    chatPrisma.chatSession.groupBy({ by: ['customerId'], _count: { _all: true } }),
+    chatPrisma.chatMessage.groupBy({ by: ['customerId'], _count: { _all: true } }),
+    chatPrisma.chatSession.groupBy({ by: ['userId'], _count: { _all: true } }),
+    chatPrisma.chatMessage.findMany({ where: { createdAt: { gte: since } }, select: { createdAt: true } }),
   ]);
 
   const orgIds = [...new Set(sessionsByOrg.map((g) => g.customerId))];
@@ -736,6 +747,42 @@ export async function getChatAnalytics() {
   }
 
   return { totalSessions, totalMessages, activeChatUsers: userGroups.length, perOrg, daily };
+}
+
+// ─── Ticket escalations (forwarded by org admins) ────────────────────────────
+const escalationInclude = {
+  customer: { select: { id: true, name: true, plan: true } },
+  escalatedBy: { select: { id: true, name: true, email: true } },
+} as const;
+
+export async function listEscalations(input: ListEscalationsInput) {
+  const where = {
+    ...(input.status ? { status: input.status } : {}),
+    ...(input.since ? { createdAt: { gt: input.since } } : {}),
+  };
+  const escalations = await prisma.ticketEscalation.findMany({
+    where,
+    include: escalationInclude,
+    orderBy: { createdAt: 'desc' },
+    take: 200,
+  });
+  // `now` is the polling watermark for Administrator notifications.
+  return { escalations, total: escalations.length, now: new Date().toISOString() };
+}
+
+export async function updateEscalation(id: string, adminUserId: string, input: UpdateEscalationInput) {
+  const existing = await prisma.ticketEscalation.findUnique({ where: { id } });
+  if (!existing) throw Object.assign(new Error('Escalation not found'), { status: 404, code: 'NOT_FOUND' });
+
+  await prisma.auditLog.create({
+    data: {
+      action: 'ESCALATION_UPDATED', performedById: adminUserId, targetId: id,
+      customerId: existing.customerId,
+      metadata: { subject: existing.subject, from: existing.status, to: input.status },
+    },
+  }).catch(() => {});
+
+  return prisma.ticketEscalation.update({ where: { id }, data: { status: input.status }, include: escalationInclude });
 }
 
 // ─── Announcements (platform broadcasts) ─────────────────────────────────────

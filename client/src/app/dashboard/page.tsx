@@ -502,7 +502,7 @@ function MemberDashboard() {
               <div className="flex items-center justify-between">
                 <h2 className="text-base font-semibold text-slate-900">Your Tickets</h2>
                 <div className="flex items-center gap-3">
-                  <Link href="/support" className="text-xs font-semibold text-brand hover:text-brand-700 transition-colors">New ticket →</Link>
+                  <Link href="/ticketing" className="text-xs font-semibold text-brand hover:text-brand-700 transition-colors">New ticket →</Link>
                   <select
                     value={statusFilter}
                     onChange={(e) => setStatusFilter(e.target.value as RequestStatus | 'ALL')}
@@ -523,7 +523,7 @@ function MemberDashboard() {
               ) : filteredTickets.length === 0 ? (
                 <div className="card p-8 text-center text-sm text-slate-500">
                   {tickets.length === 0 ? (
-                    <>No tickets yet. Open one from the <Link href="/support" className="text-brand font-semibold">Support</Link> page.</>
+                    <>No tickets yet. Open one from the <Link href="/ticketing" className="text-brand font-semibold">Ticketing</Link> page.</>
                   ) : 'No tickets match this filter.'}
                 </div>
               ) : (

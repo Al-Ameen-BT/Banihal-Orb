@@ -3,8 +3,11 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
+import TicketAlerts from './TicketAlerts';
+import EscalationAlerts from './EscalationAlerts';
 
 const icons = {
+  ticketing: 'M16.5 3.75V16.5L12 14.25 7.5 16.5V3.75m9 0H18A2.25 2.25 0 0120.25 6v12A2.25 2.25 0 0118 20.25H6A2.25 2.25 0 013.75 18V6A2.25 2.25 0 016 3.75h1.5m9 0h-9',
   dashboard: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6',
   saas:      'M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21m-3.75 3.75h.008v.008h-.008v-.008zm0 3h.008v.008h-.008v-.008zm0 3h.008v.008h-.008v-.008z',
   support:   'M16.5 6v.75m0 3v.75m0 3v.75m0 3V18m-9-5.25h5.25M7.5 15h3M3.375 5.25c-.621 0-1.125.504-1.125 1.125v3.026a2.999 2.999 0 010 5.198v3.026c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-3.026a2.999 2.999 0 010-5.198V6.375c0-.621-.504-1.125-1.125-1.125H3.375z',
@@ -75,7 +78,7 @@ export default function Sidebar() {
       <nav className="flex-1 overflow-y-auto py-2 space-y-0.5">
         <SectionDivider label="Workspace" />
         <NavItem href="/dashboard" label="Dashboard" icon={icons.dashboard} active={path === '/dashboard'} />
-        <NavItem href="/support"   label="Support"   icon={icons.support}   active={path === '/support'} />
+        <NavItem href="/ticketing" label="Ticketing" icon={icons.ticketing} active={path === '/ticketing'} />
         <NavItem href="/chat"      label="Assistant" icon={icons.chat}      active={path === '/chat'} />
         {isAdmin && (
           <>
@@ -116,9 +119,16 @@ export default function Sidebar() {
               {roleCfg.label}
             </span>
           )}
-          <span className="flex items-center gap-1 text-[10px] text-slate-400">
-            <kbd className="kbd">⌘</kbd><kbd className="kbd">K</kbd>
-          </span>
+          {/* Org admins: new-ticket alerts. Administrators: escalation alerts. */}
+          {isSaas ? (
+            <EscalationAlerts />
+          ) : isAdmin ? (
+            <TicketAlerts />
+          ) : (
+            <span className="flex items-center gap-1 text-[10px] text-slate-400">
+              <kbd className="kbd">⌘</kbd><kbd className="kbd">K</kbd>
+            </span>
+          )}
         </div>
 
         {/* Sign out */}

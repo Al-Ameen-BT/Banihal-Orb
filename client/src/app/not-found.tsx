@@ -114,8 +114,8 @@ export default function NotFoundPage() {
           {/* Help link */}
           <motion.p variants={fadeUp} className="mt-6 text-xs text-slate-400">
             Looking for something?{' '}
-            <Link href="/support" className="text-brand hover:text-brand-700 underline underline-offset-2 transition-colors">
-              Contact support
+            <Link href="/ticketing" className="text-brand hover:text-brand-700 underline underline-offset-2 transition-colors">
+              Raise a ticket
             </Link>
           </motion.p>
         </div>

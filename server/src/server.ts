@@ -3,13 +3,19 @@ import './config/env'; // Validate env vars at startup — will exit(1) if inval
 import app from './app';
 import { env } from './config/env';
 import { prisma } from './config/database';
+import { chatPrisma } from './config/chatDatabase';
+import { ticketingPrisma } from './config/ticketingDatabase';
 
 const PORT = env.PORT;
 
 async function main() {
-  // Verify database connection
+  // Verify all three database connections (main / chat / ticketing)
   await prisma.$connect();
-  console.log('✅ Database connected');
+  console.log('✅ Main database connected (b2b)');
+  await chatPrisma.$connect();
+  console.log('✅ Chat database connected (b2b_chat)');
+  await ticketingPrisma.$connect();
+  console.log('✅ Ticketing database connected (b2b_ticketing)');
 
   app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT} [${env.NODE_ENV}]`);

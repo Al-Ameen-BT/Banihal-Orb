@@ -33,8 +33,8 @@ model Customer {
   users         User[]
   requests      ServiceRequest[]
   services      CustomerService[]
-  chatSessions  ChatSession[]
   announcements Announcement[]
+  escalations   TicketEscalation[]
 
   @@index([slug])
   @@map("customers")
@@ -54,8 +54,8 @@ model User {
   auditLogs     AuditLog[]
   refreshTokens RefreshToken[]
   requests      ServiceRequest[] @relation("UserRequests")
-  chatSessions  ChatSession[]
   announcements Announcement[] @relation("UserAnnouncements")
+  escalations   TicketEscalation[] @relation("UserEscalations")
   customer      Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
   @@index([customerId])
@@ -130,6 +130,11 @@ model ServiceRequest {
   assignedTo    String?
   // Platform-admin working notes — never returned on org-facing endpoints.
   internalNotes String?
+  // External ticketing system reference (mirror + sync). Local rows stay the
+  // app's source of truth; these track the mirrored ticket and last sync state.
+  externalId        String?
+  externalSyncedAt  DateTime?
+  externalSyncError String?
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
   resolvedAt    DateTime?
@@ -143,34 +148,40 @@ model ServiceRequest {
   @@index([createdAt])
 }
 
-// ─── Chat history (assistant conversations, persisted per user) ───────────────
-model ChatSession {
-  id         String        @id @default(cuid())
-  customerId String
-  userId     String
-  title      String?
-  createdAt  DateTime      @default(now())
-  updatedAt  DateTime      @updatedAt
-  customer   Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  messages   ChatMessage[]
+// NOTE: Chat history (ChatSession/ChatMessage) moved to the dedicated chat
+// database — see prisma/chat.prisma. Ticketing-tool tickets/projects live in
+// the dedicated ticketing database — see prisma/ticketing.prisma. Both link
+// back to this DB via customerId/userId in the service layer.
 
+// ─── Ticket escalations (org admin → platform Administrators) ─────────────────
+// Snapshot of a ticketing-tool ticket at the moment an ORG_ADMIN forwards it to
+// the platform. Lives in our DB (not the external ticketing system) so it is
+// cross-org queryable, survives restarts, and powers Administrator notifications.
+model TicketEscalation {
+  id            String           @id @default(cuid())
+  customerId    String
+  ticketId      String
+  subject       String
+  issueType     String
+  priority      Priority         @default(MEDIUM)
+  note          String?
+  status        EscalationStatus @default(OPEN)
+  escalatedById String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  customer      Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  escalatedBy   User?            @relation("UserEscalations", fields: [escalatedById], references: [id], onDelete: SetNull)
+
+  @@unique([customerId, ticketId])
   @@index([customerId])
-  @@index([userId])
-  @@index([updatedAt])
+  @@index([status])
+  @@index([createdAt])
 }
 
-model ChatMessage {
-  id         String      @id @default(cuid())
-  customerId String
-  sessionId  String
-  role       ChatRole
-  content    String
-  createdAt  DateTime    @default(now())
-  session    ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-
-  @@index([sessionId])
-  @@index([customerId])
+enum EscalationStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
 }
 
 // ─── Platform announcements (broadcast by ADMINISTRATOR) ──────────────────────
@@ -271,11 +282,6 @@ enum Priority {
   HIGH
   MEDIUM
   LOW
-}
-
-enum ChatRole {
-  USER
-  ASSISTANT
 }
 
 enum AnnouncementLevel {

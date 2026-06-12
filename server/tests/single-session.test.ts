@@ -54,6 +54,18 @@ describe('Single active session', () => {
     expect(await prisma.refreshToken.count()).toBe(1);
   });
 
+  it('allows same-browser re-login after the access cookie expired (refresh cookie identifies the session)', async () => {
+    const cookiesA = await registerBrowserA();
+
+    // Simulate the 15-minute access-cookie expiry: only the refresh cookie remains.
+    const refreshOnly = cookiesA.filter((c) => !c.startsWith('accessToken='));
+    expect(refreshOnly.some((c) => c.startsWith('refreshToken='))).toBe(true);
+
+    const res = await request(app).post('/api/auth/login').set('Cookie', refreshOnly).send(CREDS);
+    expect(res.status).toBe(200);
+    expect(await prisma.refreshToken.count()).toBe(1); // own session replaced, not duplicated
+  });
+
   it('revokes outstanding access tokens immediately on logout (SESSION_REVOKED)', async () => {
     const cookiesA = await registerBrowserA();
 

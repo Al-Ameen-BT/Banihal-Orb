@@ -185,6 +185,77 @@ export interface SlaBreachReport {
   totalOpen: number;
 }
 
+// ─── In-app Ticketing Tool (external system proxied; fallback until wired) ──
+export type TicketingStatus = 'TODO' | 'IN_PROGRESS' | 'COMPLETED';
+
+export interface TicketingTicket {
+  id: string;
+  subject: string;
+  description: string;
+  issueType: string;
+  status: TicketingStatus;
+  priority: Priority;
+  projectId: string | null;
+  assignee: string | null;
+  raisedBy: { name: string; email: string } | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  escalated?: boolean;
+}
+
+// ─── Ticket escalations (org admin → platform Administrators) ───────────────
+export type EscalationStatus = 'OPEN' | 'ACKNOWLEDGED' | 'RESOLVED';
+
+export interface TicketEscalation {
+  id: string;
+  customerId: string;
+  ticketId: string;
+  subject: string;
+  issueType: string;
+  priority: Priority;
+  note: string | null;
+  status: EscalationStatus;
+  createdAt: string;
+  updatedAt: string;
+  customer?: { id: string; name: string; plan?: Plan };
+  escalatedBy?: { id: string; name: string; email: string } | null;
+}
+
+export interface TicketingProject {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  priority: Priority;
+  assignees: string[];
+  createdAt: string;
+}
+
+export interface TicketingStats {
+  tickets: {
+    total: number; completed: number; inProgress: number; todo: number;
+    highPriority: number; today: number; open: number; completionRate: number;
+  };
+  projects: { total: number; withOpenTickets: number };
+  fallback: boolean;
+}
+
+export interface TicketingAnalytics {
+  issueDistribution: Array<{ issue: string; count: number }>;
+  daily: Array<{ date: string; created: number }>;
+  byPriority: Array<{ priority: string; count: number }>;
+  analyzed: number;
+}
+
+export interface TicketingReport {
+  rows: Array<{ group: string; total: number; completed: number; inProgress: number; todo: number; highPriority: number }>;
+  totalTickets: number;
+  from: string | null;
+  to: string | null;
+  type: string;
+}
+
 // ─── Chat analytics (ADMINISTRATOR) ──────────────────────────────────────────
 export interface ChatAnalytics {
   totalSessions: number;

@@ -46,7 +46,7 @@ export default function CommandMenu() {
 
     return [
       { id: 'nav-dashboard', group: 'Navigation', label: 'Go to Dashboard',     shortcut: 'G D', icon: ICON.dashboard, action: () => router.push('/dashboard') },
-      { id: 'nav-support',   group: 'Navigation', label: 'Open Support Ticket', shortcut: 'G T', icon: ICON.ticket,    action: () => router.push('/support') },
+      { id: 'nav-ticketing', group: 'Navigation', label: 'Open Ticketing',      shortcut: 'G T', icon: ICON.ticket,    action: () => router.push('/ticketing') },
       { id: 'nav-chat',      group: 'Navigation', label: 'Chat Assistant',      shortcut: 'G C', icon: ICON.chat,      action: () => router.push('/chat') },
       { id: 'nav-services',  group: 'Navigation', label: 'Services',            shortcut: 'G V', icon: ICON.services,  action: () => router.push('/services'),            visible: () => isAdmin },
       { id: 'nav-users',     group: 'Navigation', label: 'Users',               shortcut: 'G U', icon: ICON.users,     action: () => router.push('/users'),               visible: () => isAdmin },

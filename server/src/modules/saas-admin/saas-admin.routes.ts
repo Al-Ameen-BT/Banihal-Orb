@@ -25,6 +25,10 @@ router.get('/top-clients', saasAdminController.getTopClients);
 router.get('/sla-breaches', saasAdminController.getSlaBreaches);
 router.get('/chat-analytics', saasAdminController.getChatAnalytics);
 
+// Ticket escalations forwarded by org admins (categorized by org client-side)
+router.get('/escalations', saasAdminController.listEscalations);
+router.patch('/escalations/:id', saasAdminController.updateEscalation);
+
 // Announcements (platform broadcasts)
 router.get('/announcements', saasAdminController.listAnnouncements);
 router.post('/announcements', saasAdminController.createAnnouncement);

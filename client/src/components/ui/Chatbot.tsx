@@ -87,12 +87,12 @@ function pickReply(text: string, fallbackIdx: number): string {
     return "You're welcome! Anything else I can help with?";
   }
   if (/(bye|see you|later)/.test(t)) {
-    return "Take care. If anything urgent comes up, the Support page is always available — and a human is on the other end.";
+    return "Take care. If anything urgent comes up, the Ticketing page is always available — and a human is on the other end.";
   }
 
   const fallbacks = [
     "Got it — I've noted that. I'm a demo assistant, so for anything complex I'd recommend opening a ticket so an engineer can follow up.",
-    "Thanks for the message. For specific questions about your services or account, your Org Admin is your fastest path. For incidents or technical issues, the Support page is right there.",
+    "Thanks for the message. For specific questions about your services or account, your Org Admin is your fastest path. For incidents or technical issues, the Ticketing page is right there.",
     "I'm here to help with quick IT questions — printers, AD, proxy, VPN, email — plus your services and tickets. For deeper investigation, please use the ticket form.",
   ];
   return fallbacks[fallbackIdx % fallbacks.length]!;

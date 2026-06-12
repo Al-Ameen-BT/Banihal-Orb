@@ -21,9 +21,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refresh = useCallback(async () => {
     try {
-      const res = await api.get('/users/me', {
+      let res = await api.get('/users/me', {
         validateStatus: (s) => s < 500, // treat 401 as a normal response, not an error
       });
+
+      // The access cookie only lives 15 minutes; the refresh cookie lives 7 days.
+      // On 401, rotate tokens once and retry — otherwise a user with a live
+      // session gets bounced to /login and blocked by single-session enforcement.
+      if (res.status === 401) {
+        const refreshed = await api.post('/auth/refresh', undefined, {
+          validateStatus: (s) => s < 500,
+        });
+        if (refreshed.status === 200) {
+          res = await api.get('/users/me', { validateStatus: (s) => s < 500 });
+        }
+      }
+
       if (res.status === 200) {
         setUser(res.data as User);
       } else {

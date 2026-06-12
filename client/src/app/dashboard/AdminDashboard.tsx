@@ -11,7 +11,10 @@ import Sidebar from '@/components/ui/Sidebar';
 import KpiCard from '@/components/ui/KpiCard';
 import GlowButton from '@/components/ui/GlowButton';
 import { ShimmerCard, ShimmerRow } from '@/components/ui/Shimmer';
-import type { SlaBreachReport, SlaTicket, ChatAnalytics, Announcement, AnnouncementLevel } from '@/lib/schemas';
+import type {
+  SlaBreachReport, SlaTicket, ChatAnalytics, Announcement, AnnouncementLevel,
+  TicketEscalation, EscalationStatus,
+} from '@/lib/schemas';
 
 // ─── Local response types (saas-admin endpoints) ─────────────────────────────
 interface PlatformMetrics {
@@ -132,6 +135,120 @@ function SlaRow({ t, breached }: { t: SlaTicket; breached: boolean }) {
         <span className="text-xs text-slate-500">{t.assignedTo ?? <span className="text-red-500 font-semibold">Unassigned</span>}</span>
       </td>
     </tr>
+  );
+}
+
+// ─── Escalated tickets (forwarded by org admins), grouped by organization ────
+const escStatusCfg: Record<EscalationStatus, { cls: string; label: string }> = {
+  OPEN:         { cls: 'text-rose-700 bg-rose-50',       label: 'Open' },
+  ACKNOWLEDGED: { cls: 'text-cyan-700 bg-cyan-50',       label: 'Acknowledged' },
+  RESOLVED:     { cls: 'text-emerald-700 bg-emerald-50', label: 'Resolved' },
+};
+
+function EscalationsSection() {
+  const qc = useQueryClient();
+  const [filter, setFilter] = useState<EscalationStatus | 'ALL'>('OPEN');
+
+  const { data, isLoading } = useQuery<{ escalations: TicketEscalation[]; total: number }>({
+    queryKey: ['admin-escalations', filter],
+    queryFn: () => saasAdminApi.listEscalations(filter === 'ALL' ? {} : { status: filter })
+      .then((r) => r.data as { escalations: TicketEscalation[]; total: number }),
+    staleTime: 10_000,
+  });
+
+  const updateMut = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: EscalationStatus }) => saasAdminApi.updateEscalation(id, { status }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['admin-escalations'] }); },
+  });
+
+  const escalations = data?.escalations ?? [];
+
+  // Categorized by organization, most recent escalation first within each group.
+  const byOrg = useMemo(() => {
+    const groups = new Map<string, { name: string; items: TicketEscalation[] }>();
+    for (const e of escalations) {
+      const key = e.customer?.id ?? 'unknown';
+      const g = groups.get(key) ?? { name: e.customer?.name ?? 'Unknown organization', items: [] };
+      g.items.push(e);
+      groups.set(key, g);
+    }
+    return [...groups.values()].sort((a, b) =>
+      (b.items[0]?.createdAt ?? '').localeCompare(a.items[0]?.createdAt ?? ''));
+  }, [escalations]);
+
+  return (
+    <div>
+      <SectionHeader
+        title="Escalated Tickets"
+        hint="Forwarded to the platform by org admins — categorized by organization"
+        right={
+          <div className="flex items-center gap-1">
+            {(['OPEN', 'ACKNOWLEDGED', 'RESOLVED', 'ALL'] as const).map((s) => (
+              <button key={s} type="button" onClick={() => setFilter(s)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer
+                  ${filter === s ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}>
+                {s === 'ALL' ? 'All' : escStatusCfg[s].label}
+              </button>
+            ))}
+          </div>
+        }
+      />
+
+      {isLoading ? (
+        <ShimmerCard />
+      ) : escalations.length === 0 ? (
+        <div className="card p-8 text-center text-sm text-slate-500">
+          {filter === 'OPEN' ? 'No open escalations — nothing needs your attention.' : 'No escalations match this filter.'}
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {byOrg.map((group) => (
+            <div key={group.name} className="card overflow-hidden">
+              <div className="px-5 py-2.5 bg-slate-50 border-b border-slate-200 flex items-baseline justify-between">
+                <p className="text-sm font-semibold text-slate-900">{group.name}</p>
+                <span className="text-[11px] text-slate-400 tabular-nums">{group.items.length} escalation{group.items.length === 1 ? '' : 's'}</span>
+              </div>
+              <div className="divide-y divide-slate-100">
+                {group.items.map((e) => (
+                  <div key={e.id} className="px-5 py-3.5 flex items-start gap-3">
+                    <span className={`inline-flex px-2 py-0.5 rounded-md text-[11px] font-semibold flex-shrink-0 mt-0.5 ${priorityCls[e.priority]}`}>
+                      {e.priority}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-slate-900">{e.subject}</p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        {e.issueType} · escalated by {e.escalatedBy?.name ?? 'Unknown'} · {timeAgo(e.createdAt)}
+                        <span className="font-mono ml-1.5 text-slate-300">{e.ticketId.toUpperCase()}</span>
+                      </p>
+                      {e.note && (
+                        <p className="text-xs text-slate-600 mt-1.5 italic border-l-2 border-slate-200 pl-2">"{e.note}"</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className={`inline-flex px-2 py-0.5 rounded-md text-[11px] font-semibold ${escStatusCfg[e.status].cls}`}>
+                        {escStatusCfg[e.status].label}
+                      </span>
+                      {e.status === 'OPEN' && (
+                        <GlowButton variant="secondary" className="py-1 px-2.5 text-xs"
+                          onClick={() => updateMut.mutate({ id: e.id, status: 'ACKNOWLEDGED' })} disabled={updateMut.isPending}>
+                          Acknowledge
+                        </GlowButton>
+                      )}
+                      {e.status !== 'RESOLVED' && (
+                        <GlowButton variant="ghost" className="py-1 px-2.5 text-xs"
+                          onClick={() => updateMut.mutate({ id: e.id, status: 'RESOLVED' })} disabled={updateMut.isPending}>
+                          Resolve
+                        </GlowButton>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -534,6 +651,11 @@ export default function AdminPlatformDashboard() {
                   </div>
                 )}
               </div>
+            </motion.div>
+
+            {/* Escalated tickets (forwarded by org admins) */}
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.08 }}>
+              <EscalationsSection />
             </motion.div>
 
             {/* Watchtower + At-risk orgs */}

@@ -115,6 +115,22 @@ export const announcementsApi = {
   list: () => api.get('/announcements'),
 };
 
+// In-app Ticketing Tool — proxied through our server to the external ticketing
+// system (fallback data served until the external API is configured).
+export const ticketingApi = {
+  listTickets: (params?: Record<string, unknown>) => api.get('/ticketing/tickets', { params }),
+  createTicket: (data: unknown) => api.post('/ticketing/tickets', data),
+  updateTicket: (id: string, data: unknown) => api.patch(`/ticketing/tickets/${id}`, data),
+  escalateTicket: (id: string, data?: unknown) => api.post(`/ticketing/tickets/${id}/escalate`, data ?? {}),
+  getStats: () => api.get('/ticketing/stats'),
+  getAnalytics: () => api.get('/ticketing/analytics'),
+  listProjects: () => api.get('/ticketing/projects'),
+  createProject: (data: unknown) => api.post('/ticketing/projects', data),
+  deleteProject: (id: string) => api.delete(`/ticketing/projects/${id}`),
+  getReport: (params: Record<string, unknown>) => api.get('/ticketing/reports', { params }),
+  getAlerts: (since: string) => api.get('/ticketing/alerts', { params: { since } }),
+};
+
 export interface ChatTurn {
   role: 'user' | 'assistant';
   content: string;
@@ -211,6 +227,8 @@ export const saasAdminApi = {
   getMetrics: () => api.get('/saas-admin/metrics'),
   getTopClients: (limit?: number) => api.get('/saas-admin/top-clients', { params: limit ? { limit } : undefined }),
   getSlaBreaches: () => api.get('/saas-admin/sla-breaches'),
+  listEscalations: (params?: Record<string, unknown>) => api.get('/saas-admin/escalations', { params }),
+  updateEscalation: (id: string, data: unknown) => api.patch(`/saas-admin/escalations/${id}`, data),
   getChatAnalytics: () => api.get('/saas-admin/chat-analytics'),
   listAnnouncements: () => api.get('/saas-admin/announcements'),
   createAnnouncement: (data: unknown) => api.post('/saas-admin/announcements', data),

@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import { env } from '../../config/env';
-import { prisma } from '../../config/database';
+import { chatPrisma } from '../../config/chatDatabase';
 import type { ChatMessage } from './chat.schema';
 
 interface AgentEvent {
@@ -26,14 +26,14 @@ function deriveTitle(message: string): string {
  */
 async function resolveSession(ctx: ChatContext, message: string): Promise<string> {
   if (ctx.sessionId) {
-    const existing = await prisma.chatSession.findFirst({
+    const existing = await chatPrisma.chatSession.findFirst({
       where: { id: ctx.sessionId, userId: ctx.userId },
       select: { id: true },
     });
     if (existing) return existing.id;
   }
 
-  const created = await prisma.chatSession.create({
+  const created = await chatPrisma.chatSession.create({
     data: { customerId: ctx.customerId, userId: ctx.userId, title: deriveTitle(message) },
     select: { id: true },
   });
@@ -71,7 +71,7 @@ export async function streamToResponse(
   // saved even if the agent errors mid-stream.
   const sessionId = await resolveSession(ctx, message);
   res.write(`data: ${JSON.stringify({ sessionId })}\n\n`);
-  await prisma.chatMessage.create({
+  await chatPrisma.chatMessage.create({
     data: { customerId: ctx.customerId, sessionId, role: 'USER', content: message },
   });
 
@@ -80,11 +80,11 @@ export async function streamToResponse(
   // Persist whatever assistant text we accumulated and bump the session.
   const persistReply = async (): Promise<void> => {
     if (!fullReply.trim()) return;
-    await prisma.chatMessage.create({
+    await chatPrisma.chatMessage.create({
       data: { customerId: ctx.customerId, sessionId, role: 'ASSISTANT', content: fullReply },
     });
     // Touch updatedAt so recent conversations sort first in history.
-    await prisma.chatSession.update({ where: { id: sessionId }, data: { updatedAt: new Date() } });
+    await chatPrisma.chatSession.update({ where: { id: sessionId }, data: { updatedAt: new Date() } });
   };
 
   try {
@@ -177,7 +177,7 @@ export async function streamToResponse(
 // ─── Chat history (persisted sessions) ──────────────────────────────────────
 
 export async function listSessions(userId: string) {
-  const sessions = await prisma.chatSession.findMany({
+  const sessions = await chatPrisma.chatSession.findMany({
     where: { userId },
     orderBy: { updatedAt: 'desc' },
     select: {
@@ -199,13 +199,13 @@ export async function listSessions(userId: string) {
 }
 
 export async function getSession(id: string, userId: string) {
-  const session = await prisma.chatSession.findFirst({
+  const session = await chatPrisma.chatSession.findFirst({
     where: { id, userId },
     select: { id: true, title: true, createdAt: true, updatedAt: true },
   });
   if (!session) throw Object.assign(new Error('Conversation not found'), { status: 404, code: 'NOT_FOUND' });
 
-  const messages = await prisma.chatMessage.findMany({
+  const messages = await chatPrisma.chatMessage.findMany({
     where: { sessionId: id },
     orderBy: { createdAt: 'asc' },
     select: { id: true, role: true, content: true, createdAt: true },
@@ -215,7 +215,7 @@ export async function getSession(id: string, userId: string) {
 }
 
 export async function deleteSession(id: string, userId: string): Promise<void> {
-  const session = await prisma.chatSession.findFirst({ where: { id, userId }, select: { id: true } });
+  const session = await chatPrisma.chatSession.findFirst({ where: { id, userId }, select: { id: true } });
   if (!session) throw Object.assign(new Error('Conversation not found'), { status: 404, code: 'NOT_FOUND' });
-  await prisma.chatSession.delete({ where: { id } });
+  await chatPrisma.chatSession.delete({ where: { id } });
 }

@@ -7,6 +7,7 @@ import {
   CreateCatalogServiceSchema, UpdateCatalogServiceSchema,
   UpdateUserSchema, SystemActivitySchema,
   CreateAnnouncementSchema, UpdateAnnouncementSchema,
+  ListEscalationsSchema, UpdateEscalationSchema,
 } from './saas-admin.schema';
 import * as saasAdminService from './saas-admin.service';
 
@@ -252,6 +253,22 @@ export async function getChatAnalytics(_req: Request, res: Response, next: NextF
   try {
     const result = await saasAdminService.getChatAnalytics();
     res.json(result);
+  } catch (err) { next(err); }
+}
+
+// ─── Ticket escalations ──────────────────────────────────────────────────────
+export async function listEscalations(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = ListEscalationsSchema.parse(req.query);
+    res.json(await saasAdminService.listEscalations(input));
+  } catch (err) { next(err); }
+}
+
+export async function updateEscalation(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = UpdateEscalationSchema.parse(req.body);
+    const escalation = await saasAdminService.updateEscalation(req.params['id']!, req.user.userId, input);
+    res.json(escalation);
   } catch (err) { next(err); }
 }
 

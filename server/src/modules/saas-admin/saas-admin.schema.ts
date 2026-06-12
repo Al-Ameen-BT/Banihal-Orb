@@ -45,6 +45,16 @@ export const CreateAnnouncementSchema = z.object({
   expiresAt: z.coerce.date().nullable().optional(),
 });
 
+// ─── Ticket escalations (forwarded by org admins) ────────────────────────────
+export const ListEscalationsSchema = z.object({
+  status: z.enum(['OPEN', 'ACKNOWLEDGED', 'RESOLVED']).optional(),
+  since: z.coerce.date().optional(),   // createdAt > since (notification polling)
+});
+
+export const UpdateEscalationSchema = z.object({
+  status: z.enum(['OPEN', 'ACKNOWLEDGED', 'RESOLVED']),
+});
+
 export const UpdateAnnouncementSchema = z.object({
   title: z.string().min(3).max(120).optional(),
   message: z.string().min(3).max(1000).optional(),
@@ -133,3 +143,5 @@ export type UpdateUserInput = z.infer<typeof UpdateUserSchema>;
 export type SystemActivityInput = z.infer<typeof SystemActivitySchema>;
 export type CreateAnnouncementInput = z.infer<typeof CreateAnnouncementSchema>;
 export type UpdateAnnouncementInput = z.infer<typeof UpdateAnnouncementSchema>;
+export type ListEscalationsInput = z.infer<typeof ListEscalationsSchema>;
+export type UpdateEscalationInput = z.infer<typeof UpdateEscalationSchema>;

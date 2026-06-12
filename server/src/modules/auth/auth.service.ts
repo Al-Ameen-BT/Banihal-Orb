@@ -170,7 +170,11 @@ export interface CurrentSession {
   sessionId: string;
 }
 
-export async function login(input: LoginInput, currentSession?: CurrentSession | null): Promise<TokenPair> {
+export async function login(
+  input: LoginInput,
+  currentSession?: CurrentSession | null,
+  rawRefreshToken?: string | null,
+): Promise<TokenPair> {
   const user = await prisma.user.findUnique({
     where: { email: input.email },
     select: { id: true, email: true, customerId: true, role: true, passwordHash: true },
@@ -197,7 +201,21 @@ export async function login(input: LoginInput, currentSession?: CurrentSession |
   // A re-login from the browser that owns the current session replaces it.
   // Any other browser is blocked while the session is active; a session idle
   // past SESSION_INACTIVITY_MINUTES no longer counts as active.
-  const sameBrowser = currentSession?.userId === user.id;
+  let sameBrowser = currentSession?.userId === user.id;
+
+  // The access token (and its cookie) lives only 15 minutes, so the sid claim
+  // alone can't prove same-browser after a short idle. The refresh cookie lives
+  // 7 days and is scoped to /api/auth — if this login request carries the
+  // refresh token of one of this user's sessions, it IS the session's browser.
+  if (!sameBrowser && rawRefreshToken) {
+    const rows = await prisma.refreshToken.findMany({
+      where: { userId: user.id, expiresAt: { gt: new Date() } },
+      select: { tokenHash: true },
+    });
+    for (const row of rows) {
+      if (await bcrypt.compare(rawRefreshToken, row.tokenHash)) { sameBrowser = true; break; }
+    }
+  }
   if (!sameBrowser) {
     const activeSince = new Date(Date.now() - env.SESSION_INACTIVITY_MINUTES * 60_000);
     const activeSession = await prisma.refreshToken.findFirst({

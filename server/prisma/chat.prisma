@@ -1,0 +1,47 @@
+// ─── Chat database (dedicated) ────────────────────────────────────────────────
+// Assistant conversation history lives in its own PostgreSQL database
+// (CHAT_DATABASE_URL → b2b_chat). It connects to the main platform DB through
+// shared identifiers: customerId (tenant) and userId — cross-database foreign
+// keys are not possible, so referential links are enforced in the service layer.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/@prisma/chat-client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("CHAT_DATABASE_URL")
+}
+
+model ChatSession {
+  id         String        @id @default(cuid())
+  customerId String        // → main DB customers.id (service-layer link)
+  userId     String        // → main DB User.id (service-layer link)
+  title      String?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  messages   ChatMessage[]
+
+  @@index([customerId])
+  @@index([userId])
+  @@index([updatedAt])
+}
+
+model ChatMessage {
+  id         String      @id @default(cuid())
+  customerId String      // → main DB customers.id (service-layer link)
+  sessionId  String
+  role       ChatRole
+  content    String
+  createdAt  DateTime    @default(now())
+  session    ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([customerId])
+}
+
+enum ChatRole {
+  USER
+  ASSISTANT
+}
