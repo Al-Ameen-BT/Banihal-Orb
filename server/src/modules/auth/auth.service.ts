@@ -21,10 +21,16 @@ function generateSlug(name: string): string {
     .slice(0, 50) + '-' + crypto.randomBytes(3).toString('hex');
 }
 
-function signAccessToken(userId: string, customerId: string, role: Role): string {
-  return jwt.sign({ userId, customerId, role, type: 'access' }, env.JWT_ACCESS_SECRET, {
+function signAccessToken(userId: string, customerId: string, role: Role, sessionId: string): string {
+  return jwt.sign({ userId, customerId, role, sid: sessionId, type: 'access' }, env.JWT_ACCESS_SECRET, {
     expiresIn: env.JWT_ACCESS_EXPIRES_IN as jwt.SignOptions['expiresIn'],
   });
+}
+
+// Stable per-login session identity — survives refresh-token rotation and is
+// embedded in every access JWT (`sid`) so revocation takes effect immediately.
+function newSessionId(): string {
+  return crypto.randomBytes(24).toString('hex');
 }
 
 // Derive the domain from a contact email, ignoring generic gmail addresses.
@@ -42,14 +48,14 @@ export function isProviderAdminEmail(email: string): boolean {
   return !!domain && adminDomains.includes(domain);
 }
 
-async function createRefreshToken(userId: string): Promise<string> {
+async function createRefreshToken(userId: string, sessionId: string): Promise<string> {
   const raw = crypto.randomBytes(64).toString('hex');
   const hash = await bcrypt.hash(raw, BCRYPT_ROUNDS);
 
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + 7);
 
-  await prisma.refreshToken.create({ data: { tokenHash: hash, userId, expiresAt } });
+  await prisma.refreshToken.create({ data: { tokenHash: hash, userId, sessionId, expiresAt } });
   return raw;
 }
 
@@ -93,8 +99,9 @@ export async function register(input: RegisterInput): Promise<TokenPair> {
     },
   }).catch(() => {});
 
-  const accessToken = signAccessToken(user.id, customer.id, user.role);
-  const refreshToken = await createRefreshToken(user.id);
+  const sessionId = newSessionId();
+  const accessToken = signAccessToken(user.id, customer.id, user.role, sessionId);
+  const refreshToken = await createRefreshToken(user.id, sessionId);
   return { accessToken, refreshToken };
 }
 
@@ -150,12 +157,20 @@ export async function registerUser(input: RegisterUserInput): Promise<TokenPair>
     },
   }).catch(() => {});
 
-  const accessToken = signAccessToken(user.id, customer.id, user.role);
-  const refreshToken = await createRefreshToken(user.id);
+  const sessionId = newSessionId();
+  const accessToken = signAccessToken(user.id, customer.id, user.role, sessionId);
+  const refreshToken = await createRefreshToken(user.id, sessionId);
   return { accessToken, refreshToken };
 }
 
-export async function login(input: LoginInput): Promise<TokenPair> {
+// Identity of the session the login request itself was made under (parsed from
+// the access cookie by the controller) — used to allow same-browser re-login.
+export interface CurrentSession {
+  userId: string;
+  sessionId: string;
+}
+
+export async function login(input: LoginInput, currentSession?: CurrentSession | null): Promise<TokenPair> {
   const user = await prisma.user.findUnique({
     where: { email: input.email },
     select: { id: true, email: true, customerId: true, role: true, passwordHash: true },
@@ -178,14 +193,42 @@ export async function login(input: LoginInput): Promise<TokenPair> {
     );
   }
 
+  // ─── Single active session (strict) ──────────────────────────────────────
+  // A re-login from the browser that owns the current session replaces it.
+  // Any other browser is blocked while the session is active; a session idle
+  // past SESSION_INACTIVITY_MINUTES no longer counts as active.
+  const sameBrowser = currentSession?.userId === user.id;
+  if (!sameBrowser) {
+    const activeSince = new Date(Date.now() - env.SESSION_INACTIVITY_MINUTES * 60_000);
+    const activeSession = await prisma.refreshToken.findFirst({
+      where: { userId: user.id, expiresAt: { gt: new Date() }, lastUsedAt: { gte: activeSince } },
+      select: { id: true },
+    });
+    if (activeSession) {
+      await prisma.auditLog.create({
+        data: {
+          action: 'LOGIN_BLOCKED_ACTIVE_SESSION', performedById: user.id, customerId: user.customerId,
+          metadata: { role: user.role },
+        },
+      }).catch(() => {});
+      throw Object.assign(
+        new Error(`You're already signed in on another device or browser. Sign out there (or stay inactive for ${env.SESSION_INACTIVITY_MINUTES} minutes), then try again.`),
+        { status: 409, code: 'SESSION_ACTIVE' },
+      );
+    }
+  }
+  // Replace own session / clear stale or expired sessions — at most one row survives.
+  await prisma.refreshToken.deleteMany({ where: { userId: user.id } });
+
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
 
   await prisma.auditLog.create({
     data: { action: 'LOGIN', performedById: user.id, customerId: user.customerId, metadata: { role: user.role } },
   }).catch(() => {});
 
-  const accessToken = signAccessToken(user.id, user.customerId, user.role);
-  const refreshToken = await createRefreshToken(user.id);
+  const sessionId = newSessionId();
+  const accessToken = signAccessToken(user.id, user.customerId, user.role, sessionId);
+  const refreshToken = await createRefreshToken(user.id, sessionId);
   return { accessToken, refreshToken };
 }
 
@@ -208,13 +251,29 @@ export async function refreshTokens(rawRefreshToken: string): Promise<TokenPair>
     throw Object.assign(new Error('Invalid or expired refresh token'), { status: 401, code: 'REFRESH_TOKEN_INVALID' });
   }
 
-  // One-time-use: delete old token
+  // One-time-use rotation: replace the token but keep the same session identity
+  // so outstanding access tokens (sid claim) remain valid.
   await prisma.refreshToken.delete({ where: { id: matched.id } });
 
   const { user } = matched;
-  const accessToken = signAccessToken(user.id, user.customerId, user.role);
-  const refreshToken = await createRefreshToken(user.id);
+  const accessToken = signAccessToken(user.id, user.customerId, user.role, matched.sessionId);
+  const refreshToken = await createRefreshToken(user.id, matched.sessionId);
   return { accessToken, refreshToken };
+}
+
+// Revoke every session for a user (logout via the access token's identity —
+// works even when the path-scoped refresh cookie isn't sent with the request).
+export async function logoutByUser(userId: string): Promise<void> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, customerId: true, role: true },
+  });
+  if (!user) return;
+
+  await prisma.refreshToken.deleteMany({ where: { userId } });
+  await prisma.auditLog.create({
+    data: { action: 'LOGOUT', performedById: user.id, customerId: user.customerId, metadata: { role: user.role } },
+  }).catch(() => {});
 }
 
 export async function logout(rawRefreshToken: string): Promise<void> {
@@ -227,7 +286,9 @@ export async function logout(rawRefreshToken: string): Promise<void> {
   for (const t of tokens) {
     const ok = await bcrypt.compare(rawRefreshToken, t.tokenHash);
     if (ok) {
-      await prisma.refreshToken.delete({ where: { id: t.id } });
+      // Single-session model: explicit logout revokes every session for the user,
+      // which also releases the login lock immediately.
+      await prisma.refreshToken.deleteMany({ where: { userId: t.user.id } });
       await prisma.auditLog.create({
         data: { action: 'LOGOUT', performedById: t.user.id, customerId: t.user.customerId, metadata: { role: t.user.role } },
       }).catch(() => {});

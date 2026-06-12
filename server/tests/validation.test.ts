@@ -25,16 +25,18 @@ describe('Zod input validation', () => {
   });
 
   it('returns 400 for invalid query params on paginated endpoints', async () => {
-    // Register + login first
-    await request(app).post('/api/auth/register').send({
+    // Register and use the registration session cookies directly — a second
+    // cookie-less login is blocked by single-session enforcement. Unique email
+    // keeps this file independent of DB state (no cleanDb here).
+    const email = `valtest-${Math.random().toString(36).slice(2, 8)}@example.com`;
+    const regRes = await request(app).post('/api/auth/register').send({
       name: 'Val User',
-      email: 'valtest@example.com',
+      email,
       password: 'TestPassword1!',
       organizationName: 'Val Org',
       contactNumber: '+1-555-0000',
     });
-    const loginRes = await request(app).post('/api/auth/login').send({ email: 'valtest@example.com', password: 'TestPassword1!' });
-    const cookies = loginRes.headers['set-cookie'] as string[];
+    const cookies = regRes.headers['set-cookie'] as string[];
 
     // limit > 100 should fail Zod coercion
     const res = await request(app)

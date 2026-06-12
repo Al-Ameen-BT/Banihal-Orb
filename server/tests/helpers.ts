@@ -31,14 +31,16 @@ export async function loginAs(email: string, password = 'TestPassword1!') {
 }
 
 export async function registerAndLogin(orgName: string, email: string) {
-  await request(app).post('/api/auth/register').send({
+  // Registration already sets session cookies; a second cookie-less login would
+  // now be blocked by single-session enforcement (409 SESSION_ACTIVE).
+  const res = await request(app).post('/api/auth/register').send({
     name: 'Test User',
     email,
     password: 'TestPassword1!',
     organizationName: orgName,
     contactNumber: '+1-555-0000',
   });
-  return loginAs(email);
+  return res.headers['set-cookie'] as string[];
 }
 
 export async function cleanDb() {

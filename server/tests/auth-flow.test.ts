@@ -35,9 +35,10 @@ describe('Auth flow', () => {
   });
 
   it('rotates refresh token on each use', async () => {
-    await request(app).post('/api/auth/register').send(TEST_USER);
-    const loginRes = await request(app).post('/api/auth/login').send({ email: TEST_USER.email, password: TEST_USER.password });
-    const cookies1 = loginRes.headers['set-cookie'] as string[];
+    // Use the registration session directly — a cookie-less second login is now
+    // blocked by single-session enforcement.
+    const regRes = await request(app).post('/api/auth/register').send(TEST_USER);
+    const cookies1 = regRes.headers['set-cookie'] as string[];
 
     const refresh1 = await request(app).post('/api/auth/refresh').set('Cookie', cookies1);
     expect(refresh1.status).toBe(200);

@@ -1,8 +1,8 @@
 'use client';
 
-import { Suspense, useRef } from 'react';
-import { useSearchParams } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
+import { Suspense, useEffect, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { orgsApi, chatApi, type ChatTurn } from '@/lib/api';
 import RoleGuard from '@/components/guards/RoleGuard';
@@ -21,9 +21,19 @@ export default function ChatPage() {
 
 function ChatPageInner() {
   const { user } = useAuth();
+  const router = useRouter();
+  const queryClient = useQueryClient();
   const searchParams = useSearchParams();
   const resumeId = searchParams.get('session');
   const sessionIdRef = useRef<string | null>(resumeId);
+  // Bumped by "New chat" so the Chatbot remounts fresh even when the URL is already /chat.
+  const [chatEpoch, setChatEpoch] = useState(0);
+
+  // Keep the active session in sync with the URL. Without this, navigating from
+  // /chat?session=X to /chat keeps appending new messages to session X.
+  useEffect(() => {
+    sessionIdRef.current = resumeId;
+  }, [resumeId]);
 
   const { data: org } = useQuery<Customer>({
     queryKey: ['org'],
@@ -32,11 +42,14 @@ function ChatPageInner() {
   });
 
   // When resuming a conversation, load its prior turns to seed the thread.
+  // gcTime: 0 — the Chatbot copies these into local state once at mount, so a
+  // cached (stale) result would silently show an outdated transcript.
   const { data: resumed, isLoading: resumeLoading } = useQuery<ChatSessionDetail>({
     queryKey: ['chat-session', resumeId],
     queryFn: () => chatApi.getSession(resumeId!).then((r) => r.data as ChatSessionDetail),
     enabled: !!resumeId,
     staleTime: 0,
+    gcTime: 0,
   });
 
   async function handleMessage(
@@ -54,16 +67,31 @@ function ChatPageInner() {
             onToken?.(token);
           },
           onSession: (id) => { sessionIdRef.current = id; },
-          onDone: () => resolve(fullReply),
+          onDone: () => {
+            // Keep the dashboard's Chat History fresh: the sessions list and this
+            // session's cached transcript both changed with this turn.
+            void queryClient.invalidateQueries({ queryKey: ['chat-sessions'] });
+            if (sessionIdRef.current) {
+              void queryClient.invalidateQueries({ queryKey: ['chat-session', sessionIdRef.current] });
+            }
+            resolve(fullReply);
+          },
           onError: (msg) => reject(new Error(msg)),
         })
         .catch(reject);
     });
   }
 
+  function startNewChat() {
+    sessionIdRef.current = null;
+    setChatEpoch((e) => e + 1);
+    if (resumeId) router.replace('/chat');
+  }
+
   const initialMessages = resumed?.messages.map((m) => ({
     role: m.role === 'USER' ? ('user' as const) : ('bot' as const),
     content: m.content,
+    timestamp: new Date(m.createdAt).getTime(),
   }));
 
   return (
@@ -80,7 +108,7 @@ function ChatPageInner() {
                 <p className="mt-1 text-sm text-slate-500">
                   {resumeId
                     ? 'Resuming a saved conversation — your messages continue to be saved to history.'
-                    : 'Ask quick questions, get pointed to the right team, or be guided to file a ticket.'}
+                    : 'Describe an IT issue — printer, AD, proxy, VPN — or ask anything; conversations are saved to your history.'}
                 </p>
               </motion.div>
             </div>
@@ -100,11 +128,12 @@ function ChatPageInner() {
                 </div>
               ) : (
                 <Chatbot
-                  key={resumeId ?? 'new'}
+                  key={`${resumeId ?? 'new'}-${chatEpoch}`}
                   userName={user?.name}
                   orgName={org?.name}
                   onUserMessage={handleMessage}
                   initialMessages={initialMessages}
+                  onNewChat={startNewChat}
                   className="h-full"
                 />
               )}

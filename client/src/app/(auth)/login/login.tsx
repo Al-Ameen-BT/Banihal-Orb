@@ -31,12 +31,14 @@ export default function LoginPage() {
   const router = useRouter();
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState('');
+  const [sessionNotice, setSessionNotice] = useState('');
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setErrors({});
     setServerError('');
+    setSessionNotice('');
 
     const fd = new FormData(e.currentTarget);
     const data = { email: fd.get('email') as string, password: fd.get('password') as string };
@@ -53,8 +55,11 @@ export default function LoginPage() {
       await login(result.data.email, result.data.password);
       router.push('/dashboard');
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Authentication failed';
-      setServerError(msg);
+      const resp = (err as { response?: { data?: { error?: string; code?: string } } })?.response?.data;
+      const msg = resp?.error ?? 'Authentication failed';
+      // Single-session block: account is active on another device/browser.
+      if (resp?.code === 'SESSION_ACTIVE') setSessionNotice(msg);
+      else setServerError(msg);
     } finally {
       setLoading(false);
     }
@@ -95,6 +100,20 @@ export default function LoginPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
                 </svg>
                 {serverError}
+              </motion.div>
+            )}
+
+            {/* Single-session block — account already active on another device */}
+            {sessionNotice && (
+              <motion.div
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="flex items-start gap-2.5 px-3.5 py-2.5 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800"
+              >
+                <svg className="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M10.5 1.5H8.25A2.25 2.25 0 006 3.75v16.5a2.25 2.25 0 002.25 2.25h7.5A2.25 2.25 0 0018 20.25V3.75a2.25 2.25 0 00-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-3 18.75h3" />
+                </svg>
+                <span>{sessionNotice}</span>
               </motion.div>
             )}
 

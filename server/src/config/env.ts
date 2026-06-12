@@ -13,6 +13,9 @@ const EnvSchema = z.object({
   // Comma-separated work-email domains allowed to hold the ADMINISTRATOR (software
   // provider) role. REQUIRED for admin login — when empty, admin login is disabled.
   ADMIN_DOMAINS: z.string().default(''),
+  // Single-session enforcement: a session idle longer than this no longer blocks
+  // a new login (prevents 7-day lockout when a browser closes without logout).
+  SESSION_INACTIVITY_MINUTES: z.coerce.number().min(1).default(30),
   COOKIE_SECURE: z.preprocess((val) => {
     if (val === 'true') return true;
     if (val === 'false') return false;

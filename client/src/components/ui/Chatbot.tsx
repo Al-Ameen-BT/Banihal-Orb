@@ -26,42 +26,74 @@ interface ChatbotProps {
     onToken?: (token: string) => void,
   ) => Promise<string>;
   /** Seed the thread with a resumed conversation; replaces the greeting when non-empty. */
-  initialMessages?: Array<{ role: 'user' | 'bot'; content: string }>;
+  initialMessages?: Array<{ role: 'user' | 'bot'; content: string; timestamp?: number }>;
+  /** Called when the user clicks "New chat" in the header. */
+  onNewChat?: () => void;
   userName?: string;
   orgName?: string;
   className?: string;
 }
 
+// Server-side limits on POST /api/chat — exceeding either returns 400.
+const MAX_HISTORY_TURNS = 20;
+const MAX_TURN_CHARS = 2000;
+
+// ─── Common IT-issue quick prompts (auto-send on click) ──────────────────────
+const QUICK_PROMPTS: Array<{ label: string; text: string; dot: string }> = [
+  { label: 'Printer not working',  dot: 'bg-rose-500',
+    text: 'My printer is not working — it shows offline and nothing prints. How do I fix it?' },
+  { label: 'AD account issue',     dot: 'bg-violet-500',
+    text: 'I have an Active Directory issue — my AD account appears locked and I cannot sign in to the domain.' },
+  { label: 'Proxy issues',         dot: 'bg-cyan-500',
+    text: 'I am having proxy issues — websites are not loading through the company proxy.' },
+  { label: 'VPN keeps dropping',   dot: 'bg-amber-500',
+    text: 'My VPN keeps disconnecting every few minutes. What should I check?' },
+  { label: 'Outlook not syncing',  dot: 'bg-emerald-500',
+    text: 'Outlook is not syncing new emails on my system. How can I resolve this?' },
+];
+
 // Keyword-aware canned replies for demo/offline mode (no onUserMessage prop)
 function pickReply(text: string, fallbackIdx: number): string {
   const t = text.toLowerCase();
 
+  if (/(printer|printing|print job)/.test(t)) {
+    return "Let's get the printer back online: 1. Power-cycle the printer and check the network/USB cable. 2. On your PC open **Settings → Devices → Printers**, remove any stuck jobs in the queue. 3. Set the correct printer as default — \"offline\" usually clears after a queue reset. If it stays offline, open a **MEDIUM** ticket with the printer name and our IT team will re-add the driver remotely.";
+  }
+  if (/(active directory|\bad\b|account locked|domain login|domain account)/.test(t)) {
+    return "AD sign-in issues are usually a locked or expired account. 1. Wait 15 minutes — standard lockout auto-releases. 2. If you recently changed your password, update it everywhere it's saved (phone mail, mapped drives) — stale credentials re-lock the account. 3. Still locked? Your Org Admin can unlock it, or open a **HIGH** ticket and our team will reset it within the SLA.";
+  }
+  if (/(proxy|blocked site|sites? not loading|firewall)/.test(t)) {
+    return "For proxy problems: 1. Check **Settings → Network → Proxy** matches your company-issued PAC/proxy address. 2. Try a known-internal site — if internal works but external doesn't, it's a proxy rule, not your machine. 3. Note the exact error (407 = auth, timeout = reachability) and open a ticket with the failing URL; the network team can whitelist or fix the rule.";
+  }
+  if (/(vpn|tunnel|anyconnect|globalprotect)/.test(t)) {
+    return "VPN drops are commonly local network or client-version issues: 1. Switch networks (hotspot test) to rule out your router/ISP. 2. Update the VPN client — old versions drop on token refresh. 3. If it drops at a fixed interval, that's a session timeout policy — open a ticket with the timestamp pattern and we'll check the gateway logs.";
+  }
+  if (/(outlook|email|mailbox|exchange)/.test(t)) {
+    return "For Outlook sync issues: 1. Check the status bar — \"Working Offline\" gets toggled by accident more than you'd think. 2. **Send/Receive → Update Folder**, then restart Outlook. 3. If webmail shows the new mail but Outlook doesn't, rebuild the OST: ticket it as **MEDIUM** and IT will guide you through the profile reset.";
+  }
   if (/(ticket|request|complaint|incident|issue)/.test(t)) {
-    return "Sounds like something we should formalize. Use the **Create Support Ticket** panel on the left — pick the right priority and a CSM engineer will follow up within the SLA tied to your contract.";
+    return "Sounds like something we should formalize. Use the **Support** page to create a ticket — pick the right priority and an engineer will follow up within the SLA tied to your contract.";
   }
   if (/(service|expire|renew|subscri)/.test(t)) {
-    return "Your subscribed services and their renewal dates are visible above. Anything tagged \"Expiring Soon\" renews within 30 days — only your Org Admin can confirm renewal pricing with the platform team.";
+    return "Your subscribed services and their renewal dates are visible on the dashboard. Anything tagged \"Expiring Soon\" renews within 30 days — only your Org Admin can confirm renewal pricing with the platform team.";
   }
   if (/(mfa|password|login|reset|access|locked)/.test(t)) {
     return "For account access issues, please contact your Org Admin. If they're unavailable, open a ticket marked HIGH priority and our platform team can assist.";
   }
-  if (/(siem|edr|soc|threat|alert|detection)/.test(t)) {
-    return "I can point you toward your security telemetry, but I can't query SIEM/EDR data directly. For real-time alerts, check your subscribed SIEM service. For investigations, the SOC-as-a-Service team responds via tickets.";
-  }
   if (/(hello|hi|hey|good (morning|afternoon|evening))/.test(t)) {
-    return "Hi! I'm the Tech assistant. I can help you understand your subscribed services, route questions to your team, or guide you through creating a ticket. What's on your mind?";
+    return "Hi! I'm the Tech IT assistant. Tell me what's broken — printer, AD sign-in, proxy, VPN, email — or ask about your services and tickets. What's going on?";
   }
   if (/(thank|thanks|appreciate)/.test(t)) {
     return "You're welcome! Anything else I can help with?";
   }
   if (/(bye|see you|later)/.test(t)) {
-    return "Take care. If anything urgent comes up, the ticket form is always available — and a human is on the other end.";
+    return "Take care. If anything urgent comes up, the Support page is always available — and a human is on the other end.";
   }
 
   const fallbacks = [
-    "Got it — I've noted that. I'm a demo assistant, so for anything complex I'd recommend opening a ticket so a security engineer can follow up.",
-    "Thanks for the message. For specific questions about your services or account, your Org Admin is your fastest path. For incidents or technical issues, the ticket form is right here.",
-    "I'm here to help with quick questions about your dashboard, services, and how to reach your team. For deeper investigation, please use the ticket form.",
+    "Got it — I've noted that. I'm a demo assistant, so for anything complex I'd recommend opening a ticket so an engineer can follow up.",
+    "Thanks for the message. For specific questions about your services or account, your Org Admin is your fastest path. For incidents or technical issues, the Support page is right there.",
+    "I'm here to help with quick IT questions — printers, AD, proxy, VPN, email — plus your services and tickets. For deeper investigation, please use the ticket form.",
   ];
   return fallbacks[fallbackIdx % fallbacks.length]!;
 }
@@ -197,11 +229,24 @@ function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-export default function Chatbot({ onUserMessage, initialMessages, userName, orgName, className }: ChatbotProps) {
+function BotAvatar({ size = 'sm' }: { size?: 'sm' | 'md' }) {
+  const wrap = size === 'md' ? 'w-10 h-10' : 'w-7 h-7 mt-0.5';
+  const icon = size === 'md' ? 'w-5 h-5' : 'w-3.5 h-3.5';
+  return (
+    <div className={`relative ${wrap} rounded-full bg-gradient-to-br from-brand to-violet-600 flex items-center justify-center flex-shrink-0`}>
+      <svg className={`${icon} text-white`} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6} d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.091 3.091z" />
+      </svg>
+      {size === 'md' && <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-500 border-2 border-white animate-pulse-soft" />}
+    </div>
+  );
+}
+
+export default function Chatbot({ onUserMessage, initialMessages, onNewChat, userName, orgName, className }: ChatbotProps) {
   const greeting = useMemo(() => {
     const who = userName ? `, ${userName.split(' ')[0]}` : '';
     const where = orgName ? ` at ${orgName}` : '';
-    return `Hi${who}! I'm the Tech security assistant${where ? where : ''}. I can answer quick questions about your services, point you to your Org Admin or CSM team, and help you decide when to open a ticket. What can I help you with?`;
+    return `Hi${who}! I'm the Tech IT assistant${where}. Tell me what's broken — printer, AD sign-in, proxy, VPN, email — or ask about your services and tickets. What can I help you with?`;
   }, [userName, orgName]);
 
   const [messages, setMessages] = useState<Message[]>(() => {
@@ -210,7 +255,7 @@ export default function Chatbot({ onUserMessage, initialMessages, userName, orgN
         id: `seed-${i}`,
         role: m.role,
         content: m.content,
-        timestamp: Date.now(),
+        timestamp: m.timestamp ?? Date.now(),
       }));
     }
     return [{ id: 'bot-greet', role: 'bot', content: greeting, timestamp: Date.now() }];
@@ -223,24 +268,47 @@ export default function Chatbot({ onUserMessage, initialMessages, userName, orgN
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // The org/user queries usually resolve after first paint — refresh the greeting
+  // in place so it doesn't permanently miss the org name.
+  useEffect(() => {
+    setMessages((prev) =>
+      prev.length === 1 && prev[0]?.id === 'bot-greet' && prev[0].content !== greeting
+        ? [{ ...prev[0], content: greeting }]
+        : prev,
+    );
+  }, [greeting]);
+
+  // Instant scroll while tokens stream (smooth scrolling lags behind), smooth otherwise.
   useEffect(() => {
     if (scrollRef.current) {
-      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: streamingMsgId ? 'auto' : 'smooth' });
     }
-  }, [messages, typing]);
+  }, [messages, typing, streamingMsgId]);
 
-  async function handleSend() {
-    const text = input.trim();
-    if (!text || typing) return;
+  // Restore focus once the input is re-enabled (focusing a disabled input is a no-op).
+  useEffect(() => {
+    if (!typing && !streamingMsgId) inputRef.current?.focus();
+  }, [typing, streamingMsgId]);
+
+  const busy = typing || !!streamingMsgId;
+
+  async function sendText(raw: string) {
+    const text = raw.trim();
+    if (!text || busy) return;
 
     const userMsg: Message = { id: `u-${Date.now()}`, role: 'user', content: text, timestamp: Date.now() };
     setMessages((prev) => [...prev, userMsg]);
     setInput('');
     setTyping(true);
 
+    // Cap to the server's limits (20 turns × 2000 chars) — exceeding either 400s.
     const history: ChatTurn[] = messages
-      .filter((m) => m.id !== 'bot-greet')
-      .map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }));
+      .filter((m) => m.id !== 'bot-greet' && m.content.trim().length > 0)
+      .map((m) => ({
+        role: m.role === 'user' ? ('user' as const) : ('assistant' as const),
+        content: m.content.slice(0, MAX_TURN_CHARS),
+      }))
+      .slice(-MAX_HISTORY_TURNS);
 
     try {
       if (onUserMessage) {
@@ -293,32 +361,34 @@ export default function Chatbot({ onUserMessage, initialMessages, userName, orgN
     } finally {
       setStreamingMsgId(null);
       streamingIdRef.current = '';
-      inputRef.current?.focus();
     }
   }
 
-  const quickPrompts = [
-    "How do I open a ticket?",
-    "What services are expiring?",
-    "Who is my CSM?",
-  ];
-
   const isLive = !!onUserMessage;
+  const showPrompts = messages.length === 1 && messages[0]?.id === 'bot-greet' && !typing;
+  const inConversation = messages.some((m) => m.id !== 'bot-greet');
 
   return (
     <div className={`card flex flex-col overflow-hidden ${className ?? 'h-[640px]'}`}>
       {/* Header */}
       <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-100 flex-shrink-0">
-        <div className="relative w-10 h-10 rounded-full bg-gradient-to-br from-brand to-violet-600 flex items-center justify-center flex-shrink-0">
-          <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6} d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.091 3.091zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" />
-          </svg>
-          <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-500 border-2 border-white animate-pulse-soft" />
-        </div>
+        <BotAvatar size="md" />
         <div className="flex-1 min-w-0">
           <h3 className="text-base font-semibold text-slate-900 leading-tight">Tech Assistant</h3>
-          <p className="text-xs text-slate-500">Online · usually responds instantly</p>
+          <p className="text-xs text-slate-500">IT support &amp; quick answers · responds instantly</p>
         </div>
+        {onNewChat && inConversation && (
+          <button
+            type="button"
+            onClick={onNewChat}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-600 bg-slate-50 border border-slate-200 hover:bg-slate-100 hover:text-slate-900 transition-colors cursor-pointer"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.5v15m7.5-7.5h-15" />
+            </svg>
+            New chat
+          </button>
+        )}
         {isLive ? (
           <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-600 px-2 py-1 bg-emerald-50 rounded-md">Live</span>
         ) : (
@@ -337,13 +407,7 @@ export default function Chatbot({ onUserMessage, initialMessages, userName, orgN
               transition={{ duration: 0.2 }}
               className={`flex gap-2.5 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
-              {msg.role === 'bot' && (
-                <div className="w-7 h-7 rounded-full bg-gradient-to-br from-brand to-violet-600 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.091 3.091z" />
-                  </svg>
-                </div>
-              )}
+              {msg.role === 'bot' && <BotAvatar />}
               <div className={`max-w-[80%] ${msg.role === 'user' ? 'order-first' : ''}`}>
                 <div className={`px-3.5 py-2 rounded-2xl text-sm leading-relaxed ${
                   msg.role === 'user'
@@ -364,6 +428,26 @@ export default function Chatbot({ onUserMessage, initialMessages, userName, orgN
           ))}
         </AnimatePresence>
 
+        {/* Common IT issues — shown only on the initial greeting, auto-send on click */}
+        {showPrompts && (
+          <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.1 }} className="pl-9">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-400 mb-2">Common IT issues</p>
+            <div className="flex flex-wrap gap-2">
+              {QUICK_PROMPTS.map((q) => (
+                <button
+                  key={q.label}
+                  type="button"
+                  onClick={() => void sendText(q.text)}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-full hover:bg-slate-50 hover:border-slate-300 hover:text-slate-900 transition-colors cursor-pointer"
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${q.dot}`} />
+                  {q.label}
+                </button>
+              ))}
+            </div>
+          </motion.div>
+        )}
+
         {/* Typing indicator — shown while waiting for the first token */}
         <AnimatePresence>
           {typing && (
@@ -373,11 +457,7 @@ export default function Chatbot({ onUserMessage, initialMessages, userName, orgN
               exit={{ opacity: 0 }}
               className="flex gap-2.5 justify-start"
             >
-              <div className="w-7 h-7 rounded-full bg-gradient-to-br from-brand to-violet-600 flex items-center justify-center flex-shrink-0 mt-0.5">
-                <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.091 3.091z" />
-                </svg>
-              </div>
+              <BotAvatar />
               <div className="bg-white border border-slate-200 rounded-2xl rounded-bl-md px-4 py-3 flex gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: '0ms' }} />
                 <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: '150ms' }} />
@@ -388,39 +468,23 @@ export default function Chatbot({ onUserMessage, initialMessages, userName, orgN
         </AnimatePresence>
       </div>
 
-      {/* Quick prompts — shown only on the initial greeting */}
-      {messages.length === 1 && !typing && (
-        <div className="px-5 pb-3 flex flex-wrap gap-2 flex-shrink-0">
-          {quickPrompts.map((q) => (
-            <button
-              key={q}
-              type="button"
-              onClick={() => { setInput(q); inputRef.current?.focus(); }}
-              className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-full hover:bg-slate-50 hover:border-slate-300 hover:text-slate-900 transition-colors cursor-pointer"
-            >
-              {q}
-            </button>
-          ))}
-        </div>
-      )}
-
       {/* Input bar */}
       <form
-        onSubmit={(e) => { e.preventDefault(); void handleSend(); }}
+        onSubmit={(e) => { e.preventDefault(); void sendText(input); }}
         className="flex items-center gap-2 px-4 py-3 border-t border-slate-100 bg-white flex-shrink-0"
       >
         <input
           ref={inputRef}
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask a question or describe an issue…"
+          placeholder="Describe your issue — printer, AD, proxy, VPN…"
           className="flex-1 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-brand focus:bg-white transition-colors"
-          disabled={typing || !!streamingMsgId}
-          maxLength={500}
+          disabled={busy}
+          maxLength={MAX_TURN_CHARS}
         />
         <button
           type="submit"
-          disabled={!input.trim() || typing || !!streamingMsgId}
+          disabled={!input.trim() || busy}
           className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-brand text-white hover:bg-brand-700 active:bg-brand-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
           aria-label="Send message"
         >

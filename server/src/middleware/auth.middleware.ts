@@ -8,8 +8,13 @@ interface AccessTokenPayload {
   userId: string;
   customerId: string;
   role: Role;
+  sid?: string;
   type: 'access' | 'impersonation';
 }
+
+// Throttle lastUsedAt writes: one update per session per minute keeps the
+// inactivity window accurate without a DB write on every request.
+const ACTIVITY_TOUCH_MS = 60_000;
 
 export async function authMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
   const token = req.cookies['accessToken'] as string | undefined;
@@ -25,6 +30,25 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
   } catch {
     res.status(401).json({ error: 'Invalid or expired token', code: 'TOKEN_INVALID' });
     return;
+  }
+
+  // Single-session enforcement: the access token is only honored while its
+  // session (RefreshToken row, matched via the stable `sid` claim) still exists.
+  // Logout / revocation elsewhere therefore takes effect immediately.
+  if (!payload.sid) {
+    res.status(401).json({ error: 'Invalid or expired token', code: 'TOKEN_INVALID' });
+    return;
+  }
+  const session = await prisma.refreshToken.findFirst({
+    where: { sessionId: payload.sid },
+    select: { id: true, lastUsedAt: true },
+  });
+  if (!session) {
+    res.status(401).json({ error: 'Session has been signed out', code: 'SESSION_REVOKED' });
+    return;
+  }
+  if (Date.now() - session.lastUsedAt.getTime() > ACTIVITY_TOUCH_MS) {
+    prisma.refreshToken.update({ where: { id: session.id }, data: { lastUsedAt: new Date() } }).catch(() => {});
   }
 
   // Verify customer is not suspended

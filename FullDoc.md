@@ -129,6 +129,7 @@ Enforcement points:
 - Passwords hashed with **bcrypt (12 rounds)**; `passwordHash` excluded from all responses via Prisma `select`.
 - **JWT in HttpOnly + SameSite cookies** (Secure configurable via `COOKIE_SECURE`); access token ~15m, refresh token 7d.
 - **Refresh-token rotation**: refresh tokens are bcrypt-hashed, stored in DB, one-time-use (old token deleted on refresh).
+- **Single active session per user (all roles)**: a second browser cannot log in while a session is active (`409 SESSION_ACTIVE`, audit-logged as `LOGIN_BLOCKED_ACTIVE_SESSION`). The access JWT carries a stable `sid` claim validated against the session row on every request, so logout/revocation takes effect immediately (`401 SESSION_REVOKED`). Same-browser re-login replaces the user's own session; a session idle longer than `SESSION_INACTIVITY_MINUTES` (default 30) is treated as released so a closed-without-logout browser cannot lock the account.
 - **helmet** CSP, **CORS allow-list** (`ALLOWED_ORIGINS`), and **rate limiting** (global, stricter on `/api/auth`, separate limiter on `/api/chat`).
 - **Impersonation** uses a short-lived (5-minute) signed token and writes an `AuditLog` entry.
 - Env is **Zod-validated at boot**; invalid/missing secrets exit the process.
