@@ -377,8 +377,8 @@ ExecStart={py_cmd} {script_path} --run{dev_flag}
 Restart=always
 RestartSec=5
 Environment=NODE_ENV={env_mode}
-StandardOutput=syslog
-StandardError=syslog
+StandardOutput=journal
+StandardError=journal
 SyslogIdentifier=b2bweb
 
 [Install]
