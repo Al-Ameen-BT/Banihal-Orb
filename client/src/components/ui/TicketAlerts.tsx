@@ -5,13 +5,13 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ticketingApi } from '@/lib/api';
-import type { TicketingTicket } from '@/lib/schemas';
+import type { TicketDTO } from '@/lib/schemas';
 
 const SEEN_KEY = 'ticketing-alerts-since';
 const POLL_MS = 10_000;
 
 const priorityDot: Record<string, string> = {
-  CRITICAL: 'bg-red-500', HIGH: 'bg-amber-500', MEDIUM: 'bg-cyan-500', LOW: 'bg-slate-400',
+  urgent: 'bg-red-500', high: 'bg-amber-500', medium: 'bg-cyan-500', low: 'bg-slate-400',
 };
 
 /**
@@ -21,8 +21,8 @@ const priorityDot: Record<string, string> = {
  * doesn't replay old alerts.
  */
 export default function TicketAlerts() {
-  const [unread, setUnread] = useState<TicketingTicket[]>([]);
-  const [toasts, setToasts] = useState<TicketingTicket[]>([]);
+  const [unread, setUnread] = useState<TicketDTO[]>([]);
+  const [toasts, setToasts] = useState<TicketDTO[]>([]);
   const [open, setOpen] = useState(false);
   const seenIds = useRef<Set<string>>(new Set());
 
@@ -35,7 +35,7 @@ export default function TicketAlerts() {
         localStorage.setItem(SEEN_KEY, since);
       }
       const { data } = await ticketingApi.getAlerts(since);
-      const res = data as { tickets: TicketingTicket[]; now: string };
+      const res = data as { tickets: TicketDTO[]; now: string };
       const fresh = res.tickets.filter((t) => !seenIds.current.has(t.id));
 
       if (fresh.length > 0) {
@@ -110,9 +110,9 @@ export default function TicketAlerts() {
                       className="block px-4 py-2.5 border-b border-slate-50 last:border-0 hover:bg-slate-50 transition-colors">
                       <div className="flex items-center gap-2">
                         <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${priorityDot[t.priority] ?? 'bg-slate-400'}`} />
-                        <p className="text-xs font-semibold text-slate-900 truncate">{t.subject}</p>
+                        <p className="text-xs font-semibold text-slate-900 truncate"><span className="font-mono text-slate-400">{t.ticketNumber}</span> {t.title}</p>
                       </div>
-                      <p className="text-[11px] text-slate-400 mt-0.5 pl-3.5">{t.raisedBy?.name ?? 'Unknown'} · {t.issueType}</p>
+                      <p className="text-[11px] text-slate-400 mt-0.5 pl-3.5">{t.reporter?.name ?? 'Unknown'} · {t.type}</p>
                     </Link>
                   ))
                 )}
@@ -142,10 +142,10 @@ export default function TicketAlerts() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-bold text-slate-900">New ticket raised</p>
-                  <p className="text-sm text-slate-700 truncate mt-0.5">{t.subject}</p>
+                  <p className="text-sm text-slate-700 truncate mt-0.5"><span className="font-mono text-xs text-slate-400">{t.ticketNumber}</span> {t.title}</p>
                   <p className="text-[11px] text-slate-400 mt-0.5">
-                    {t.raisedBy?.name ?? 'Unknown'} · {t.issueType} ·{' '}
-                    <span className={`font-semibold ${t.priority === 'CRITICAL' || t.priority === 'HIGH' ? 'text-red-600' : 'text-slate-500'}`}>{t.priority}</span>
+                    {t.reporter?.name ?? 'Unknown'} · {t.type} ·{' '}
+                    <span className={`font-semibold ${t.priority === 'urgent' || t.priority === 'high' ? 'text-red-600' : 'text-slate-500'}`}>{t.priority}</span>
                   </p>
                   <Link href="/ticketing?tab=tickets"
                     onClick={() => setToasts((prev) => prev.filter((x) => x.id !== t.id))}

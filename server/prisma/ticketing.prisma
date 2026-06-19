@@ -31,6 +31,10 @@ model Ticket {
   assignee      String?
   raisedByName  String?
   raisedByEmail String?
+  clientName    String?
+  clientEmail   String?
+  branch        String?
+  onSiteSupport Boolean        @default(false)
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   completedAt   DateTime?

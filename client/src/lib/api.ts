@@ -79,6 +79,8 @@ export const authApi = {
   registerUser: (data: unknown) => api.post('/auth/register-user', data),
   login: (data: unknown) => api.post('/auth/login', data),
   logout: () => api.post('/auth/logout'),
+  forgotPassword: (data: { email: string }) => api.post('/auth/forgot-password', data),
+  resetPassword: (data: { token: string; newPassword: string }) => api.post('/auth/reset-password', data),
 };
 
 export const usersApi = {
@@ -119,16 +121,32 @@ export const announcementsApi = {
 // system (fallback data served until the external API is configured).
 export const ticketingApi = {
   listTickets: (params?: Record<string, unknown>) => api.get('/ticketing/tickets', { params }),
+  getTicket: (id: string) => api.get(`/ticketing/tickets/${id}`),
   createTicket: (data: unknown) => api.post('/ticketing/tickets', data),
   updateTicket: (id: string, data: unknown) => api.patch(`/ticketing/tickets/${id}`, data),
-  escalateTicket: (id: string, data?: unknown) => api.post(`/ticketing/tickets/${id}/escalate`, data ?? {}),
   getStats: () => api.get('/ticketing/stats'),
   getAnalytics: () => api.get('/ticketing/analytics'),
   listProjects: () => api.get('/ticketing/projects'),
+  listAssignees: () => api.get('/ticketing/assignees'),
   createProject: (data: unknown) => api.post('/ticketing/projects', data),
+  updateProject: (id: string, data: unknown) => api.patch(`/ticketing/projects/${id}`, data),
   deleteProject: (id: string) => api.delete(`/ticketing/projects/${id}`),
+  listSlas: () => api.get('/ticketing/slas'),
+  createSla: (data: unknown) => api.post('/ticketing/slas', data),
+  updateSla: (id: string, data: unknown) => api.patch(`/ticketing/slas/${id}`, data),
+  deleteSla: (id: string) => api.delete(`/ticketing/slas/${id}`),
   getReport: (params: Record<string, unknown>) => api.get('/ticketing/reports', { params }),
   getAlerts: (since: string) => api.get('/ticketing/alerts', { params: { since } }),
+  // Collaboration
+  getComments: (id: string) => api.get(`/ticketing/tickets/${id}/comments`),
+  addComment: (id: string, form: FormData) => api.post(`/ticketing/tickets/${id}/comments`, form),
+  getActivity: (id: string) => api.get(`/ticketing/tickets/${id}/activity`),
+  getTicketAttachments: (id: string) => api.get(`/ticketing/tickets/${id}/attachments`),
+  uploadAttachments: (id: string, form: FormData) => api.post(`/ticketing/tickets/${id}/attachments`, form),
+  downloadAttachment: (id: string) => api.get(`/ticketing/attachments/${id}/download`, { responseType: 'blob' }),
+  getWatchers: (id: string) => api.get(`/ticketing/tickets/${id}/watchers`),
+  watch: (id: string) => api.post(`/ticketing/tickets/${id}/watch`),
+  unwatch: (id: string) => api.delete(`/ticketing/tickets/${id}/watch`),
 };
 
 export interface ChatTurn {

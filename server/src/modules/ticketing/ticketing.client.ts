@@ -1,267 +1,300 @@
-import crypto from 'crypto';
-import { env } from '../../config/env';
-import { ticketingPrisma } from '../../config/ticketingDatabase';
-import type { Ticket as DbTicket, Project as DbProject } from '@prisma/ticketing-client';
+import { ticketPrisma } from '../../config/ticketDatabase';
+import { evaluateSla, type TimeUnit } from './services/slaService';
 import type {
-  Ticket, Project, TicketFilters,
-  CreateTicketInput, UpdateTicketInput, CreateProjectInput,
-  TicketStatus, TicketPriority,
+  TicketDTO, ProjectDTO, SlaDTO, TicketFilters, PersonRef,
+  TicketStatus, TicketPriority, TicketType, ProjectPriority,
+  CommentDTO, AttachmentDTO, ActivityDTO,
 } from './ticketing.types';
 
-/**
- * Ticketing data client — the single integration boundary with the external
- * Ticketing system (the API the customer will provide).
- *
- * Mode is decided by TICKETING_API_URL:
- *   • unset  → FALLBACK MODE: the dedicated ticketing database (b2b_ticketing,
- *     see prisma/ticketing.prisma) backs the tool. Each organization is
- *     lazy-seeded with realistic IT tickets on first access; everything
- *     persists across server restarts. Rows link to the main DB via customerId.
- *   • set    → EXTERNAL MODE: every function below must call the real API.
- *     The `externalNotConfigured` stubs throw until the provider's spec
- *     (endpoints, auth, payloads, org→client mapping) is filled in. ◄── TODO
- */
+type UploadedFile = { filename: string; originalname: string; mimetype: string; size: number; path: string };
 
-export function usingFallback(): boolean {
-  return !env.TICKETING_API_URL;
+// ─── Includes ────────────────────────────────────────────────────────────────
+const userSel = { select: { id: true, firstName: true, lastName: true, email: true } } as const;
+
+const ticketInclude = {
+  Projects: { select: { id: true, name: true } },
+  Users_Tickets_reporterIdToUsers: userSel,
+  Users_Tickets_assigneeIdToUsers: userSel,
+  Customers: { select: { id: true, name: true } },
+  SLAs: { select: { id: true, name: true, resolutionTime: true, timeUnit: true } },
+  _count: { select: { Comments: true, TicketAttachments: true, TicketWatchers: true } },
+} as const;
+
+type TicketRow = Awaited<ReturnType<typeof ticketPrisma.tickets.findFirstOrThrow<{ include: typeof ticketInclude }>>>;
+
+function person(u: { id: string; firstName: string; lastName: string; email: string | null } | null): PersonRef | null {
+  if (!u) return null;
+  return { id: u.id, name: `${u.firstName} ${u.lastName}`.trim(), email: u.email };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DTO mapping (DB rows → UI-facing shapes; dates as ISO strings)
-// ─────────────────────────────────────────────────────────────────────────────
-
-function toTicket(row: DbTicket): Ticket {
+function toTicketDTO(row: TicketRow): TicketDTO {
+  const sla = row.SLAs ? { id: row.SLAs.id, name: row.SLAs.name, resolutionTime: row.SLAs.resolutionTime, timeUnit: row.SLAs.timeUnit as string } : null;
+  const evalSla = evaluateSla(
+    { status: row.status, createdAt: row.createdAt, pausedTime: row.pausedTime, totalPausedTime: row.totalPausedTime },
+    row.SLAs ? { resolutionTime: row.SLAs.resolutionTime, timeUnit: row.SLAs.timeUnit as TimeUnit } : null,
+  );
   return {
     id: row.id,
-    subject: row.subject,
+    ticketNumber: row.ticketNumber,
+    title: row.title,
     description: row.description,
-    issueType: row.issueType,
     status: row.status as TicketStatus,
     priority: row.priority as TicketPriority,
+    type: row.type as TicketType,
     projectId: row.projectId,
-    assignee: row.assignee,
-    raisedBy: row.raisedByEmail ? { name: row.raisedByName ?? 'Unknown', email: row.raisedByEmail } : null,
+    projectName: row.Projects?.name ?? null,
+    reporter: person(row.Users_Tickets_reporterIdToUsers),
+    assignee: person(row.Users_Tickets_assigneeIdToUsers),
+    customer: row.Customers ? { id: row.Customers.id, name: row.Customers.name } : null,
+    storyPoints: row.storyPoints,
+    dueDate: row.dueDate ? row.dueDate.toISOString() : null,
+    labels: row.labels,
+    branch: row.branch,
+    onSiteSupportRequired: row.onSiteSupportRequired,
+    reasonForDelay: row.reasonForDelay,
+    resolvedMethods: row.resolvedMethods,
+    sla,
+    slaStatus: evalSla.status,
+    slaRemainingSeconds: evalSla.remainingSeconds,
+    slaDeadline: evalSla.deadline,
+    pausedTime: row.pausedTime ? row.pausedTime.toISOString() : null,
+    totalPausedTime: row.totalPausedTime,
+    counts: { comments: row._count.Comments, attachments: row._count.TicketAttachments, watchers: row._count.TicketWatchers },
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
-    completedAt: row.completedAt ? row.completedAt.toISOString() : null,
   };
 }
 
-function toProject(row: DbProject): Project {
-  return {
-    id: row.id,
-    name: row.name,
-    description: row.description,
-    category: row.category,
-    priority: row.priority as TicketPriority,
-    assignees: row.assignees,
-    createdAt: row.createdAt.toISOString(),
-  };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// FALLBACK MODE — lazy per-organization seeding (deterministic, idempotent)
-// ─────────────────────────────────────────────────────────────────────────────
-
-const ISSUE_TYPES = [
-  'Printer issue', 'Password reset', 'AD account lockout', 'Proxy / site whitelist',
-  'VPN connectivity', 'Outlook sync', 'Vulnerability detected', 'Hardware request',
-];
-const SAMPLE_USERS = [
-  { name: 'Field Engineer', email: 'engineer@org.local' },
-  { name: 'Branch Office', email: 'branch@org.local' },
-  { name: 'Operations Desk', email: 'ops@org.local' },
-];
-const STATUS_WEIGHTS: TicketStatus[] = [
-  'COMPLETED', 'COMPLETED', 'COMPLETED', 'COMPLETED', 'COMPLETED', 'COMPLETED',
-  'IN_PROGRESS', 'TODO', 'TODO',
-];
-const PRIORITIES: TicketPriority[] = ['LOW', 'MEDIUM', 'MEDIUM', 'MEDIUM', 'HIGH', 'HIGH', 'CRITICAL'];
-
-// Deterministic PRNG per org so seed data (incl. ids) is stable and re-seeding
-// is idempotent via skipDuplicates.
-function mulberry32(seedStr: string): () => number {
-  let a = parseInt(crypto.createHash('md5').update(seedStr).digest('hex').slice(0, 8), 16);
-  return () => {
-    a |= 0; a = (a + 0x6D2B79F5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-const seededOrgs = new Set<string>();
-
-async function ensureSeeded(customerId: string): Promise<void> {
-  if (seededOrgs.has(customerId)) return;
-  const existing = await ticketingPrisma.ticket.count({ where: { customerId } });
-  if (existing > 0) { seededOrgs.add(customerId); return; }
-
-  const rnd = mulberry32(customerId);
-  const pick = <T,>(arr: T[]): T => arr[Math.floor(rnd() * arr.length)]!;
-  const now = Date.now();
-  const suffix = customerId.slice(-6);
-
-  const projects = [
-    {
-      id: `prj-${suffix}-1`, customerId, name: 'Support',
-      description: 'Day-to-day IT support calls', category: 'other',
-      priority: 'MEDIUM' as const, assignees: ['IT Helpdesk', 'Network Team', 'Desktop Support'],
-      createdAt: new Date(now - 60 * 86400_000),
-    },
-    {
-      id: `prj-${suffix}-2`, customerId, name: 'Infrastructure Upgrade',
-      description: 'Workstation and network refresh programme', category: 'software',
-      priority: 'MEDIUM' as const, assignees: [] as string[],
-      createdAt: new Date(now - 30 * 86400_000),
-    },
-  ];
-
-  const tickets = Array.from({ length: 34 }).map((_, i) => {
-    const created = now - Math.floor(rnd() * 30) * 86400_000 - Math.floor(rnd() * 86400_000);
-    const status = pick(STATUS_WEIGHTS);
-    const issueType = pick(ISSUE_TYPES);
-    const raisedBy = pick(SAMPLE_USERS);
-    const completed = status === 'COMPLETED' ? created + Math.floor(rnd() * 3 * 86400_000) : null;
-    return {
-      id: `tkt-${suffix}-${i + 1}`,
-      customerId,
-      subject: `${issueType} — reported by user`,
-      description: `Auto-seeded fallback ticket for "${issueType}". Replace with live data once the external ticketing API is connected.`,
-      issueType,
-      status,
-      priority: pick(PRIORITIES),
-      projectId: rnd() > 0.4 ? projects[0]!.id : projects[1]!.id,
-      assignee: status === 'TODO' ? null : pick(['IT Helpdesk', 'Network Team', 'Desktop Support']),
-      raisedByName: raisedBy.name,
-      raisedByEmail: raisedBy.email,
-      createdAt: new Date(created),
-      updatedAt: new Date(completed ?? created),
-      completedAt: completed ? new Date(completed) : null,
-    };
-  });
-
-  await ticketingPrisma.project.createMany({ data: projects, skipDuplicates: true });
-  await ticketingPrisma.ticket.createMany({ data: tickets, skipDuplicates: true });
-  seededOrgs.add(customerId);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// EXTERNAL MODE — fill in when the provider's API spec is supplied  ◄── TODO
-// ─────────────────────────────────────────────────────────────────────────────
-
-function externalNotConfigured(): never {
-  throw Object.assign(
-    new Error('External ticketing API integration is not implemented yet — awaiting the provider API specification.'),
-    { status: 503, code: 'TICKETING_API_PENDING' },
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Public client API (UI-facing shapes; mode-agnostic)
-// ─────────────────────────────────────────────────────────────────────────────
-
-export async function listTickets(customerId: string, filters: TicketFilters = {}): Promise<Ticket[]> {
-  if (!usingFallback()) return externalNotConfigured();
-  await ensureSeeded(customerId);
-
-  const rows = await ticketingPrisma.ticket.findMany({
+// ─── Tickets ─────────────────────────────────────────────────────────────────
+export async function listTickets(filters: TicketFilters = {}): Promise<TicketDTO[]> {
+  const rows = await ticketPrisma.tickets.findMany({
     where: {
-      customerId,
       ...(filters.status ? { status: filters.status } : {}),
+      ...(filters.priority ? { priority: filters.priority } : {}),
+      ...(filters.type ? { type: filters.type } : {}),
       ...(filters.projectId ? { projectId: filters.projectId } : {}),
-      ...(filters.mine ? { raisedByEmail: filters.mine } : {}),
+      ...(filters.assigneeId ? { assigneeId: filters.assigneeId } : {}),
       ...(filters.since ? { createdAt: { gt: new Date(filters.since) } } : {}),
+      ...(filters.mineUserId ? { OR: [{ reporterId: filters.mineUserId }, { assigneeId: filters.mineUserId }] } : {}),
       ...(filters.search ? {
         OR: [
-          { subject: { contains: filters.search, mode: 'insensitive' as const } },
-          { issueType: { contains: filters.search, mode: 'insensitive' as const } },
+          { title: { contains: filters.search, mode: 'insensitive' as const } },
+          { ticketNumber: { contains: filters.search, mode: 'insensitive' as const } },
         ],
       } : {}),
     },
+    include: ticketInclude,
     orderBy: { createdAt: 'desc' },
     take: 500,
   });
-  return rows.map(toTicket);
+  return rows.map(toTicketDTO);
 }
 
-export async function createTicket(customerId: string, input: CreateTicketInput): Promise<Ticket> {
-  if (!usingFallback()) return externalNotConfigured();
-  await ensureSeeded(customerId);
+export async function getTicketById(id: string): Promise<TicketDTO | null> {
+  const row = await ticketPrisma.tickets.findUnique({ where: { id }, include: ticketInclude });
+  return row ? toTicketDTO(row) : null;
+}
 
-  const row = await ticketingPrisma.ticket.create({
+// Minimal fields for status/assign transitions (pause accounting).
+export function getTicketCore(id: string) {
+  return ticketPrisma.tickets.findUnique({
+    where: { id },
+    select: { id: true, status: true, priority: true, assigneeId: true, projectId: true, pausedTime: true, totalPausedTime: true },
+  });
+}
+
+export async function createTicketRow(data: Parameters<typeof ticketPrisma.tickets.create>[0]['data']): Promise<string> {
+  const row = await ticketPrisma.tickets.create({ data, select: { id: true } });
+  return row.id;
+}
+
+export function updateTicketRow(id: string, data: Parameters<typeof ticketPrisma.tickets.update>[0]['data']) {
+  return ticketPrisma.tickets.update({ where: { id }, data, select: { id: true } });
+}
+
+// First active SLA whose priority matches the ticket priority (report §7.2 step 3).
+export async function findActiveSlaIdByPriority(priority: TicketPriority): Promise<string | null> {
+  const sla = await ticketPrisma.sLAs.findFirst({
+    where: { isActive: true, priority },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true },
+  });
+  return sla?.id ?? null;
+}
+
+// ─── Activity log ──────────────────────────────────────────────────────────────
+type ActivityType = 'created' | 'updated' | 'commented' | 'status_changed' | 'priority_changed' | 'assigned' | 'attachment_added';
+export function writeActivity(a: {
+  type: ActivityType; ticketId: string; userId: string;
+  field?: string; oldValue?: unknown; newValue?: unknown; description?: string;
+}) {
+  return ticketPrisma.activities.create({
     data: {
-      id: `tkt-${crypto.randomBytes(4).toString('hex')}`,
-      customerId,
-      subject: input.subject,
-      description: input.description,
-      issueType: input.issueType,
-      priority: input.priority,
-      projectId: input.projectId ?? null,
-      raisedByName: input.raisedBy.name,
-      raisedByEmail: input.raisedBy.email,
+      type: a.type, ticketId: a.ticketId, userId: a.userId,
+      field: a.field ?? null,
+      oldValue: a.oldValue === undefined ? undefined : (a.oldValue as object),
+      newValue: a.newValue === undefined ? undefined : (a.newValue as object),
+      description: a.description ?? null,
     },
   });
-  return toTicket(row);
 }
 
-export async function updateTicket(customerId: string, ticketId: string, input: UpdateTicketInput): Promise<Ticket> {
-  if (!usingFallback()) return externalNotConfigured();
+// ─── Projects ──────────────────────────────────────────────────────────────────
+const projectInclude = {
+  Users: userSel,
+  _count: { select: { ProjectMembers: true, Tickets: true } },
+} as const;
+type ProjectRow = Awaited<ReturnType<typeof ticketPrisma.projects.findFirstOrThrow<{ include: typeof projectInclude }>>>;
 
-  const existing = await ticketingPrisma.ticket.findFirst({ where: { id: ticketId, customerId } });
-  if (!existing) throw Object.assign(new Error('Ticket not found'), { status: 404, code: 'NOT_FOUND' });
+function toProjectDTO(row: ProjectRow): ProjectDTO {
+  return {
+    id: row.id, name: row.name, description: row.description, status: row.status,
+    category: row.category, type: row.type as string, priority: row.priority as ProjectPriority,
+    leadId: row.leadId, lead: person(row.Users), settings: row.settings,
+    memberCount: row._count.ProjectMembers, ticketCount: row._count.Tickets,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
 
-  const row = await ticketingPrisma.ticket.update({
-    where: { id: ticketId },
-    data: {
-      ...(input.status !== undefined ? {
-        status: input.status,
-        completedAt: input.status === 'COMPLETED' ? new Date() : null,
-      } : {}),
-      ...(input.priority !== undefined ? { priority: input.priority } : {}),
-      ...(input.assignee !== undefined ? { assignee: input.assignee } : {}),
-      ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
-    },
+export async function listProjects(): Promise<ProjectDTO[]> {
+  const rows = await ticketPrisma.projects.findMany({ include: projectInclude, orderBy: { createdAt: 'desc' } });
+  return rows.map(toProjectDTO);
+}
+export async function getProjectById(id: string): Promise<ProjectDTO | null> {
+  const row = await ticketPrisma.projects.findUnique({ where: { id }, include: projectInclude });
+  return row ? toProjectDTO(row) : null;
+}
+export function getProjectSettings(id: string) {
+  return ticketPrisma.projects.findUnique({ where: { id }, select: { id: true, settings: true } });
+}
+export function setProjectSettings(id: string, settings: object) {
+  return ticketPrisma.projects.update({ where: { id }, data: { settings }, select: { id: true } });
+}
+export async function createProjectRow(data: Parameters<typeof ticketPrisma.projects.create>[0]['data']): Promise<string> {
+  const row = await ticketPrisma.projects.create({ data, select: { id: true } });
+  return row.id;
+}
+export function updateProjectRow(id: string, data: Parameters<typeof ticketPrisma.projects.update>[0]['data']) {
+  return ticketPrisma.projects.update({ where: { id }, data, select: { id: true } });
+}
+export function countProjectTickets(id: string) {
+  return ticketPrisma.tickets.count({ where: { projectId: id } });
+}
+export async function deleteProjectById(id: string): Promise<void> {
+  // Tickets.projectId is NOT NULL — the service blocks deletion when tickets exist.
+  await ticketPrisma.projects.delete({ where: { id } });
+}
+
+// ─── SLAs ──────────────────────────────────────────────────────────────────────
+function toSlaDTO(row: Awaited<ReturnType<typeof ticketPrisma.sLAs.findFirstOrThrow>>): SlaDTO {
+  return {
+    id: row.id, name: row.name, description: row.description,
+    priority: (row.priority as TicketPriority | null) ?? null,
+    responseTime: row.responseTime, resolutionTime: row.resolutionTime,
+    timeUnit: row.timeUnit as 'minutes' | 'hours' | 'days',
+    workingDays: row.workingDays, businessHours: row.businessHours, isActive: row.isActive,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+export async function listSlas(): Promise<SlaDTO[]> {
+  const rows = await ticketPrisma.sLAs.findMany({ orderBy: { createdAt: 'asc' } });
+  return rows.map(toSlaDTO);
+}
+export async function createSlaRow(data: Parameters<typeof ticketPrisma.sLAs.create>[0]['data']): Promise<SlaDTO> {
+  const row = await ticketPrisma.sLAs.create({ data });
+  return toSlaDTO(row);
+}
+export async function updateSlaRow(id: string, data: Parameters<typeof ticketPrisma.sLAs.update>[0]['data']): Promise<SlaDTO> {
+  const row = await ticketPrisma.sLAs.update({ where: { id }, data });
+  return toSlaDTO(row);
+}
+export function deleteSlaById(id: string) {
+  return ticketPrisma.sLAs.delete({ where: { id } });
+}
+
+// ─── Staff (assignee pool) ─────────────────────────────────────────────────────
+export async function listStaff(): Promise<Array<{ id: string; name: string; email: string; role: string }>> {
+  const rows = await ticketPrisma.users.findMany({
+    where: { isActive: true },
+    select: { id: true, firstName: true, lastName: true, email: true, role: true },
+    orderBy: [{ firstName: 'asc' }],
   });
-  return toTicket(row);
+  return rows.map((u) => ({ id: u.id, name: `${u.firstName} ${u.lastName}`.trim(), email: u.email, role: u.role as string }));
 }
 
-export async function listProjects(customerId: string): Promise<Project[]> {
-  if (!usingFallback()) return externalNotConfigured();
-  await ensureSeeded(customerId);
+// ─── Comments ──────────────────────────────────────────────────────────────────
+function attDTO(a: { id: string; originalName: string | null; mimeType: string | null; size: number | null; createdAt: Date },
+  kind: 'ticket' | 'comment', uploader: Parameters<typeof person>[0]): AttachmentDTO {
+  return { id: a.id, originalName: a.originalName, mimeType: a.mimeType, size: a.size, kind, uploadedBy: person(uploader), createdAt: a.createdAt.toISOString() };
+}
 
-  const rows = await ticketingPrisma.project.findMany({
-    where: { customerId },
+export async function listComments(ticketId: string): Promise<CommentDTO[]> {
+  const rows = await ticketPrisma.comments.findMany({
+    where: { ticketId },
+    include: { Users: userSel, CommentAttachments: { include: { Users: userSel } } },
     orderBy: { createdAt: 'asc' },
   });
-  return rows.map(toProject);
+  return rows.map((c) => ({
+    id: c.id, content: c.content, author: person(c.Users),
+    attachments: c.CommentAttachments.map((a) => attDTO(a, 'comment', a.Users)),
+    createdAt: c.createdAt.toISOString(),
+  }));
+}
+export async function createComment(ticketId: string, userId: string, content: string): Promise<string> {
+  const c = await ticketPrisma.comments.create({ data: { ticketId, userId, content }, select: { id: true } });
+  return c.id;
+}
+export function addCommentAttachment(commentId: string, file: UploadedFile, uploadedBy: string) {
+  return ticketPrisma.commentAttachments.create({
+    data: { commentId, filename: file.filename, originalName: file.originalname, mimeType: file.mimetype, size: file.size, path: file.path, uploadedBy },
+  });
 }
 
-export async function createProject(customerId: string, input: CreateProjectInput): Promise<Project> {
-  if (!usingFallback()) return externalNotConfigured();
+// ─── Ticket attachments ─────────────────────────────────────────────────────────
+export async function listTicketAttachments(ticketId: string): Promise<AttachmentDTO[]> {
+  const rows = await ticketPrisma.ticketAttachments.findMany({ where: { ticketId }, include: { Users: userSel }, orderBy: { createdAt: 'asc' } });
+  return rows.map((a) => attDTO(a, 'ticket', a.Users));
+}
+export function addTicketAttachment(ticketId: string, file: UploadedFile, uploadedBy: string | null) {
+  return ticketPrisma.ticketAttachments.create({
+    data: { ticketId, filename: file.filename, originalName: file.originalname, mimeType: file.mimetype, size: file.size, path: file.path, uploadedBy },
+  });
+}
+export async function getAttachmentFile(id: string): Promise<{ path: string | null; originalName: string | null; mimeType: string | null } | null> {
+  const t = await ticketPrisma.ticketAttachments.findUnique({ where: { id }, select: { path: true, originalName: true, mimeType: true } });
+  if (t) return t;
+  return ticketPrisma.commentAttachments.findUnique({ where: { id }, select: { path: true, originalName: true, mimeType: true } });
+}
 
-  const row = await ticketingPrisma.project.create({
-    data: {
-      id: `prj-${crypto.randomBytes(4).toString('hex')}`,
-      customerId,
-      name: input.name,
-      description: input.description,
-      category: input.category,
-      priority: input.priority,
-      assignees: input.assignees,
+// ─── Watchers ───────────────────────────────────────────────────────────────────
+export async function listWatchers(ticketId: string): Promise<PersonRef[]> {
+  const rows = await ticketPrisma.ticketWatchers.findMany({ where: { ticketId }, include: { Users: userSel } });
+  return rows.map((w) => person(w.Users)).filter((p): p is PersonRef => p !== null);
+}
+export async function addWatcher(ticketId: string, userId: string): Promise<void> {
+  const n = await ticketPrisma.ticketWatchers.count({ where: { ticketId, userId } });
+  if (!n) await ticketPrisma.ticketWatchers.create({ data: { ticketId, userId } });
+}
+export async function removeWatcher(ticketId: string, userId: string): Promise<void> {
+  await ticketPrisma.ticketWatchers.deleteMany({ where: { ticketId, userId } });
+}
+
+// ─── Activity history ─────────────────────────────────────────────────────────
+export async function listActivities(ticketId: string): Promise<ActivityDTO[]> {
+  const rows = await ticketPrisma.activities.findMany({ where: { ticketId }, include: { Users: userSel }, orderBy: { createdAt: 'desc' } });
+  return rows.map((a) => ({
+    id: a.id, type: a.type as string, field: a.field, oldValue: a.oldValue, newValue: a.newValue,
+    description: a.description, user: person(a.Users), createdAt: a.createdAt.toISOString(),
+  }));
+}
+
+// ─── Stats source ────────────────────────────────────────────────────────────
+export function allTicketsForStats() {
+  return ticketPrisma.tickets.findMany({
+    select: {
+      status: true, priority: true, type: true, projectId: true, createdAt: true,
+      Projects: { select: { name: true } },
+      Users_Tickets_assigneeIdToUsers: { select: { firstName: true, lastName: true } },
     },
   });
-  return toProject(row);
-}
-
-export async function deleteProject(customerId: string, projectId: string): Promise<void> {
-  if (!usingFallback()) return externalNotConfigured();
-
-  const existing = await ticketingPrisma.project.findFirst({ where: { id: projectId, customerId } });
-  if (!existing) throw Object.assign(new Error('Project not found'), { status: 404, code: 'NOT_FOUND' });
-
-  // Tickets keep living, just unassigned from the project (relation is SetNull,
-  // but be explicit so behavior is identical if the relation ever changes).
-  await ticketingPrisma.ticket.updateMany({ where: { projectId, customerId }, data: { projectId: null } });
-  await ticketingPrisma.project.delete({ where: { id: projectId } });
 }

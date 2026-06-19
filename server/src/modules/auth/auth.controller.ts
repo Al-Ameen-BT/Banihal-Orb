@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { RegisterSchema, RegisterUserSchema, LoginSchema } from './auth.schema';
+import { RegisterSchema, RegisterUserSchema, LoginSchema, ForgotPasswordSchema, ResetPasswordSchema } from './auth.schema';
 import * as authService from './auth.service';
 import { env } from '../../config/env';
 
@@ -96,6 +96,26 @@ export async function logout(req: Request, res: Response, next: NextFunction): P
     res.clearCookie('refreshToken', { ...COOKIE_OPTS, path: '/api/auth' });
     res.clearCookie('refreshToken', { ...COOKIE_OPTS, path: '/api/auth/refresh' }); // legacy path
     res.json({ message: 'Logged out' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function forgotPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = ForgotPasswordSchema.parse(req.body);
+    await authService.forgotPassword(input);
+    res.json({ message: 'If an account exists, a password reset link has been sent.' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function resetPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = ResetPasswordSchema.parse(req.body);
+    await authService.resetPassword(input);
+    res.json({ message: 'Password has been successfully reset.' });
   } catch (err) {
     next(err);
   }

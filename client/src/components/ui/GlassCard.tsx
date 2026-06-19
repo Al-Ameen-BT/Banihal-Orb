@@ -26,7 +26,7 @@ export default function GlassCard({
   children,
   glow = 'none',
   interactive = false,
-  ambient,   // eslint-disable-line @typescript-eslint/no-unused-vars
+  ambient,   // eslint-disable-line no-unused-vars
   className,
   ...rest
 }: GlassCardProps) {

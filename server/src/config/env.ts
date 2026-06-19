@@ -6,6 +6,14 @@ const EnvSchema = z.object({
   // PostgreSQL database, linked to the main DB via customerId/userId keys.
   CHAT_DATABASE_URL: z.string().url(),
   TICKETING_DATABASE_URL: z.string().url(),
+  // Platform ADMINISTRATOR ticketing uses its own database (same schema).
+  // Optional: when unset, administrators fall back to TICKETING_DATABASE_URL.
+  ADMIN_TICKETING_DATABASE_URL: z.string().url().optional(),
+  // Full Ticketing Platform schema (14-table b2b_ticket) backing the rebuilt module.
+  TICKET_DATABASE_URL: z.string().url(),
+  // Directory for ticket/comment attachment uploads (local disk). Relative to cwd.
+  // NOTE: persist this path in production — the systemd deploy rebuilds the tree.
+  UPLOAD_DIR: z.string().default('uploads'),
   JWT_ACCESS_SECRET: z.string().min(32),
   JWT_REFRESH_SECRET: z.string().min(32),
   JWT_ACCESS_EXPIRES_IN: z.string().default('15m'),
@@ -35,6 +43,12 @@ const EnvSchema = z.object({
   // Legacy Ollama settings (the agent manages its own model now; kept for the deploy preflight)
   OLLAMA_URL: z.string().url().default('http://localhost:11435'),
   OLLAMA_MODEL: z.string().default('qwen2.5:3b'),
+  // SMTP settings for mailing system
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().optional(),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  MAIL_FROM: z.string().default('noreply@b2bsaas.com'),
 });
 
 const result = EnvSchema.safeParse(process.env);

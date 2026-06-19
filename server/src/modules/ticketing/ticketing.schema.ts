@@ -1,48 +1,96 @@
 import { z } from 'zod';
 
-export const TicketStatusEnum = z.enum(['TODO', 'IN_PROGRESS', 'COMPLETED']);
-export const TicketPriorityEnum = z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']);
+export const StatusEnum = z.enum(['todo', 'in_progress', 'client_pending', 'completed']);
+export const PriorityEnum = z.enum(['low', 'medium', 'high', 'urgent']);
+export const TypeEnum = z.enum(['bug', 'feature', 'task', 'story']);
+export const TimeUnitEnum = z.enum(['minutes', 'hours', 'days']);
 
 export const ListTicketsSchema = z.object({
-  status: TicketStatusEnum.optional(),
-  projectId: z.string().optional(),
+  status: StatusEnum.optional(),
+  priority: PriorityEnum.optional(),
+  type: TypeEnum.optional(),
+  projectId: z.string().uuid().optional(),
+  assigneeId: z.string().uuid().optional(),
   mine: z.coerce.boolean().optional(),
   search: z.string().max(200).optional(),
 });
 
 export const CreateTicketSchema = z.object({
-  subject: z.string().min(5).max(200),
-  description: z.string().max(2000).default(''),
-  issueType: z.string().min(2).max(80),
-  priority: TicketPriorityEnum.default('MEDIUM'),
-  projectId: z.string().nullable().optional(),
+  title: z.string().min(1).max(255),
+  description: z.string().min(1).max(10_000),
+  type: TypeEnum.default('task'),
+  priority: PriorityEnum.default('medium'),
+  status: StatusEnum.default('todo'),
+  projectId: z.string().uuid(),
+  assigneeId: z.string().uuid().nullable().optional(),
+  customerId: z.string().uuid().nullable().optional(),
+  storyPoints: z.number().int().min(0).max(100).nullable().optional(),
+  dueDate: z.string().datetime().nullable().optional(),
+  labels: z.array(z.string().max(60)).max(30).optional(),
+  branch: z.string().max(255).nullable().optional(),
+  onSiteSupportRequired: z.coerce.boolean().optional(),
 });
 
 export const UpdateTicketSchema = z.object({
-  status: TicketStatusEnum.optional(),
-  priority: TicketPriorityEnum.optional(),
-  assignee: z.string().max(120).nullable().optional(),
-  projectId: z.string().nullable().optional(),
+  title: z.string().min(1).max(255).optional(),
+  description: z.string().min(1).max(10_000).optional(),
+  status: StatusEnum.optional(),
+  priority: PriorityEnum.optional(),
+  type: TypeEnum.optional(),
+  assigneeId: z.string().uuid().nullable().optional(),
+  projectId: z.string().uuid().optional(),
+  customerId: z.string().uuid().nullable().optional(),
+  storyPoints: z.number().int().min(0).max(100).nullable().optional(),
+  dueDate: z.string().datetime().nullable().optional(),
+  labels: z.array(z.string().max(60)).max(30).optional(),
+  branch: z.string().max(255).nullable().optional(),
+  onSiteSupportRequired: z.coerce.boolean().optional(),
+  reasonForDelay: z.string().max(2000).nullable().optional(),
+  resolvedMethods: z.string().max(2000).nullable().optional(),
 }).refine((d) => Object.keys(d).length > 0, { message: 'At least one field required' });
 
 export const CreateProjectSchema = z.object({
-  name: z.string().min(2).max(80),
-  description: z.string().max(500).default(''),
-  category: z.string().min(2).max(40).default('other'),
-  priority: TicketPriorityEnum.default('MEDIUM'),
-  assignees: z.array(z.string().min(1).max(120)).max(20).default([]),
+  name: z.string().min(2).max(255),
+  description: z.string().max(2000).optional(),
+  category: z.string().min(1).max(255).default('general'),
+  type: z.enum(['software', 'marketing', 'research', 'other']).default('software'),
+  priority: z.enum(['low', 'medium', 'high']).default('medium'),
+  leadId: z.string().uuid().nullable().optional(),
+  settings: z.record(z.unknown()).optional(),
+  startDate: z.string().datetime().nullable().optional(),
+  endDate: z.string().datetime().nullable().optional(),
 });
+
+export const UpdateProjectSchema = z.object({
+  name: z.string().min(2).max(255).optional(),
+  description: z.string().max(2000).optional(),
+  status: z.string().max(255).optional(),
+  category: z.string().min(1).max(255).optional(),
+  type: z.enum(['software', 'marketing', 'research', 'other']).optional(),
+  priority: z.enum(['low', 'medium', 'high']).optional(),
+  leadId: z.string().uuid().optional(),
+  settings: z.record(z.unknown()).optional(),
+}).refine((d) => Object.keys(d).length > 0, { message: 'At least one field required' });
+
+export const CreateSlaSchema = z.object({
+  name: z.string().min(2).max(255),
+  description: z.string().max(2000).optional(),
+  priority: PriorityEnum.nullable().optional(),
+  responseTime: z.number().int().min(1),
+  resolutionTime: z.number().int().min(1),
+  timeUnit: TimeUnitEnum.default('hours'),
+  workingDays: z.array(z.number().int().min(0).max(6)).max(7).optional(),
+  businessHours: z.record(z.unknown()).nullable().optional(),
+  isActive: z.coerce.boolean().optional(),
+});
+
+export const UpdateEscalationSchema = z.object({
+  status: z.enum(['TODO', 'IN_PROGRESS', 'COMPLETED']).optional(),
+  assignee: z.string().max(120).nullable().optional(),
+}).refine((d) => Object.keys(d).length > 0, { message: 'At least one field required' });
 
 export const ReportSchema = z.object({
-  type: z.enum(['status', 'user', 'project', 'issue']).default('issue'),
-  from: z.string().optional(),  // ISO date
+  type: z.enum(['status', 'priority', 'type', 'project', 'assignee']).default('status'),
+  from: z.string().optional(),
   to: z.string().optional(),
-});
-
-export const AlertsSchema = z.object({
-  since: z.string().min(1),
-});
-
-export const EscalateSchema = z.object({
-  note: z.string().max(1000).optional(),
 });

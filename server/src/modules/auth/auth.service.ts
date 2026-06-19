@@ -4,7 +4,8 @@ import crypto from 'crypto';
 import { Role } from '@prisma/client';
 import { prisma, customerContext } from '../../config/database';
 import { env } from '../../config/env';
-import type { RegisterInput, RegisterUserInput, LoginInput } from './auth.schema';
+import * as mailService from '../mail/mail.service';
+import type { RegisterInput, RegisterUserInput, LoginInput, ForgotPasswordInput, ResetPasswordInput } from './auth.schema';
 
 const BCRYPT_ROUNDS = 12;
 
@@ -324,4 +325,69 @@ export function signImpersonationToken(userId: string, customerId: string, role:
 // Run a callback outside tenant scope (for SADMIN / ADMINISTRATOR global queries)
 export async function withoutTenantScope<T>(fn: () => Promise<T>): Promise<T> {
   return customerContext.run({} as { customerId: string }, fn);
+}
+
+export async function forgotPassword(input: ForgotPasswordInput): Promise<void> {
+  const user = await prisma.user.findUnique({
+    where: { email: input.email },
+  });
+
+  if (!user) {
+    // For security, don't reveal if a user exists or not.
+    return;
+  }
+
+  const rawToken = crypto.randomBytes(32).toString('hex');
+  const tokenHash = await bcrypt.hash(rawToken, BCRYPT_ROUNDS);
+
+  const expiresAt = new Date();
+  expiresAt.setHours(expiresAt.getHours() + 1); // Token expires in 1 hour
+
+  await prisma.passwordResetToken.create({
+    data: {
+      tokenHash,
+      userId: user.id,
+      expiresAt,
+    },
+  });
+
+  // Delegate to mail service
+  const resetLink = `http://localhost:3000/reset-password?token=${rawToken}`;
+  await mailService.sendPasswordResetEmail(user.email, resetLink);
+}
+
+export async function resetPassword(input: ResetPasswordInput): Promise<void> {
+  // Find all valid (unexpired) reset tokens
+  const tokens = await prisma.passwordResetToken.findMany({
+    where: { expiresAt: { gt: new Date() } },
+    include: { user: true },
+  });
+
+  let matchedToken = null;
+  for (const t of tokens) {
+    if (await bcrypt.compare(input.token, t.tokenHash)) {
+      matchedToken = t;
+      break;
+    }
+  }
+
+  if (!matchedToken) {
+    throw Object.assign(new Error('Invalid or expired reset token'), { status: 400, code: 'INVALID_TOKEN' });
+  }
+
+  const passwordHash = await bcrypt.hash(input.newPassword, BCRYPT_ROUNDS);
+
+  await prisma.user.update({
+    where: { id: matchedToken.userId },
+    data: { passwordHash },
+  });
+
+  // Clean up ALL tokens for this user
+  await prisma.passwordResetToken.deleteMany({
+    where: { userId: matchedToken.userId },
+  });
+
+  await prisma.auditLog.create({
+    data: { action: 'PASSWORD_RESET', performedById: matchedToken.userId, customerId: matchedToken.user.customerId, metadata: { role: matchedToken.user.role } },
+  }).catch(() => {});
 }

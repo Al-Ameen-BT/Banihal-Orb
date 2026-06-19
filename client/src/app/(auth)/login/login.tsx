@@ -79,7 +79,7 @@ export default function LoginPage() {
           <div className="flex justify-center mb-6">
             <img src="/banihal-logo.png" alt="Banihal Logo" className="max-h-12 w-auto object-contain" />
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 text-slate-900 mb-1 tracking-tight">Welcome back</h1>
+          <h1 className="text-2xl font-bold text-slate-900 mb-1 tracking-tight">Welcome back</h1>
           <p className="text-sm text-slate-500">Sign in to your console</p>
         </div>
 
@@ -124,7 +124,10 @@ export default function LoginPage() {
             </div>
 
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-slate-700 mb-1.5">Password</label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label htmlFor="password" className="block text-sm font-medium text-slate-700">Password</label>
+                <Link href="/forgot-password" className="text-sm font-medium text-brand hover:underline">Forgot password?</Link>
+              </div>
               <input id="password" name="password" type="password" autoComplete="current-password" className="input" placeholder="••••••••••••" />
               {errors['password'] && <p className="mt-1.5 text-xs text-red-600">{errors['password']}</p>}
             </div>

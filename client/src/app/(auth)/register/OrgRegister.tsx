@@ -71,7 +71,7 @@ export default function RegisterPage() {
             <img src="/banihal-logo.png" alt="Banihal Logo" className="max-h-12 w-auto object-contain" />
           </div>
           <h1 className="text-2xl font-bold text-slate-900 mb-1 tracking-tight">Create your organization</h1>
-          <p className="text-sm text-slate-500">Start managing your organization's operations</p>
+          <p className="text-sm text-slate-500">Start managing your organization&apos;s operations</p>
         </div>
 
         {/* Card */}
@@ -97,6 +97,13 @@ export default function RegisterPage() {
                 {errors[id] && <p className="mt-1.5 text-xs text-red-600">{errors[id]}</p>}
               </div>
             ))}
+
+            <div className="text-xs text-slate-500 text-center mt-6">
+              By creating an organization, you agree to our{' '}
+              <Link href="/terms" className="text-brand hover:underline">Terms of Service</Link>
+              {' '}and{' '}
+              <Link href="/privacy-policy" className="text-brand hover:underline">Privacy Policy</Link>.
+            </div>
 
             <GlowButton type="submit" loading={loading} className="w-full !mt-6">
               {loading ? 'Creating organization…' : 'Create organization'}

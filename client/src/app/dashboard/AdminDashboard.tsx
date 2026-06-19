@@ -161,12 +161,12 @@ function EscalationsSection() {
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['admin-escalations'] }); },
   });
 
-  const escalations = data?.escalations ?? [];
+  const escalations = data?.escalations;
 
   // Categorized by organization, most recent escalation first within each group.
   const byOrg = useMemo(() => {
     const groups = new Map<string, { name: string; items: TicketEscalation[] }>();
-    for (const e of escalations) {
+    for (const e of escalations ?? []) {
       const key = e.customer?.id ?? 'unknown';
       const g = groups.get(key) ?? { name: e.customer?.name ?? 'Unknown organization', items: [] };
       g.items.push(e);
@@ -221,7 +221,7 @@ function EscalationsSection() {
                         <span className="font-mono ml-1.5 text-slate-300">{e.ticketId.toUpperCase()}</span>
                       </p>
                       {e.note && (
-                        <p className="text-xs text-slate-600 mt-1.5 italic border-l-2 border-slate-200 pl-2">"{e.note}"</p>
+                        <p className="text-xs text-slate-600 mt-1.5 italic border-l-2 border-slate-200 pl-2">&quot;{e.note}&quot;</p>
                       )}
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
@@ -551,10 +551,10 @@ export default function AdminPlatformDashboard() {
     },
   });
 
-  const orgs = orgsData?.orgs ?? [];
+  const orgs = orgsData?.orgs;
 
   // At-risk scoring: low health, critical tickets, expired/expiring services.
-  const atRisk = useMemo(() => orgs
+  const atRisk = useMemo(() => (orgs ?? [])
     .map((o) => {
       const reasons: string[] = [];
       if (o.healthScore < 80) reasons.push(`Health ${o.healthScore}`);

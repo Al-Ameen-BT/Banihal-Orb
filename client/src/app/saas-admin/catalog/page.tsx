@@ -123,7 +123,7 @@ function CatalogDrawer({
           <div className="flex items-center justify-between pt-1">
             <div>
               <p className="text-sm font-medium text-slate-900">Enabled</p>
-              <p className="text-xs text-slate-500 mt-0.5">Disabled services won't appear in the catalog picker.</p>
+              <p className="text-xs text-slate-500 mt-0.5">Disabled services won&apos;t appear in the catalog picker.</p>
             </div>
             <button
               type="button"

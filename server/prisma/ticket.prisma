@@ -1,0 +1,329 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/@prisma/ticket-client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("TICKET_DATABASE_URL")
+}
+
+model Activities {
+  id          String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  type        enum_Activities_type
+  field       String?              @db.VarChar(255)
+  oldValue    Json?
+  newValue    Json?
+  description String?
+  ticketId    String               @db.Uuid
+  userId      String               @db.Uuid
+  createdAt   DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime             @default(now()) @db.Timestamptz(6)
+  Tickets     Tickets              @relation(fields: [ticketId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Users       Users                @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([ticketId])
+  @@index([userId])
+}
+
+model CommentAttachments {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  commentId    String   @db.Uuid
+  filename     String?  @db.VarChar(255)
+  originalName String?  @db.VarChar(255)
+  mimeType     String?  @db.VarChar(255)
+  size         Int?
+  path         String?  @db.VarChar(255)
+  uploadedBy   String?  @db.Uuid
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @db.Timestamptz(6)
+  Comments     Comments @relation(fields: [commentId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Users        Users?   @relation(fields: [uploadedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([commentId])
+}
+
+model Comments {
+  id                 String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  content            String
+  userId             String               @db.Uuid
+  ticketId           String               @db.Uuid
+  createdAt          DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime             @default(now()) @db.Timestamptz(6)
+  CommentAttachments CommentAttachments[]
+  Tickets            Tickets              @relation(fields: [ticketId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Users              Users                @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([ticketId])
+  @@index([userId])
+}
+
+model Customers {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String    @db.VarChar(255)
+  contactPerson String?   @db.VarChar(255)
+  email         String?   @db.VarChar(255)
+  phone         String?   @db.VarChar(255)
+  company       String?   @db.VarChar(255)
+  address       String?
+  password      String?   @db.VarChar(255)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime  @default(now()) @db.Timestamptz(6)
+  Tickets       Tickets[]
+}
+
+model EmailIntegrations {
+  id          Int       @id @default(autoincrement())
+  smtpHost    String    @db.VarChar(255)
+  smtpPort    Int
+  username    String    @db.VarChar(255)
+  password    String    @db.VarChar(255)
+  senderEmail String    @db.VarChar(255)
+  senderName  String    @db.VarChar(255)
+  secure      Boolean   @default(false)
+  isActive    Boolean   @default(true)
+  lastTested  DateTime? @db.Timestamptz(6)
+  lastError   String?
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @default(now()) @db.Timestamptz(6)
+}
+
+model Organizations {
+  id        Int      @id @default(autoincrement())
+  name      String?  @db.VarChar(255)
+  domain    String?  @db.VarChar(255)
+  logo      String?  @db.VarChar(255)
+  address   String?
+  phone     String?  @db.VarChar(255)
+  email     String?  @db.VarChar(255)
+  website   String?  @db.VarChar(255)
+  appName   String   @default("Ticketing") @db.VarChar(255)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @db.Timestamptz(6)
+}
+
+model ProjectMembers {
+  id        String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId String                   @db.Uuid
+  userId    String                   @db.Uuid
+  role      enum_ProjectMembers_role @default(member)
+  createdAt DateTime                 @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime                 @default(now()) @db.Timestamptz(6)
+  Projects  Projects                 @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Users     Users                    @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([projectId, userId], map: "ProjectMembers_projectId_userId_uk")
+}
+
+model Projects {
+  id             String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name           String                 @db.VarChar(255)
+  description    String?
+  status         String                 @default("active") @db.VarChar(255)
+  category       String                 @db.VarChar(255)
+  type           enum_Projects_type     @default(software)
+  priority       enum_Projects_priority @default(medium)
+  startDate      DateTime?              @db.Timestamptz(6)
+  endDate        DateTime?              @db.Timestamptz(6)
+  leadId         String                 @db.Uuid
+  settings       Json?
+  createdAt      DateTime               @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime               @default(now()) @db.Timestamptz(6)
+  ProjectMembers ProjectMembers[]
+  Users          Users                  @relation(fields: [leadId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  Tickets        Tickets[]
+}
+
+model Roles {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique @db.VarChar(255)
+  permissions Json     @default("[]") @db.Json
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @db.Timestamptz(6)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model SLAs {
+  id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name           String              @db.VarChar(255)
+  description    String?
+  priority       enum_SLAs_priority?
+  responseTime   Int
+  resolutionTime Int
+  timeUnit       enum_SLAs_timeUnit  @default(hours)
+  businessHours  Json?
+  workingDays    Int[]               @default([1, 2, 3, 4, 5])
+  isActive       Boolean             @default(true)
+  createdAt      DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime            @default(now()) @db.Timestamptz(6)
+  Tickets        Tickets[]
+}
+
+model TicketAttachments {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ticketId     String   @db.Uuid
+  filename     String?  @db.VarChar(255)
+  originalName String?  @db.VarChar(255)
+  mimeType     String?  @db.VarChar(255)
+  size         Int?
+  path         String?  @db.VarChar(255)
+  uploadedBy   String?  @db.Uuid
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @db.Timestamptz(6)
+  Tickets      Tickets  @relation(fields: [ticketId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Users        Users?   @relation(fields: [uploadedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([ticketId])
+  @@index([uploadedBy])
+}
+
+model TicketWatchers {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ticketId  String   @db.Uuid
+  userId    String   @db.Uuid
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @db.Timestamptz(6)
+  Tickets   Tickets  @relation(fields: [ticketId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Users     Users    @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([ticketId, userId], map: "TicketWatchers_ticketId_userId_uk")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model Tickets {
+  id                              String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ticketNumber                    String                @unique @db.VarChar(255)
+  title                           String                @db.VarChar(255)
+  description                     String
+  status                          String                @default("todo") @db.VarChar(255)
+  priority                        enum_Tickets_priority @default(medium)
+  type                            enum_Tickets_type     @default(task)
+  projectId                       String                @db.Uuid
+  reporterId                      String                @db.Uuid
+  assigneeId                      String?               @db.Uuid
+  customerId                      String?               @db.Uuid
+  storyPoints                     Int?
+  dueDate                         DateTime?             @db.Timestamptz(6)
+  labels                          String[]              @default(dbgenerated("(ARRAY[]::character varying[])::character varying(255)[]")) @db.VarChar(255)
+  SLAId                           String?               @db.Uuid
+  pausedTime                      DateTime?             @db.Timestamptz(6)
+  totalPausedTime                 Int                   @default(0)
+  createdBy                       String                @db.Uuid
+  reasonForDelay                  String?
+  branch                          String?               @db.VarChar(255)
+  onSiteSupportRequired           Boolean               @default(false)
+  resolvedMethods                 String?
+  createdAt                       DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt                       DateTime              @default(now()) @db.Timestamptz(6)
+  Activities                      Activities[]
+  Comments                        Comments[]
+  TicketAttachments               TicketAttachments[]
+  TicketWatchers                  TicketWatchers[]
+  SLAs                            SLAs?                 @relation(fields: [SLAId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  Users_Tickets_assigneeIdToUsers Users?                @relation("Tickets_assigneeIdToUsers", fields: [assigneeId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  Users_Tickets_createdByToUsers  Users                 @relation("Tickets_createdByToUsers", fields: [createdBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  Customers                       Customers?            @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  Projects                        Projects              @relation(fields: [projectId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  Users_Tickets_reporterIdToUsers Users                 @relation("Tickets_reporterIdToUsers", fields: [reporterId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([SLAId])
+  @@index([assigneeId])
+  @@index([customerId])
+  @@index([priority])
+  @@index([projectId])
+  @@index([reporterId])
+  @@index([status])
+}
+
+model Users {
+  id                                String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  firstName                         String               @db.VarChar(255)
+  lastName                          String               @db.VarChar(255)
+  email                             String               @unique @db.VarChar(255)
+  password                          String               @db.VarChar(255)
+  role                              enum_Users_role      @default(developer)
+  isActive                          Boolean              @default(true)
+  avatar                            String?              @db.VarChar(255)
+  lastLogin                         DateTime?            @db.Timestamptz(6)
+  ticketApiKeyHash                  String?              @db.VarChar(255)
+  ticketApiKeyEnabled               Boolean              @default(false)
+  ticketApiKeyCreatedAt             DateTime?            @db.Timestamptz(6)
+  ticketApiKeyLastUsedAt            DateTime?            @db.Timestamptz(6)
+  createdAt                         DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt                         DateTime             @default(now()) @db.Timestamptz(6)
+  Activities                        Activities[]
+  CommentAttachments                CommentAttachments[]
+  Comments                          Comments[]
+  ProjectMembers                    ProjectMembers[]
+  Projects                          Projects[]
+  TicketAttachments                 TicketAttachments[]
+  TicketWatchers                    TicketWatchers[]
+  Tickets_Tickets_assigneeIdToUsers Tickets[]            @relation("Tickets_assigneeIdToUsers")
+  Tickets_Tickets_createdByToUsers  Tickets[]            @relation("Tickets_createdByToUsers")
+  Tickets_Tickets_reporterIdToUsers Tickets[]            @relation("Tickets_reporterIdToUsers")
+}
+
+enum enum_Activities_type {
+  created
+  updated
+  commented
+  status_changed
+  priority_changed
+  assigned
+  attachment_added
+}
+
+enum enum_ProjectMembers_role {
+  admin
+  member
+  viewer
+}
+
+enum enum_Projects_priority {
+  low
+  medium
+  high
+}
+
+enum enum_Projects_type {
+  software
+  marketing
+  research
+  other
+}
+
+enum enum_SLAs_priority {
+  low
+  medium
+  high
+  urgent
+}
+
+enum enum_SLAs_timeUnit {
+  minutes
+  hours
+  days
+}
+
+enum enum_Tickets_priority {
+  low
+  medium
+  high
+  urgent
+}
+
+enum enum_Tickets_type {
+  bug
+  feature
+  task
+  story
+}
+
+enum enum_Users_role {
+  admin
+  manager
+  developer
+  tester
+}

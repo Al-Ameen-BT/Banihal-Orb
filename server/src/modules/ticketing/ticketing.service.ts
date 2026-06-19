@@ -1,182 +1,281 @@
-import { prisma } from '../../config/database';
-import * as client from './ticketing.client';
-import type { Ticket, TicketFilters, CreateTicketInput, UpdateTicketInput, CreateProjectInput } from './ticketing.types';
+import * as db from './ticketing.client';
+import { nextTicketNumber } from './utils/ticketNumber';
+import { getNextAssignee, withLastAssigned } from './utils/roundRobin';
+import { pausePatch } from './services/slaService';
+import type { z } from 'zod';
+import type { CreateTicketSchema, UpdateTicketSchema, CreateProjectSchema, UpdateProjectSchema, CreateSlaSchema } from './ticketing.schema';
+import type { TicketDTO, ProjectDTO, SlaDTO, TicketFilters, TicketPriority } from './ticketing.types';
 
-// Stats / analytics / reports are computed here from the ticket list rather than
-// delegated to provider-specific endpoints — that keeps them identical across
-// fallback and external modes (and across whatever the external API exposes).
+type CreateTicketInput = z.infer<typeof CreateTicketSchema>;
+type UpdateTicketInput = z.infer<typeof UpdateTicketSchema>;
 
-// Ticket list annotated with the escalation flag (escalations live in our DB).
-export async function listTickets(customerId: string, filters: TicketFilters = {}): Promise<Ticket[]> {
-  const tickets = await client.listTickets(customerId, filters);
-  if (tickets.length === 0) return tickets;
-  const rows = await prisma.ticketEscalation.findMany({
-    where: { customerId, ticketId: { in: tickets.map((t) => t.id) } },
-    select: { ticketId: true },
-  });
-  const escalated = new Set(rows.map((r) => r.ticketId));
-  return tickets.map((t) => ({ ...t, escalated: escalated.has(t.id) }));
-}
+const notFound = (what: string) => Object.assign(new Error(`${what} not found`), { status: 404, code: 'NOT_FOUND' });
+const badRequest = (msg: string) => Object.assign(new Error(msg), { status: 400, code: 'BAD_REQUEST' });
 
-// ORG_ADMIN forwards a ticket to the platform Administrators. We snapshot the
-// ticket fields so the escalation stays readable even in external-API mode and
-// across fallback-store restarts.
-export async function escalateTicket(customerId: string, userId: string, ticketId: string, note?: string) {
-  const tickets = await client.listTickets(customerId);
-  const ticket = tickets.find((t) => t.id === ticketId);
-  if (!ticket) throw Object.assign(new Error('Ticket not found'), { status: 404, code: 'NOT_FOUND' });
+// ─── Tickets ─────────────────────────────────────────────────────────────────
+export const listTickets = (filters: TicketFilters = {}) => db.listTickets(filters);
+export const getTicket = (id: string) => db.getTicketById(id);
 
-  try {
-    const escalation = await prisma.ticketEscalation.create({
-      data: {
-        customerId,
-        ticketId,
-        subject: ticket.subject,
-        issueType: ticket.issueType,
-        priority: ticket.priority,
-        note: note?.trim() || null,
-        escalatedById: userId,
-      },
-    });
+export async function createTicket(actorId: string, input: CreateTicketInput): Promise<TicketDTO> {
+  const project = await db.getProjectSettings(input.projectId);
+  if (!project) throw notFound('Project');
 
-    await prisma.auditLog.create({
-      data: {
-        action: 'TICKET_ESCALATED', performedById: userId, targetId: ticketId, customerId,
-        metadata: { subject: ticket.subject, priority: ticket.priority, issueType: ticket.issueType },
-      },
-    }).catch(() => {});
+  // SLA: first active SLA matching the ticket priority.
+  const slaId = await db.findActiveSlaIdByPriority(input.priority);
 
-    return escalation;
-  } catch (err) {
-    if ((err as { code?: string }).code === 'P2002') {
-      throw Object.assign(new Error('This ticket has already been escalated.'), { status: 409, code: 'ALREADY_ESCALATED' });
-    }
-    throw err;
+  // Round-robin: only when no explicit assignee and the project enables it.
+  let assigneeId = input.assigneeId ?? null;
+  let settingsToPersist: object | null = null;
+  if (!assigneeId) {
+    const next = getNextAssignee(project.settings);
+    if (next) { assigneeId = next; settingsToPersist = withLastAssigned(project.settings, next); }
   }
+
+  const base = {
+    title: input.title,
+    description: input.description,
+    type: input.type,
+    priority: input.priority,
+    status: input.status,
+    projectId: input.projectId,
+    reporterId: actorId,
+    createdBy: actorId,
+    assigneeId,
+    customerId: input.customerId ?? null,
+    storyPoints: input.storyPoints ?? null,
+    dueDate: input.dueDate ? new Date(input.dueDate) : null,
+    ...(input.labels ? { labels: input.labels } : {}),
+    SLAId: slaId,
+    branch: input.branch ?? null,
+    onSiteSupportRequired: input.onSiteSupportRequired ?? false,
+  };
+
+  // Generate TKT-NNN with a unique-violation retry loop (survives races).
+  let ticketId: string | null = null;
+  for (let attempt = 0; attempt < 10 && !ticketId; attempt++) {
+    const ticketNumber = await nextTicketNumber();
+    try {
+      ticketId = await db.createTicketRow({ ...base, ticketNumber });
+    } catch (err) {
+      if ((err as { code?: string }).code === 'P2002') continue; // ticketNumber collision → retry
+      throw err;
+    }
+  }
+  if (!ticketId) throw Object.assign(new Error('Could not allocate a ticket number'), { status: 500, code: 'TICKET_NUMBER_RACE' });
+
+  if (settingsToPersist) await db.setProjectSettings(input.projectId, settingsToPersist);
+  await db.writeActivity({ type: 'created', ticketId, userId: actorId, description: `Created ${base.title}` });
+
+  return (await db.getTicketById(ticketId))!;
 }
 
-export const createTicket = client.createTicket;
-export const updateTicket = client.updateTicket;
-export const listProjects = client.listProjects;
-export const createProject = client.createProject;
-export const deleteProject = client.deleteProject;
-export const usingFallback = client.usingFallback;
+export async function updateTicket(actorId: string, id: string, input: UpdateTicketInput): Promise<TicketDTO> {
+  const current = await db.getTicketCore(id);
+  if (!current) throw notFound('Ticket');
 
-export async function getStats(customerId: string) {
-  const [tickets, projects] = await Promise.all([
-    client.listTickets(customerId),
-    client.listProjects(customerId),
-  ]);
+  // SLA pause accounting on a status transition.
+  const patch = input.status !== undefined
+    ? pausePatch({ status: current.status, pausedTime: current.pausedTime, totalPausedTime: current.totalPausedTime }, input.status)
+    : {};
 
+  const data = {
+    ...(input.title !== undefined ? { title: input.title } : {}),
+    ...(input.description !== undefined ? { description: input.description } : {}),
+    ...(input.status !== undefined ? { status: input.status } : {}),
+    ...(input.priority !== undefined ? { priority: input.priority } : {}),
+    ...(input.type !== undefined ? { type: input.type } : {}),
+    ...(input.assigneeId !== undefined ? { assigneeId: input.assigneeId } : {}),
+    ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
+    ...(input.customerId !== undefined ? { customerId: input.customerId } : {}),
+    ...(input.storyPoints !== undefined ? { storyPoints: input.storyPoints } : {}),
+    ...(input.dueDate !== undefined ? { dueDate: input.dueDate ? new Date(input.dueDate) : null } : {}),
+    ...(input.labels !== undefined ? { labels: input.labels } : {}),
+    ...(input.branch !== undefined ? { branch: input.branch } : {}),
+    ...(input.onSiteSupportRequired !== undefined ? { onSiteSupportRequired: input.onSiteSupportRequired } : {}),
+    ...(input.reasonForDelay !== undefined ? { reasonForDelay: input.reasonForDelay } : {}),
+    ...(input.resolvedMethods !== undefined ? { resolvedMethods: input.resolvedMethods } : {}),
+    ...patch,
+  };
+
+  await db.updateTicketRow(id, data);
+
+  // Typed activity log for the meaningful transitions.
+  if (input.status !== undefined && input.status !== current.status) {
+    await db.writeActivity({ type: 'status_changed', ticketId: id, userId: actorId, field: 'status', oldValue: current.status, newValue: input.status });
+  }
+  if (input.priority !== undefined && input.priority !== current.priority) {
+    await db.writeActivity({ type: 'priority_changed', ticketId: id, userId: actorId, field: 'priority', oldValue: current.priority, newValue: input.priority });
+  }
+  if (input.assigneeId !== undefined && input.assigneeId !== current.assigneeId) {
+    await db.writeActivity({ type: 'assigned', ticketId: id, userId: actorId, field: 'assigneeId', oldValue: current.assigneeId, newValue: input.assigneeId });
+  }
+
+  return (await db.getTicketById(id))!;
+}
+
+// ─── Projects ──────────────────────────────────────────────────────────────────
+export const listProjects = () => db.listProjects();
+
+export async function createProject(actorId: string, input: z.infer<typeof CreateProjectSchema>): Promise<ProjectDTO> {
+  const id = await db.createProjectRow({
+    name: input.name,
+    description: input.description ?? null,
+    category: input.category,
+    type: input.type,
+    priority: input.priority,
+    leadId: input.leadId ?? actorId,
+    settings: (input.settings ?? {}) as object,
+    startDate: input.startDate ? new Date(input.startDate) : null,
+    endDate: input.endDate ? new Date(input.endDate) : null,
+  });
+  return (await db.getProjectById(id))!;
+}
+
+export async function updateProject(id: string, input: z.infer<typeof UpdateProjectSchema>): Promise<ProjectDTO> {
+  const existing = await db.getProjectSettings(id);
+  if (!existing) throw notFound('Project');
+  await db.updateProjectRow(id, {
+    ...(input.name !== undefined ? { name: input.name } : {}),
+    ...(input.description !== undefined ? { description: input.description } : {}),
+    ...(input.status !== undefined ? { status: input.status } : {}),
+    ...(input.category !== undefined ? { category: input.category } : {}),
+    ...(input.type !== undefined ? { type: input.type } : {}),
+    ...(input.priority !== undefined ? { priority: input.priority } : {}),
+    ...(input.leadId !== undefined ? { leadId: input.leadId } : {}),
+    ...(input.settings !== undefined ? { settings: input.settings as object } : {}),
+  });
+  return (await db.getProjectById(id))!;
+}
+
+export async function deleteProject(id: string): Promise<void> {
+  const existing = await db.getProjectSettings(id);
+  if (!existing) throw notFound('Project');
+  const tickets = await db.countProjectTickets(id);
+  if (tickets > 0) throw badRequest(`Project has ${tickets} ticket(s); reassign or close them before deleting.`);
+  await db.deleteProjectById(id);
+}
+
+// ─── SLAs ──────────────────────────────────────────────────────────────────────
+export const listSlas = () => db.listSlas();
+
+export function createSla(input: z.infer<typeof CreateSlaSchema>): Promise<SlaDTO> {
+  return db.createSlaRow({
+    name: input.name,
+    description: input.description ?? null,
+    priority: input.priority ?? null,
+    responseTime: input.responseTime,
+    resolutionTime: input.resolutionTime,
+    timeUnit: input.timeUnit,
+    ...(input.workingDays ? { workingDays: input.workingDays } : {}),
+    businessHours: (input.businessHours ?? undefined) as object | undefined,
+    ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
+  });
+}
+
+export async function updateSla(id: string, input: Partial<z.infer<typeof CreateSlaSchema>>): Promise<SlaDTO> {
+  return db.updateSlaRow(id, {
+    ...(input.name !== undefined ? { name: input.name } : {}),
+    ...(input.description !== undefined ? { description: input.description } : {}),
+    ...(input.priority !== undefined ? { priority: input.priority } : {}),
+    ...(input.responseTime !== undefined ? { responseTime: input.responseTime } : {}),
+    ...(input.resolutionTime !== undefined ? { resolutionTime: input.resolutionTime } : {}),
+    ...(input.timeUnit !== undefined ? { timeUnit: input.timeUnit } : {}),
+    ...(input.workingDays !== undefined ? { workingDays: input.workingDays } : {}),
+    ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
+  });
+}
+
+export const deleteSla = (id: string) => db.deleteSlaById(id);
+
+// Alert polling for staff: tickets created since `since`, excluding the viewer's own.
+export async function getNewTickets(since: string, excludeUserId: string) {
+  const tickets = await db.listTickets({ since });
+  return tickets.filter((t) => t.reporter?.id !== excludeUserId).slice(0, 10);
+}
+
+// ─── Collaboration: comments / attachments / watchers / history ─────────────────
+export const listComments = (ticketId: string) => db.listComments(ticketId);
+export const listActivities = (ticketId: string) => db.listActivities(ticketId);
+export const listWatchers = (ticketId: string) => db.listWatchers(ticketId);
+export const listTicketAttachments = (ticketId: string) => db.listTicketAttachments(ticketId);
+export const getAttachmentFile = (id: string) => db.getAttachmentFile(id);
+export const watch = (ticketId: string, userId: string) => db.addWatcher(ticketId, userId);
+export const unwatch = (ticketId: string, userId: string) => db.removeWatcher(ticketId, userId);
+
+export async function addComment(actorId: string, ticketId: string, content: string, files: Express.Multer.File[] = []) {
+  const exists = await db.getTicketCore(ticketId);
+  if (!exists) throw notFound('Ticket');
+  const commentId = await db.createComment(ticketId, actorId, content);
+  for (const f of files) await db.addCommentAttachment(commentId, f, actorId);
+  await db.writeActivity({ type: 'commented', ticketId, userId: actorId, description: content.slice(0, 140) });
+  return db.listComments(ticketId);
+}
+
+export async function addTicketAttachments(actorId: string, ticketId: string, files: Express.Multer.File[]) {
+  const exists = await db.getTicketCore(ticketId);
+  if (!exists) throw notFound('Ticket');
+  for (const f of files) await db.addTicketAttachment(ticketId, f, actorId);
+  await db.writeActivity({ type: 'attachment_added', ticketId, userId: actorId, description: `${files.length} file(s) attached` });
+  return db.listTicketAttachments(ticketId);
+}
+
+// ─── In-app stats / analytics / reports (computed in-process) ───────────────────
+const OPEN = ['todo', 'in_progress', 'client_pending'];
+
+export async function getStats() {
+  const tickets = await db.allTicketsForStats();
   const total = tickets.length;
-  const completed = tickets.filter((t) => t.status === 'COMPLETED').length;
-  const inProgress = tickets.filter((t) => t.status === 'IN_PROGRESS').length;
-  const todo = tickets.filter((t) => t.status === 'TODO').length;
-  const highPriority = tickets.filter((t) => (t.priority === 'HIGH' || t.priority === 'CRITICAL') && t.status !== 'COMPLETED').length;
-
+  const completed = tickets.filter((t) => t.status === 'completed').length;
+  const inProgress = tickets.filter((t) => t.status === 'in_progress').length;
+  const todo = tickets.filter((t) => t.status === 'todo').length;
+  const clientPending = tickets.filter((t) => t.status === 'client_pending').length;
+  const highPriority = tickets.filter((t) => (t.priority === 'high' || t.priority === 'urgent') && t.status !== 'completed').length;
   const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
-  const today = tickets.filter((t) => new Date(t.createdAt) >= startOfDay).length;
-
-  const projectCounts = new Map<string, number>();
-  for (const t of tickets) if (t.projectId) projectCounts.set(t.projectId, (projectCounts.get(t.projectId) ?? 0) + 1);
-
+  const today = tickets.filter((t) => t.createdAt >= startOfDay).length;
   return {
     tickets: {
-      total, completed, inProgress, todo, highPriority, today,
-      open: inProgress + todo,
+      total, completed, inProgress, todo, clientPending, highPriority, today,
+      open: tickets.filter((t) => OPEN.includes(t.status)).length,
       completionRate: total ? Math.round((completed / total) * 100) : 0,
     },
-    projects: {
-      total: projects.length,
-      withOpenTickets: projects.filter((p) =>
-        tickets.some((t) => t.projectId === p.id && t.status !== 'COMPLETED')).length,
-    },
-    fallback: client.usingFallback(),
   };
 }
 
-export async function getAnalytics(customerId: string) {
-  const tickets = await client.listTickets(customerId);
+export async function getAnalytics() {
+  const tickets = await db.allTicketsForStats();
+  const byType = new Map<string, number>();
+  for (const t of tickets) byType.set(t.type, (byType.get(t.type) ?? 0) + 1);
+  const issueDistribution = [...byType.entries()].sort((a, b) => b[1] - a[1]).map(([issue, count]) => ({ issue, count }));
 
-  // Issue distribution (donut) — top 7 + Other, like the reference tool.
-  const byIssue = new Map<string, number>();
-  for (const t of tickets) byIssue.set(t.issueType, (byIssue.get(t.issueType) ?? 0) + 1);
-  const sorted = [...byIssue.entries()].sort((a, b) => b[1] - a[1]);
-  const top = sorted.slice(0, 7).map(([issue, count]) => ({ issue, count }));
-  const otherCount = sorted.slice(7).reduce((s, [, c]) => s + c, 0);
-  if (otherCount > 0) top.push({ issue: 'Other', count: otherCount });
-
-  // Daily created volume, last 14 days.
   const daily: Array<{ date: string; created: number }> = [];
-  for (let i = 13; i >= 0; i--) {
-    daily.push({ date: new Date(Date.now() - i * 86400_000).toISOString().slice(0, 10), created: 0 });
-  }
+  for (let i = 13; i >= 0; i--) daily.push({ date: new Date(Date.now() - i * 86400_000).toISOString().slice(0, 10), created: 0 });
   const idx = new Map(daily.map((d, i) => [d.date, i] as const));
-  for (const t of tickets) {
-    const i = idx.get(t.createdAt.slice(0, 10));
-    if (i !== undefined) daily[i]!.created++;
-  }
+  for (const t of tickets) { const i = idx.get(t.createdAt.toISOString().slice(0, 10)); if (i !== undefined) daily[i]!.created++; }
 
-  const byPriority = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].map((p) => ({
-    priority: p,
-    count: tickets.filter((t) => t.priority === p).length,
-  }));
-
-  return { issueDistribution: top, daily, byPriority, analyzed: tickets.length };
+  const byPriority = (['urgent', 'high', 'medium', 'low'] as TicketPriority[]).map((p) => ({ priority: p, count: tickets.filter((t) => t.priority === p).length }));
+  return { issueDistribution, daily, byPriority, analyzed: tickets.length };
 }
 
-export interface ReportRow {
-  group: string;
-  total: number;
-  completed: number;
-  inProgress: number;
-  todo: number;
-  highPriority: number;
-}
-
-export async function getReport(customerId: string, type: 'status' | 'user' | 'project' | 'issue', from?: string, to?: string) {
-  const [tickets, projects] = await Promise.all([
-    client.listTickets(customerId),
-    client.listProjects(customerId),
-  ]);
-  const projectName = new Map(projects.map((p) => [p.id, p.name] as const));
-
-  const inRange = tickets.filter((t) =>
-    (!from || t.createdAt >= from) && (!to || t.createdAt <= to));
-
-  const keyOf = (t: Ticket): string =>
+export async function getReport(type: 'status' | 'priority' | 'type' | 'project' | 'assignee', from?: string, to?: string) {
+  const tickets = await db.allTicketsForStats();
+  const inRange = tickets.filter((t) => (!from || t.createdAt >= new Date(from)) && (!to || t.createdAt <= new Date(to)));
+  const keyOf = (t: typeof tickets[number]): string =>
     type === 'status' ? t.status :
-    type === 'user' ? (t.raisedBy?.name ?? 'Unknown') :
-    type === 'project' ? (t.projectId ? projectName.get(t.projectId) ?? 'Unknown project' : 'No project') :
-    t.issueType;
+    type === 'priority' ? t.priority :
+    type === 'type' ? t.type :
+    type === 'project' ? (t.Projects?.name ?? 'No project') :
+    (t.Users_Tickets_assigneeIdToUsers ? `${t.Users_Tickets_assigneeIdToUsers.firstName} ${t.Users_Tickets_assigneeIdToUsers.lastName}`.trim() : 'Unassigned');
 
-  const groups = new Map<string, Ticket[]>();
-  for (const t of inRange) {
-    const k = keyOf(t);
-    const g = groups.get(k) ?? [];
-    g.push(t);
-    groups.set(k, g);
-  }
-
-  const rows: ReportRow[] = [...groups.entries()]
-    .map(([group, list]) => ({
-      group,
-      total: list.length,
-      completed: list.filter((t) => t.status === 'COMPLETED').length,
-      inProgress: list.filter((t) => t.status === 'IN_PROGRESS').length,
-      todo: list.filter((t) => t.status === 'TODO').length,
-      highPriority: list.filter((t) => t.priority === 'HIGH' || t.priority === 'CRITICAL').length,
-    }))
-    .sort((a, b) => b.total - a.total);
+  const groups = new Map<string, typeof tickets>();
+  for (const t of inRange) { const k = keyOf(t); const g = groups.get(k) ?? []; g.push(t); groups.set(k, g); }
+  const rows = [...groups.entries()].map(([group, list]) => ({
+    group,
+    total: list.length,
+    completed: list.filter((t) => t.status === 'completed').length,
+    inProgress: list.filter((t) => t.status === 'in_progress').length,
+    todo: list.filter((t) => t.status === 'todo').length,
+    highPriority: list.filter((t) => t.priority === 'high' || t.priority === 'urgent').length,
+  })).sort((a, b) => b.total - a.total);
 
   return { rows, totalTickets: inRange.length, from: from ?? null, to: to ?? null, type };
 }
-
-// Alert polling for org admins: tickets raised since `since`, excluding the
-// admin's own submissions.
-export async function getNewTickets(customerId: string, since: string, excludeEmail: string) {
-  const tickets = await client.listTickets(customerId, { since } as TicketFilters);
-  return tickets.filter((t) => t.raisedBy?.email !== excludeEmail).slice(0, 10);
-}
-
-export type { CreateTicketInput, UpdateTicketInput, CreateProjectInput };
