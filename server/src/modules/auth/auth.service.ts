@@ -333,8 +333,7 @@ export async function forgotPassword(input: ForgotPasswordInput): Promise<void> 
   });
 
   if (!user) {
-    // For security, don't reveal if a user exists or not.
-    return;
+    throw Object.assign(new Error('Non-registered user mail, register first'), { status: 404, code: 'USER_NOT_FOUND' });
   }
 
   const rawToken = crypto.randomBytes(32).toString('hex');

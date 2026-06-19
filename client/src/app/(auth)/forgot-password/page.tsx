@@ -66,7 +66,7 @@ export default function ForgotPasswordPage() {
               </div>
               <h3 className="text-sm font-medium text-slate-900 mb-2">Check your email</h3>
               <p className="text-sm text-slate-500 mb-6">
-                If an account exists for {email}, we&apos;ve sent instructions on how to reset your password. (Check your server console!)
+                We&apos;ve sent instructions on how to reset your password to {email}. (Check your server console!)
               </p>
               <Link href="/login" className="text-sm font-semibold text-brand hover:underline">
                 Return to sign in
