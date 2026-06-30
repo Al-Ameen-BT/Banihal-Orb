@@ -56,6 +56,10 @@ router.delete('/catalog/:id', saasAdminController.deleteCatalogItem);
 router.get('/flags', saasAdminController.listFlags);
 router.patch('/flags/:key', saasAdminController.toggleFlag);
 
+// Ticket-number format (whole router is already ADMINISTRATOR-gated)
+router.get('/ticket-number-format', saasAdminController.getTicketNumberFormat);
+router.put('/ticket-number-format', saasAdminController.updateTicketNumberFormat);
+
 // Administrator-only: SADMIN activity feed + Sadmin management
 router.get('/activity', onlyAdministrator, saasAdminController.getSadminActivity);
 router.get('/system-activity', onlyAdministrator, saasAdminController.getSystemActivity);

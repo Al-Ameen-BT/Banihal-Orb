@@ -1,5 +1,6 @@
 import * as db from './ticketing.client';
 import { nextTicketNumber } from './utils/ticketNumber';
+import { getTicketNumberFormat, resolveOrgCode } from './services/numberFormat';
 import { getNextAssignee, withLastAssigned } from './utils/roundRobin';
 import { pausePatch } from './services/slaService';
 import type { z } from 'zod';
@@ -16,9 +17,14 @@ const badRequest = (msg: string) => Object.assign(new Error(msg), { status: 400,
 export const listTickets = (filters: TicketFilters = {}) => db.listTickets(filters);
 export const getTicket = (id: string) => db.getTicketById(id);
 
-export async function createTicket(actorId: string, input: CreateTicketInput): Promise<TicketDTO> {
+export async function createTicket(actorId: string, input: CreateTicketInput, b2bCustomerId?: string | null): Promise<TicketDTO> {
   const project = await db.getProjectSettings(input.projectId);
   if (!project) throw notFound('Project');
+
+  // Ticket-number format (admin-configurable) + the creating org's code, resolved
+  // once and reused across the unique-violation retry loop below.
+  const numberFormat = await getTicketNumberFormat();
+  const orgCode = numberFormat.includeOrgCode ? await resolveOrgCode(b2bCustomerId) : null;
 
   // SLA: first active SLA matching the ticket priority.
   const slaId = await db.findActiveSlaIdByPriority(input.priority);
@@ -53,7 +59,7 @@ export async function createTicket(actorId: string, input: CreateTicketInput): P
   // Generate TKT-NNN with a unique-violation retry loop (survives races).
   let ticketId: string | null = null;
   for (let attempt = 0; attempt < 10 && !ticketId; attempt++) {
-    const ticketNumber = await nextTicketNumber();
+    const ticketNumber = await nextTicketNumber(numberFormat, orgCode);
     try {
       ticketId = await db.createTicketRow({ ...base, ticketNumber });
     } catch (err) {

@@ -4,6 +4,7 @@ import { prisma } from '../../config/database';
 import { chatPrisma } from '../../config/chatDatabase';
 import { signImpersonationToken } from '../auth/auth.service';
 import { syncTicketUpdated } from '../requests/ticketing.provider';
+import { getTicketNumberFormat as readTicketNumberFormat } from '../ticketing/services/numberFormat';
 import type {
   ListOrgsInput, UpdateOrgInput, ToggleFlagInput,
   ListRequestsInput, UpdateRequestInput,
@@ -13,6 +14,7 @@ import type {
   UpdateUserInput, SystemActivityInput,
   CreateAnnouncementInput, UpdateAnnouncementInput,
   ListEscalationsInput, UpdateEscalationInput,
+  TicketNumberFormatInput,
 } from './saas-admin.schema';
 
 // All queries in this module bypass tenant scope intentionally (SADMIN / ADMINISTRATOR global access)
@@ -52,9 +54,29 @@ export async function listAllOrgs(input: ListOrgsInput) {
 }
 
 export async function updateOrg(orgId: string, input: UpdateOrgInput) {
-  return prisma.customer.update({
-    where: { id: orgId }, data: input,
-    select: { id: true, name: true, slug: true, plan: true, suspended: true, creditLimit: true, updatedAt: true },
+  try {
+    return await prisma.customer.update({
+      where: { id: orgId }, data: input,
+      select: { id: true, name: true, slug: true, plan: true, suspended: true, creditLimit: true, orgCode: true, updatedAt: true },
+    });
+  } catch (err) {
+    // orgCode is @unique — surface a clean conflict instead of a 500.
+    if ((err as { code?: string }).code === 'P2002') {
+      throw Object.assign(new Error('That org code is already used by another organization.'), { status: 409, code: 'ORG_CODE_TAKEN' });
+    }
+    throw err;
+  }
+}
+
+// ─── Ticket-number format (platform-wide, ADMINISTRATOR-only) ────────────────
+export const getTicketNumberFormat = () => readTicketNumberFormat();
+
+export async function updateTicketNumberFormat(input: TicketNumberFormatInput, adminUserId: string) {
+  return prisma.ticketNumberSetting.upsert({
+    where: { id: 'default' },
+    create: { id: 'default', ...input, updatedById: adminUserId },
+    update: { ...input, updatedById: adminUserId },
+    select: { prefix: true, includeOrgCode: true, separator: true, padWidth: true, updatedAt: true },
   });
 }
 

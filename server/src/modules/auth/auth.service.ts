@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { Role } from '@prisma/client';
 import { prisma, customerContext } from '../../config/database';
 import { env } from '../../config/env';
+import { uniqueOrgCode } from '../../utils/orgCode';
 import * as mailService from '../mail/mail.service';
 import type { RegisterInput, RegisterUserInput, LoginInput, ForgotPasswordInput, ResetPasswordInput } from './auth.schema';
 
@@ -45,7 +46,11 @@ export function deriveDomain(email: string): string | null {
 // Fail closed: an empty ADMIN_DOMAINS means no email qualifies (admin login disabled).
 const adminDomains = env.ADMIN_DOMAINS.split(',').map((d) => d.trim().toLowerCase()).filter(Boolean);
 export function isProviderAdminEmail(email: string): boolean {
-  const domain = deriveDomain(email);
+  // Match the raw email domain against ADMIN_DOMAINS directly — intentionally
+  // NOT via deriveDomain(). deriveDomain treats gmail.com as "no domain" (an org
+  // can't be keyed off gmail), but a provider admin domain CAN be gmail.com when
+  // it's explicitly listed in ADMIN_DOMAINS.
+  const domain = email.split('@')[1]?.toLowerCase().trim();
   return !!domain && adminDomains.includes(domain);
 }
 
@@ -72,6 +77,7 @@ export async function register(input: RegisterInput): Promise<TokenPair> {
       contactPerson: input.name,
       contactNumber: input.contactNumber,
       domain: deriveDomain(input.email),
+      orgCode: await uniqueOrgCode(input.organizationName),
       users: {
         create: {
           email: input.email,
@@ -171,43 +177,25 @@ export interface CurrentSession {
   sessionId: string;
 }
 
-export async function login(
-  input: LoginInput,
+const invalidCredentials = () => Object.assign(new Error('Invalid credentials'), { status: 401, code: 'INVALID_CREDENTIALS' });
+const challengeInvalid = () => Object.assign(new Error('This verification code has expired. Please sign in again.'), { status: 400, code: 'MFA_CHALLENGE_INVALID' });
+
+// Enforce the strict single-active-session rule. Throws SESSION_ACTIVE when
+// another browser still holds an active session; a session idle past
+// SESSION_INACTIVITY_MINUTES no longer counts. Runs BEFORE a code is emailed so
+// a blocked login never sends an MFA email.
+async function assertNoActiveOtherSession(
+  user: { id: string; role: Role; customerId: string },
   currentSession?: CurrentSession | null,
   rawRefreshToken?: string | null,
-): Promise<TokenPair> {
-  const user = await prisma.user.findUnique({
-    where: { email: input.email },
-    select: { id: true, email: true, customerId: true, role: true, passwordHash: true },
-  });
-
-  if (!user) {
-    throw Object.assign(new Error('Invalid credentials'), { status: 401, code: 'INVALID_CREDENTIALS' });
-  }
-
-  const valid = await bcrypt.compare(input.password, user.passwordHash);
-  if (!valid) {
-    throw Object.assign(new Error('Invalid credentials'), { status: 401, code: 'INVALID_CREDENTIALS' });
-  }
-
-  // The ADMINISTRATOR (provider) role is restricted to the configured provider domain(s).
-  if (user.role === 'ADMINISTRATOR' && !isProviderAdminEmail(user.email)) {
-    throw Object.assign(
-      new Error('Administrator access is restricted to the provider organization.'),
-      { status: 403, code: 'ADMIN_DOMAIN_FORBIDDEN' },
-    );
-  }
-
-  // ─── Single active session (strict) ──────────────────────────────────────
-  // A re-login from the browser that owns the current session replaces it.
-  // Any other browser is blocked while the session is active; a session idle
-  // past SESSION_INACTIVITY_MINUTES no longer counts as active.
+): Promise<void> {
+  // A re-login from the browser that owns the current session is allowed.
   let sameBrowser = currentSession?.userId === user.id;
 
-  // The access token (and its cookie) lives only 15 minutes, so the sid claim
-  // alone can't prove same-browser after a short idle. The refresh cookie lives
-  // 7 days and is scoped to /api/auth — if this login request carries the
-  // refresh token of one of this user's sessions, it IS the session's browser.
+  // The access cookie lives only 15 minutes, so the sid claim alone can't prove
+  // same-browser after a short idle. The refresh cookie lives 7 days — if this
+  // request carries the refresh token of one of this user's sessions, it IS the
+  // session's browser.
   if (!sameBrowser && rawRefreshToken) {
     const rows = await prisma.refreshToken.findMany({
       where: { userId: user.id, expiresAt: { gt: new Date() } },
@@ -236,11 +224,13 @@ export async function login(
       );
     }
   }
-  // Replace own session / clear stale or expired sessions — at most one row survives.
+}
+
+// Issue session tokens for a user whose identity is already proven (password +
+// email code). Replaces any existing session — at most one row survives.
+async function finalizeLogin(user: { id: string; customerId: string; role: Role }): Promise<TokenPair> {
   await prisma.refreshToken.deleteMany({ where: { userId: user.id } });
-
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
-
   await prisma.auditLog.create({
     data: { action: 'LOGIN', performedById: user.id, customerId: user.customerId, metadata: { role: user.role } },
   }).catch(() => {});
@@ -249,6 +239,119 @@ export async function login(
   const accessToken = signAccessToken(user.id, user.customerId, user.role, sessionId);
   const refreshToken = await createRefreshToken(user.id, sessionId);
   return { accessToken, refreshToken };
+}
+
+// Generate, hash, store and email a fresh 6-digit code. Replaces any prior
+// challenge for the user so only the newest code is ever valid.
+async function issueMfaChallenge(userId: string, email: string): Promise<string> {
+  const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
+  const codeHash = await bcrypt.hash(code, BCRYPT_ROUNDS);
+  const expiresAt = new Date(Date.now() + env.MFA_CODE_TTL_MINUTES * 60_000);
+
+  await prisma.emailMfaChallenge.deleteMany({ where: { userId } });
+  const challenge = await prisma.emailMfaChallenge.create({
+    data: { userId, codeHash, expiresAt, lastSentAt: new Date() },
+    select: { id: true },
+  });
+  await mailService.sendMfaCodeEmail(email, code, env.MFA_CODE_TTL_MINUTES);
+  return challenge.id;
+}
+
+export interface MfaChallenge {
+  challengeId: string;
+  email: string;
+}
+
+// Step 1 of login: validate credentials, role, and the session lock, then email
+// a one-time code. Tokens are NOT issued here — verifyMfa does that.
+export async function initiateLogin(
+  input: LoginInput,
+  currentSession?: CurrentSession | null,
+  rawRefreshToken?: string | null,
+): Promise<MfaChallenge> {
+  const user = await prisma.user.findUnique({
+    where: { email: input.email },
+    select: { id: true, email: true, customerId: true, role: true, passwordHash: true },
+  });
+  if (!user) throw invalidCredentials();
+
+  const valid = await bcrypt.compare(input.password, user.passwordHash);
+  if (!valid) throw invalidCredentials();
+
+  // The ADMINISTRATOR (provider) role is restricted to the configured provider domain(s).
+  if (user.role === 'ADMINISTRATOR' && !isProviderAdminEmail(user.email)) {
+    throw Object.assign(
+      new Error('Administrator access is restricted to the provider organization.'),
+      { status: 403, code: 'ADMIN_DOMAIN_FORBIDDEN' },
+    );
+  }
+
+  await assertNoActiveOtherSession(user, currentSession, rawRefreshToken);
+
+  const challengeId = await issueMfaChallenge(user.id, user.email);
+  await prisma.auditLog.create({
+    data: { action: 'MFA_CHALLENGE_SENT', performedById: user.id, customerId: user.customerId, metadata: { role: user.role } },
+  }).catch(() => {});
+  return { challengeId, email: user.email };
+}
+
+// Step 2 of login: validate the emailed code and issue session tokens.
+export async function verifyMfa(challengeId: string, code: string): Promise<TokenPair> {
+  const challenge = await prisma.emailMfaChallenge.findUnique({
+    where: { id: challengeId },
+    include: { user: { select: { id: true, customerId: true, role: true } } },
+  });
+
+  if (!challenge || challenge.consumedAt || challenge.expiresAt < new Date()) throw challengeInvalid();
+
+  if (challenge.attempts >= env.MFA_MAX_ATTEMPTS) {
+    await prisma.emailMfaChallenge.delete({ where: { id: challenge.id } }).catch(() => {});
+    throw Object.assign(new Error('Too many incorrect attempts. Please sign in again.'), { status: 429, code: 'MFA_TOO_MANY_ATTEMPTS' });
+  }
+
+  const ok = await bcrypt.compare(code, challenge.codeHash);
+  if (!ok) {
+    const updated = await prisma.emailMfaChallenge.update({
+      where: { id: challenge.id }, data: { attempts: { increment: 1 } }, select: { attempts: true },
+    });
+    const remaining = Math.max(0, env.MFA_MAX_ATTEMPTS - updated.attempts);
+    throw Object.assign(
+      new Error(remaining > 0 ? `Incorrect code. ${remaining} attempt${remaining === 1 ? '' : 's'} left.` : 'Too many incorrect attempts. Please sign in again.'),
+      { status: 400, code: 'MFA_CODE_INVALID', remaining },
+    );
+  }
+
+  // Burn the challenge so the code can't be replayed.
+  await prisma.emailMfaChallenge.delete({ where: { id: challenge.id } }).catch(() => {});
+  return finalizeLogin(challenge.user);
+}
+
+// Re-send a fresh code for an in-flight challenge (subject to a short cooldown).
+// The challengeId stays stable so the client need not update it.
+export async function resendMfaCode(challengeId: string): Promise<{ email: string }> {
+  const challenge = await prisma.emailMfaChallenge.findUnique({
+    where: { id: challengeId },
+    include: { user: { select: { email: true } } },
+  });
+  if (!challenge || challenge.consumedAt) throw challengeInvalid();
+
+  const waitMs = challenge.lastSentAt.getTime() + env.MFA_RESEND_COOLDOWN_SECONDS * 1000 - Date.now();
+  if (waitMs > 0) {
+    throw Object.assign(
+      new Error(`Please wait ${Math.ceil(waitMs / 1000)}s before requesting another code.`),
+      { status: 429, code: 'MFA_RESEND_COOLDOWN', retryAfter: Math.ceil(waitMs / 1000) },
+    );
+  }
+
+  const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
+  const codeHash = await bcrypt.hash(code, BCRYPT_ROUNDS);
+  const expiresAt = new Date(Date.now() + env.MFA_CODE_TTL_MINUTES * 60_000);
+  await prisma.emailMfaChallenge.update({
+    where: { id: challenge.id },
+    data: { codeHash, expiresAt, attempts: 0, lastSentAt: new Date() },
+  });
+  await mailService.sendMfaCodeEmail(challenge.user.email, code, env.MFA_CODE_TTL_MINUTES);
+  return { email: challenge.user.email };
 }
 
 export async function refreshTokens(rawRefreshToken: string): Promise<TokenPair> {
@@ -332,9 +435,10 @@ export async function forgotPassword(input: ForgotPasswordInput): Promise<void> 
     where: { email: input.email },
   });
 
-  if (!user) {
-    throw Object.assign(new Error('Non-registered user mail, register first'), { status: 404, code: 'USER_NOT_FOUND' });
-  }
+  // Do NOT reveal whether the email is registered (prevents account enumeration).
+  // The controller returns the same generic response regardless; here we simply
+  // skip token creation + email when there is no matching account.
+  if (!user) return;
 
   const rawToken = crypto.randomBytes(32).toString('hex');
   const tokenHash = await bcrypt.hash(rawToken, BCRYPT_ROUNDS);
@@ -350,8 +454,9 @@ export async function forgotPassword(input: ForgotPasswordInput): Promise<void> 
     },
   });
 
-  // Delegate to mail service
-  const resetLink = `http://localhost:3000/reset-password?token=${rawToken}`;
+  // Delegate to mail service. The link host is configurable (FRONTEND_URL) so it
+  // works in every environment, not just local dev.
+  const resetLink = `${env.FRONTEND_URL.replace(/\/$/, '')}/reset-password?token=${rawToken}`;
   await mailService.sendPasswordResetEmail(user.email, resetLink);
 }
 
@@ -381,10 +486,14 @@ export async function resetPassword(input: ResetPasswordInput): Promise<void> {
     data: { passwordHash },
   });
 
-  // Clean up ALL tokens for this user
+  // Clean up ALL reset tokens for this user
   await prisma.passwordResetToken.deleteMany({
     where: { userId: matchedToken.userId },
   });
+
+  // Revoke every active session — a password reset must log the user out
+  // everywhere (mirrors changeMyPassword).
+  await prisma.refreshToken.deleteMany({ where: { userId: matchedToken.userId } });
 
   await prisma.auditLog.create({
     data: { action: 'PASSWORD_RESET', performedById: matchedToken.userId, customerId: matchedToken.user.customerId, metadata: { role: matchedToken.user.role } },

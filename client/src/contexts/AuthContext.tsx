@@ -5,10 +5,19 @@ import api, { authApi } from '@/lib/api';
 // api used directly for the initial auth check (validateStatus suppresses 401 console errors)
 import type { User } from '@/lib/schemas';
 
+// Step 1 of login returns an MFA challenge — the session is only established
+// after the emailed code is verified.
+export interface MfaChallenge {
+  challengeId: string;
+  email: string; // masked, for display (e.g. j***e@acme.com)
+}
+
 interface AuthContextValue {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<MfaChallenge>;
+  verifyMfa: (challengeId: string, code: string) => Promise<void>;
+  resendMfa: (challengeId: string) => Promise<string>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 }
@@ -53,9 +62,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     void refresh();
   }, [refresh]);
 
-  const login = async (email: string, password: string) => {
-    await authApi.login({ email, password });
+  // Step 1: exchange credentials for an MFA challenge (a code is emailed). No
+  // session yet — the caller must collect the code and call verifyMfa.
+  const login = async (email: string, password: string): Promise<MfaChallenge> => {
+    const res = await authApi.login({ email, password });
+    const data = res.data as { challengeId: string; email: string };
+    return { challengeId: data.challengeId, email: data.email };
+  };
+
+  // Step 2: verify the emailed code; on success the session cookies are set and
+  // we load the user.
+  const verifyMfa = async (challengeId: string, code: string) => {
+    await authApi.verifyMfa({ challengeId, code });
     await refresh();
+  };
+
+  const resendMfa = async (challengeId: string): Promise<string> => {
+    const res = await authApi.resendMfa({ challengeId });
+    return (res.data as { email: string }).email;
   };
 
   const logout = async () => {
@@ -64,7 +88,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, refresh }}>
+    <AuthContext.Provider value={{ user, loading, login, verifyMfa, resendMfa, logout, refresh }}>
       {children}
     </AuthContext.Provider>
   );

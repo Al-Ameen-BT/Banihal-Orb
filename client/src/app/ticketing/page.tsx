@@ -8,17 +8,17 @@ import RoleGuard from '@/components/guards/RoleGuard';
 import Sidebar from '@/components/ui/Sidebar';
 import { ShimmerCard } from '@/components/ui/Shimmer';
 import { useAuth } from '@/contexts/AuthContext';
+import GlowButton from '@/components/ui/GlowButton';
 import AdminTicketing from './AdminTicketing';
-import { NewTicketForm, StatusBadge, PriorityBadge, SlaBadge, PageHeader, StatStrip, statusCfg, timeAgo } from './shared';
+import {
+  NewTicketForm, StatusBadge, PriorityBadge, SlaBadge, TypeBadge, PageHeader, StatStrip,
+  Toolbar, Segmented, SearchInput, EmptyState, TicketBoard, Avatar, Modal, Icons, statusCfg, timeAgo,
+} from './shared';
 import TicketDetail from './TicketDetail';
-import type { TicketDTO, TicketProject } from '@/lib/schemas';
+import type { TicketDTO, TicketProject, TicketStatus } from '@/lib/schemas';
 
-const TicketIcon = (
-  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6}
-      d="M16.5 6v.75m0 3v.75m0 3v.75m0 3V18m-9-5.25h5.25M7.5 15h3M3.375 5.25c-.621 0-1.125.504-1.125 1.125v3.026a2.999 2.999 0 0 1 0 5.198v3.026c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-3.026a2.999 2.999 0 0 1 0-5.198V6.375c0-.621-.504-1.125-1.125-1.125H3.375Z" />
-  </svg>
-);
+type StatusFilter = 'ALL' | TicketStatus;
+type View = 'list' | 'board';
 
 function UserTicketing() {
   const { data: projectsData } = useQuery<{ projects: TicketProject[] }>({
@@ -34,18 +34,42 @@ function UserTicketing() {
   });
 
   const [detailId, setDetailId] = useState<string | null>(null);
-  const tickets = mineData?.tickets ?? [];
+  const [showForm, setShowForm] = useState(false);
+  const [view, setView] = useState<View>('list');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
+  const [search, setSearch] = useState('');
+
+  const tickets = useMemo(() => mineData?.tickets ?? [], [mineData]);
   const counts = useMemo(() => ({
     open: tickets.filter((t) => t.status !== 'completed').length,
     inProgress: tickets.filter((t) => t.status === 'in_progress').length,
     completed: tickets.filter((t) => t.status === 'completed').length,
   }), [tickets]);
 
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return tickets.filter((t) =>
+      (statusFilter === 'ALL' || t.status === statusFilter) &&
+      (!q || t.title.toLowerCase().includes(q) || t.ticketNumber.toLowerCase().includes(q)));
+  }, [tickets, statusFilter, search]);
+
+  const statusOptions: { value: StatusFilter; label: string }[] = [
+    { value: 'ALL', label: 'All' }, { value: 'todo', label: 'To Do' }, { value: 'in_progress', label: 'In Progress' },
+    { value: 'client_pending', label: 'Pending' }, { value: 'completed', label: 'Done' },
+  ];
+
   return (
-    <div className="p-8 max-w-[1100px] mx-auto space-y-7">
+    <div className="p-6 sm:p-8 max-w-[1200px] mx-auto space-y-6">
       {detailId && <TicketDetail ticketId={detailId} onClose={() => setDetailId(null)} />}
+
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="Raise a ticket" width="max-w-2xl">
+        <NewTicketForm projects={projectsData?.projects ?? []} role="USER"
+          onCreated={() => setShowForm(false)} onCancel={() => setShowForm(false)} />
+      </Modal>
+
       <PageHeader eyebrow="Ticketing" title="IT Support Tickets"
-        subtitle="Raise IT issues and track their progress — your support team handles them from the control system." icon={TicketIcon} />
+        subtitle="Raise IT issues and track their progress — your support team handles them from the control system." icon={Icons.ticket({ className: 'w-6 h-6' })}
+        actions={<GlowButton onClick={() => setShowForm(true)} className="inline-flex items-center gap-1.5"><Icons.plus className="w-4 h-4" />New ticket</GlowButton>} />
 
       {!isLoading && tickets.length > 0 && (
         <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
@@ -58,55 +82,57 @@ function UserTicketing() {
         </motion.div>
       )}
 
-      <div className="space-y-8">
-        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.05 }}>
-          <NewTicketForm projects={projectsData?.projects ?? []} role="USER" />
-        </motion.div>
+      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.05 }} className="space-y-4">
+        <Toolbar>
+          <Segmented value={statusFilter} onChange={setStatusFilter} options={statusOptions} size="sm" layoutId="userStatus" />
+          <SearchInput value={search} onChange={setSearch} placeholder="Search title or TKT-number…" />
+          <Segmented value={view} onChange={setView} size="sm" layoutId="userView"
+            options={[{ value: 'list', label: 'List', icon: Icons.list }, { value: 'board', label: 'Board', icon: Icons.board }]} />
+        </Toolbar>
 
-        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.08 }} className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold text-slate-900">My Tickets</h2>
-            {!isLoading && tickets.length > 0 && <span className="text-xs font-medium text-slate-400 tabular-nums">{tickets.length} total</span>}
+        {isLoading ? (
+          <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <ShimmerCard key={i} />)}</div>
+        ) : tickets.length === 0 ? (
+          <EmptyState icon={Icons.ticket({ className: 'w-6 h-6' })} title="No tickets yet"
+            hint="Raise your first IT support ticket and track it here."
+            action={<GlowButton onClick={() => setShowForm(true)}>Raise a ticket</GlowButton>} />
+        ) : filtered.length === 0 ? (
+          <EmptyState icon={Icons.search({ className: 'w-6 h-6' })} title="No tickets match" hint="Try a different status filter or search term." />
+        ) : view === 'board' ? (
+          <TicketBoard tickets={filtered} onOpen={setDetailId} />
+        ) : (
+          <div className="space-y-2.5">
+            {filtered.map((t) => {
+              const cfg = statusCfg[t.status] ?? statusCfg['todo']!;
+              return (
+                <motion.div key={t.id} layout initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}
+                  onClick={() => setDetailId(t.id)}
+                  className="card relative overflow-hidden pl-5 pr-5 py-3.5 flex items-center gap-3 cursor-pointer hover:shadow-card-hover hover:border-slate-300 transition-all">
+                  <span className={`absolute left-0 inset-y-0 w-1 ${cfg.bar}`} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-[11px] font-bold text-slate-400">{t.ticketNumber}</span>
+                      <p className="text-sm font-semibold text-slate-900 truncate">{t.title}</p>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1 flex items-center gap-1.5 flex-wrap">
+                      <TypeBadge type={t.type} />
+                      <span>{t.projectName ?? 'No project'} · {timeAgo(t.createdAt)}</span>
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {t.assignee
+                      ? <span className="hidden lg:inline-flex items-center gap-1.5 text-[11px] text-slate-500"><Avatar name={t.assignee.name} size="xs" />{t.assignee.name}</span>
+                      : <span className="hidden lg:inline text-[11px] font-semibold text-amber-600">Awaiting assignment</span>}
+                    <span className="hidden md:inline-flex"><SlaBadge status={t.slaStatus} remainingSeconds={t.slaRemainingSeconds} /></span>
+                    <span className="hidden sm:inline-flex"><PriorityBadge priority={t.priority} /></span>
+                    <StatusBadge status={t.status} />
+                  </div>
+                </motion.div>
+              );
+            })}
           </div>
-
-          {isLoading ? (
-            <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <ShimmerCard key={i} />)}</div>
-          ) : tickets.length === 0 ? (
-            <div className="card p-10 text-center">
-              <div className="w-12 h-12 mx-auto rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mb-3">{TicketIcon}</div>
-              <p className="text-sm font-semibold text-slate-700">No tickets yet</p>
-              <p className="text-xs text-slate-400 mt-1">Raise your first one with the form above.</p>
-            </div>
-          ) : (
-            <div className="space-y-2.5">
-              {tickets.map((t) => {
-                const cfg = statusCfg[t.status] ?? statusCfg['todo']!;
-                return (
-                  <motion.div key={t.id} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}
-                    onClick={() => setDetailId(t.id)}
-                    className="card relative overflow-hidden pl-5 pr-5 py-3.5 flex items-center gap-3 cursor-pointer hover:shadow-card-hover hover:border-slate-300 transition-all">
-                    <span className={`absolute left-0 inset-y-0 w-1 ${cfg.bar}`} />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-[11px] font-bold text-slate-400">{t.ticketNumber}</span>
-                        <p className="text-sm font-semibold text-slate-900 truncate">{t.title}</p>
-                      </div>
-                      <p className="text-[11px] text-slate-400 mt-1">
-                        {t.projectName ?? 'No project'} · {timeAgo(t.createdAt)}{t.assignee ? ` · ${t.assignee.name}` : ' · awaiting assignment'}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <span className="hidden md:inline-flex"><SlaBadge status={t.slaStatus} remainingSeconds={t.slaRemainingSeconds} /></span>
-                      <span className="hidden sm:inline-flex"><PriorityBadge priority={t.priority} /></span>
-                      <StatusBadge status={t.status} />
-                    </div>
-                  </motion.div>
-                );
-              })}
-            </div>
-          )}
-        </motion.div>
-      </div>
+        )}
+      </motion.div>
     </div>
   );
 }

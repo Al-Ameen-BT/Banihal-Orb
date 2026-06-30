@@ -11,6 +11,7 @@ import GlowButton from '@/components/ui/GlowButton';
 import { ShimmerCard, ShimmerRow } from '@/components/ui/Shimmer';
 import {
   NewTicketForm, StatusBadge, PriorityBadge, TypeBadge, SlaBadge, PageHeader,
+  Toolbar, Segmented, SearchInput, EmptyState, TicketBoard, Avatar, Icons,
   statusCfg, priorityCls, timeAgo, STATUS_OPTIONS, PRIORITY_OPTIONS,
 } from './shared';
 import TicketDetail from './TicketDetail';
@@ -50,6 +51,8 @@ function OverviewTab() {
   const t = stats?.tickets;
   const dist = analytics?.issueDistribution ?? [];
   const distTotal = dist.reduce((s, d) => s + d.count, 0) || 1;
+  const byPriority = analytics?.byPriority ?? [];
+  const maxPrio = Math.max(1, ...byPriority.map((p) => p.count));
 
   return (
     <div className="space-y-6">
@@ -57,43 +60,65 @@ function OverviewTab() {
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">{Array.from({ length: 6 }).map((_, i) => <ShimmerCard key={i} />)}</div>
       ) : (
         <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-          <StatTile label="Total" value={t?.total ?? 0} tone="bg-brand" />
-          <StatTile label="Completed" value={t?.completed ?? 0} tone="bg-emerald-500" />
+          <StatTile label="Total" value={t?.total ?? 0} tone="bg-brand" sub={`${t?.today ?? 0} today`} />
+          <StatTile label="Open" value={t?.open ?? 0} tone="bg-amber-500" />
           <StatTile label="In Progress" value={t?.inProgress ?? 0} tone="bg-cyan-500" />
-          <StatTile label="Client Pending" value={t?.clientPending ?? 0} tone="bg-amber-500" />
+          <StatTile label="Completed" value={t?.completed ?? 0} tone="bg-emerald-500" />
           <StatTile label="High / Urgent" value={t?.highPriority ?? 0} tone="bg-red-500" />
           <StatTile label="Completion" value={`${t?.completionRate ?? 0}%`} tone="bg-violet-500" />
         </div>
       )}
 
-      <div className="card p-5">
-        <h3 className="text-base font-semibold text-slate-900 mb-2">Ticket types</h3>
-        {al ? <ShimmerCard /> : dist.length === 0 ? (
-          <p className="py-12 text-center text-sm text-slate-500">No tickets to analyze yet.</p>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
-            <div className="h-[240px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={dist} dataKey="count" nameKey="issue" innerRadius={62} outerRadius={95} paddingAngle={2} strokeWidth={0}>
-                    {dist.map((_, i) => <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />)}
-                  </Pie>
-                  <Tooltip formatter={(v: number, name: string) => [`${v} tickets`, name]} />
-                </PieChart>
-              </ResponsiveContainer>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="card p-5">
+          <h3 className="text-base font-semibold text-slate-900 mb-2">Ticket types</h3>
+          {al ? <ShimmerCard /> : dist.length === 0 ? (
+            <p className="py-12 text-center text-sm text-slate-500">No tickets to analyze yet.</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+              <div className="h-[220px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={dist} dataKey="count" nameKey="issue" innerRadius={58} outerRadius={88} paddingAngle={2} strokeWidth={0}>
+                      {dist.map((_, i) => <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />)}
+                    </Pie>
+                    <Tooltip formatter={(v: number, name: string) => [`${v} tickets`, name]} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="space-y-1.5">
+                {dist.map((d, i) => (
+                  <div key={d.issue} className="flex items-center gap-2 text-xs">
+                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: DONUT_COLORS[i % DONUT_COLORS.length] }} />
+                    <span className="flex-1 text-slate-700 truncate capitalize">{d.issue}</span>
+                    <span className="font-mono tabular-nums font-semibold text-slate-900">{d.count}</span>
+                    <span className="font-mono tabular-nums text-slate-400 w-12 text-right">({((d.count / distTotal) * 100).toFixed(0)}%)</span>
+                  </div>
+                ))}
+              </div>
             </div>
-            <div className="space-y-1.5">
-              {dist.map((d, i) => (
-                <div key={d.issue} className="flex items-center gap-2 text-xs">
-                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: DONUT_COLORS[i % DONUT_COLORS.length] }} />
-                  <span className="flex-1 text-slate-700 truncate capitalize">{d.issue}</span>
-                  <span className="font-mono tabular-nums font-semibold text-slate-900">{d.count}</span>
-                  <span className="font-mono tabular-nums text-slate-400 w-12 text-right">({((d.count / distTotal) * 100).toFixed(0)}%)</span>
+          )}
+        </div>
+
+        <div className="card p-5">
+          <h3 className="text-base font-semibold text-slate-900 mb-4">Tickets by priority</h3>
+          {al ? <ShimmerCard /> : byPriority.length === 0 ? (
+            <p className="py-12 text-center text-sm text-slate-500">No data yet.</p>
+          ) : (
+            <div className="space-y-3.5 pt-2">
+              {byPriority.map((p) => (
+                <div key={p.priority} className="flex items-center gap-3">
+                  <span className="w-16 text-xs font-medium text-slate-600 capitalize">{p.priority}</span>
+                  <div className="flex-1 h-2.5 rounded-full bg-slate-100 overflow-hidden">
+                    <motion.div initial={{ width: 0 }} animate={{ width: `${(p.count / maxPrio) * 100}%` }} transition={{ duration: 0.5 }}
+                      className={`h-full rounded-full ${priorityCls[p.priority]?.split(' ').find((c) => c.startsWith('bg-')) ?? 'bg-slate-400'}`} />
+                  </div>
+                  <span className="w-8 text-right font-mono tabular-nums text-sm font-semibold text-slate-900">{p.count}</span>
                 </div>
               ))}
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );
@@ -121,17 +146,22 @@ function TicketRow({ ticket, projects, staff, expanded, onToggle, onOpenDetail }
       <tr onClick={onToggle} className={`border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors cursor-pointer ${expanded ? 'bg-slate-50' : ''}`}>
         <td className="px-5 py-3.5 font-mono text-xs font-bold text-slate-400 whitespace-nowrap">{ticket.ticketNumber}</td>
         <td className="px-5 py-3.5">
-          <p className="text-sm font-semibold text-slate-900 leading-tight truncate max-w-xs">{ticket.title}</p>
+          <div className="flex items-center gap-2">
+            <TypeBadge type={ticket.type} />
+            <p className="text-sm font-semibold text-slate-900 leading-tight truncate max-w-xs">{ticket.title}</p>
+          </div>
           <p className="text-[11px] text-slate-400 mt-0.5">{ticket.projectName ?? 'No project'} · {ticket.reporter?.name ?? 'Unknown'} · {timeAgo(ticket.createdAt)}</p>
         </td>
         <td className="px-5 py-3.5"><StatusBadge status={ticket.status} /></td>
         <td className="px-5 py-3.5"><PriorityBadge priority={ticket.priority} /></td>
         <td className="px-5 py-3.5"><SlaBadge status={ticket.slaStatus} remainingSeconds={ticket.slaRemainingSeconds} /></td>
-        <td className="px-5 py-3.5 text-xs text-slate-600">{ticket.assignee?.name ?? <span className="text-red-500 font-semibold">Unassigned</span>}</td>
+        <td className="px-5 py-3.5 text-xs text-slate-600">
+          {ticket.assignee
+            ? <span className="inline-flex items-center gap-1.5"><Avatar name={ticket.assignee.name} size="xs" />{ticket.assignee.name}</span>
+            : <span className="text-red-500 font-semibold">Unassigned</span>}
+        </td>
         <td className="px-5 py-3.5 text-right">
-          <svg className={`w-4 h-4 text-slate-400 inline transition-transform ${expanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
+          <Icons.chevron className={`w-4 h-4 text-slate-400 inline transition-transform ${expanded ? 'rotate-180' : ''}`} />
         </td>
       </tr>
       {expanded && (
@@ -139,9 +169,9 @@ function TicketRow({ ticket, projects, staff, expanded, onToggle, onOpenDetail }
           <td colSpan={7} className="px-5 py-4">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
               <div>
-                <div className="flex items-center gap-2 mb-1"><TypeBadge type={ticket.type} />{ticket.branch && <span className="text-[11px] font-mono text-slate-400">⎇ {ticket.branch}</span>}{ticket.onSiteSupportRequired && <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">ON-SITE</span>}</div>
+                <div className="flex items-center gap-2 mb-1">{ticket.branch && <span className="text-[11px] font-mono text-slate-400">⎇ {ticket.branch}</span>}{ticket.onSiteSupportRequired && <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">ON-SITE</span>}</div>
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Description</p>
-                <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{ticket.description || <span className="text-slate-400 italic">None</span>}</p>
+                <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed line-clamp-4">{ticket.description || <span className="text-slate-400 italic">None</span>}</p>
                 <p className="text-[11px] text-slate-400 mt-2">
                   {ticket.sla ? `SLA: ${ticket.sla.name} · ${ticket.sla.resolutionTime}${ticket.sla.timeUnit[0]}` : 'No SLA'} ·
                   {' '}{ticket.counts.comments} comments · {ticket.counts.attachments} files · {ticket.counts.watchers} watchers
@@ -198,14 +228,17 @@ function TicketRow({ ticket, projects, staff, expanded, onToggle, onOpenDetail }
 
 function TicketsTab({ projectFilter, onClearProject }: { projectFilter: string | null; onClearProject: () => void }) {
   const [statusFilter, setStatusFilter] = useState<'ALL' | TicketStatus>('ALL');
+  const [priorityFilter, setPriorityFilter] = useState<'ALL' | TicketPriority>('ALL');
   const [search, setSearch] = useState('');
+  const [view, setView] = useState<'table' | 'board'>('table');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery<{ tickets: TicketDTO[] }>({
-    queryKey: ['ticketing', 'tickets', statusFilter, projectFilter, search],
+    queryKey: ['ticketing', 'tickets', statusFilter, priorityFilter, projectFilter, search],
     queryFn: () => ticketingApi.listTickets({
       ...(statusFilter !== 'ALL' ? { status: statusFilter } : {}),
+      ...(priorityFilter !== 'ALL' ? { priority: priorityFilter } : {}),
       ...(projectFilter ? { projectId: projectFilter } : {}),
       ...(search.trim() ? { search: search.trim() } : {}),
     }).then((r) => r.data as { tickets: TicketDTO[] }),
@@ -222,51 +255,61 @@ function TicketsTab({ projectFilter, onClearProject }: { projectFilter: string |
   const projects = projectsData?.projects ?? [];
   const projectName = projectFilter ? projects.find((p) => p.id === projectFilter)?.name : null;
 
+  const statusOptions: { value: 'ALL' | TicketStatus; label: string }[] = [
+    { value: 'ALL', label: 'All' }, ...STATUS_OPTIONS,
+  ];
+
   return (
     <>
-    {detailId && <TicketDetail ticketId={detailId} onClose={() => setDetailId(null)} />}
-    <div className="card overflow-hidden">
-      <div className="px-3 py-2.5 border-b border-slate-100 flex items-center gap-2 flex-wrap">
-        {(['ALL', 'todo', 'in_progress', 'client_pending', 'completed'] as const).map((s) => (
-          <button key={s} onClick={() => { setStatusFilter(s); setExpandedId(null); }}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${statusFilter === s ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}>
-            {s === 'ALL' ? 'All' : statusCfg[s]?.label}
-          </button>
-        ))}
-        {projectName && (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-brand bg-brand-50">
-            Project: {projectName}
-            <button type="button" onClick={onClearProject} className="hover:text-brand-700 cursor-pointer" aria-label="Clear project filter">✕</button>
-          </span>
+      {detailId && <TicketDetail ticketId={detailId} onClose={() => setDetailId(null)} />}
+      <div className="space-y-4">
+        <Toolbar>
+          <Segmented value={statusFilter} onChange={(v) => { setStatusFilter(v); setExpandedId(null); }} options={statusOptions} size="sm" layoutId="adminStatus" />
+          <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value as 'ALL' | TicketPriority)} className="input !py-1.5 text-xs w-auto">
+            <option value="ALL">All priorities</option>
+            {PRIORITY_OPTIONS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+          </select>
+          {projectName && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-brand bg-brand-50">
+              {projectName}
+              <button type="button" onClick={onClearProject} className="hover:text-brand-700 cursor-pointer" aria-label="Clear project filter">✕</button>
+            </span>
+          )}
+          <SearchInput value={search} onChange={setSearch} placeholder="Search title or TKT-number…" />
+          <Segmented value={view} onChange={setView} size="sm" layoutId="adminView"
+            options={[{ value: 'table', label: 'Table', icon: Icons.list }, { value: 'board', label: 'Board', icon: Icons.board }]} />
+        </Toolbar>
+
+        {isLoading ? (
+          view === 'board'
+            ? <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">{Array.from({ length: 4 }).map((_, i) => <ShimmerCard key={i} />)}</div>
+            : <div className="card overflow-hidden">{Array.from({ length: 5 }).map((_, i) => <ShimmerRow key={i} />)}</div>
+        ) : tickets.length === 0 ? (
+          <EmptyState icon={Icons.ticket({ className: 'w-6 h-6' })} title="No tickets match this filter" hint="Adjust the status, priority, or search filters above." />
+        ) : view === 'board' ? (
+          <TicketBoard tickets={tickets} onOpen={setDetailId} />
+        ) : (
+          <div className="card overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="min-w-full">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200">
+                    {['Ticket #', 'Title', 'Status', 'Priority', 'SLA', 'Assignee', ''].map((h, i) => (
+                      <th key={i} className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {tickets.map((t) => (
+                    <TicketRow key={`${t.id}-${t.updatedAt}`} ticket={t} projects={projects} staff={staffData?.assignees ?? []}
+                      expanded={expandedId === t.id} onToggle={() => setExpandedId((p) => (p === t.id ? null : t.id))} onOpenDetail={() => setDetailId(t.id)} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         )}
-        <div className="flex-1 min-w-[180px] ml-auto">
-          <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search title or TKT-number…" className="input !py-1.5 text-xs" />
-        </div>
       </div>
-      <div className="overflow-x-auto">
-        <table className="min-w-full">
-          <thead>
-            <tr className="bg-slate-50 border-b border-slate-200">
-              {['Ticket #', 'Title', 'Status', 'Priority', 'SLA', 'Assignee', ''].map((h, i) => (
-                <th key={i} className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading ? (
-              Array.from({ length: 5 }).map((_, i) => <tr key={i}><td colSpan={7}><ShimmerRow /></td></tr>)
-            ) : tickets.length === 0 ? (
-              <tr><td colSpan={7} className="px-5 py-12 text-center text-sm text-slate-500">No tickets match this filter.</td></tr>
-            ) : (
-              tickets.map((t) => (
-                <TicketRow key={`${t.id}-${t.updatedAt}`} ticket={t} projects={projects} staff={staffData?.assignees ?? []}
-                  expanded={expandedId === t.id} onToggle={() => setExpandedId((p) => (p === t.id ? null : t.id))} onOpenDetail={() => setDetailId(t.id)} />
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
     </>
   );
 }
@@ -307,7 +350,7 @@ function ProjectsTab({ onViewTickets }: { onViewTickets: (projectId: string) => 
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-xs text-slate-500">{projects.length} projects</p>
-        <GlowButton className="py-1.5 px-3 text-xs" onClick={() => setShowForm((v) => !v)}>{showForm ? 'Cancel' : '+ New Project'}</GlowButton>
+        <GlowButton className="py-1.5 px-3 text-xs inline-flex items-center gap-1" onClick={() => setShowForm((v) => !v)}>{showForm ? 'Cancel' : <><Icons.plus className="w-3.5 h-3.5" />New project</>}</GlowButton>
       </div>
 
       {showForm && (
@@ -345,7 +388,7 @@ function ProjectsTab({ onViewTickets }: { onViewTickets: (projectId: string) => 
       {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{Array.from({ length: 2 }).map((_, i) => <ShimmerCard key={i} />)}</div>
       ) : projects.length === 0 ? (
-        <div className="card p-10 text-center text-sm text-slate-500">No projects yet. Create one to group tickets.</div>
+        <EmptyState title="No projects yet" hint="Create one to group tickets under a project." />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {projects.map((p) => (
@@ -399,7 +442,7 @@ function SlasTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-xs text-slate-500">{slas.length} SLA policies · one active SLA is matched per ticket priority</p>
-        <GlowButton className="py-1.5 px-3 text-xs" onClick={() => setShowForm((v) => !v)}>{showForm ? 'Cancel' : '+ New SLA'}</GlowButton>
+        <GlowButton className="py-1.5 px-3 text-xs inline-flex items-center gap-1" onClick={() => setShowForm((v) => !v)}>{showForm ? 'Cancel' : <><Icons.plus className="w-3.5 h-3.5" />New SLA</>}</GlowButton>
       </div>
       {showForm && (
         <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className="card p-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
@@ -415,14 +458,14 @@ function SlasTab() {
         </motion.div>
       )}
       {isLoading ? <ShimmerCard /> : slas.length === 0 ? (
-        <div className="card p-10 text-center text-sm text-slate-500">No SLA policies yet.</div>
+        <EmptyState title="No SLA policies yet" hint="Add a policy to start tracking response and resolution targets." />
       ) : (
         <div className="card overflow-hidden">
           <table className="min-w-full">
             <thead><tr className="bg-slate-50 border-b border-slate-200">{['Name', 'Priority', 'Response', 'Resolution', 'Active', ''].map((h) => <th key={h} className="px-5 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">{h}</th>)}</tr></thead>
             <tbody>
               {slas.map((s) => (
-                <tr key={s.id} className="border-b border-slate-100 last:border-0">
+                <tr key={s.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors">
                   <td className="px-5 py-3 text-sm font-medium text-slate-900">{s.name}</td>
                   <td className="px-5 py-3">{s.priority ? <PriorityBadge priority={s.priority} /> : <span className="text-xs text-slate-400">any</span>}</td>
                   <td className="px-5 py-3 text-xs text-slate-600">{s.responseTime} {s.timeUnit}</td>
@@ -444,7 +487,7 @@ function ReportsTab() {
   const [type, setType] = useState<'status' | 'priority' | 'type' | 'project' | 'assignee'>('status');
   const [report, setReport] = useState<TicketReport | null>(null);
   const [generating, setGenerating] = useState(false);
-  const typeLabel: Record<string, string> = { status: 'By Status', priority: 'By Priority', type: 'By Type', project: 'By Project', assignee: 'By Assignee' };
+  const typeLbl: Record<string, string> = { status: 'By Status', priority: 'By Priority', type: 'By Type', project: 'By Project', assignee: 'By Assignee' };
 
   async function generate() {
     setGenerating(true);
@@ -462,15 +505,15 @@ function ReportsTab() {
     <div className="space-y-4">
       <div className="card p-5 flex items-end gap-3 flex-wrap">
         <div><label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Report Type</label>
-          <select value={type} onChange={(e) => setType(e.target.value as typeof type)} className="input !py-1.5 text-xs w-auto">{Object.entries(typeLabel).map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></div>
+          <select value={type} onChange={(e) => setType(e.target.value as typeof type)} className="input !py-1.5 text-xs w-auto">{Object.entries(typeLbl).map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></div>
         <GlowButton className="py-1.5 px-4 text-xs" onClick={() => void generate()} disabled={generating} loading={generating}>{generating ? 'Generating…' : 'Generate'}</GlowButton>
         {report && <GlowButton variant="secondary" className="py-1.5 px-3 text-xs ml-auto" onClick={exportCsv}>CSV ↓</GlowButton>}
       </div>
       {!report ? (
-        <div className="card p-12 text-center"><p className="text-sm font-semibold text-slate-600">No report generated yet</p></div>
+        <EmptyState icon={Icons.filter({ className: 'w-6 h-6' })} title="No report generated yet" hint="Pick a grouping and generate a breakdown of your tickets." />
       ) : (
         <div className="card overflow-hidden">
-          <div className="px-5 py-3 border-b border-slate-100 flex items-baseline justify-between"><p className="text-sm font-semibold text-slate-900">{typeLabel[report.type]}</p><span className="text-xs text-slate-400 tabular-nums">{report.totalTickets} tickets</span></div>
+          <div className="px-5 py-3 border-b border-slate-100 flex items-baseline justify-between"><p className="text-sm font-semibold text-slate-900">{typeLbl[report.type]}</p><span className="text-xs text-slate-400 tabular-nums">{report.totalTickets} tickets</span></div>
           <table className="min-w-full">
             <thead><tr className="bg-slate-50 border-b border-slate-200">{['Group', 'Total', 'Completed', 'In Progress', 'To Do', 'High/Urgent'].map((h, i) => <th key={h} className={`px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500 ${i === 0 ? 'text-left' : 'text-right'}`}>{h}</th>)}</tr></thead>
             <tbody>
@@ -505,16 +548,10 @@ export default function AdminTicketing() {
   });
   const visibleTabs = useMemo(() => TABS, []);
 
-  const DashIcon = (
-    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6} d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5M9 11.25v1.5M12 9v3.75m3-6v6" />
-    </svg>
-  );
-
   return (
-    <div className="p-8 max-w-[1300px] mx-auto space-y-6">
+    <div className="p-6 sm:p-8 max-w-[1300px] mx-auto space-y-6">
       <PageHeader eyebrow="Ticketing · Control System" title="Ticketing Dashboard"
-        subtitle="Manage tickets, projects, and SLA policies — with ticket numbering, SLA timers, round-robin assignment, and an activity trail." icon={DashIcon} />
+        subtitle="Manage tickets, projects, and SLA policies — with ticket numbering, SLA timers, round-robin assignment, and an activity trail." icon={Icons.board({ className: 'w-6 h-6' })} />
 
       <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.04 }}
         className="inline-flex items-center gap-1 p-1 rounded-xl bg-slate-100 ring-1 ring-slate-200/70 overflow-x-auto max-w-full">
@@ -535,7 +572,10 @@ export default function AdminTicketing() {
         {tab === 'reports' && <ReportsTab />}
         {tab === 'new' && (
           <div className="max-w-[820px]">
-            <NewTicketForm projects={projectsData?.projects ?? []} role={user?.role ?? 'ORG_ADMIN'} onCreated={() => setTab('tickets')} onCancel={() => setTab('tickets')} />
+            <div className="card p-6 sm:p-8">
+              <h3 className="text-lg font-bold tracking-tight text-slate-900 mb-5">Create new ticket</h3>
+              <NewTicketForm projects={projectsData?.projects ?? []} role={user?.role ?? 'ORG_ADMIN'} onCreated={() => setTab('tickets')} onCancel={() => setTab('tickets')} />
+            </div>
           </div>
         )}
       </motion.div>

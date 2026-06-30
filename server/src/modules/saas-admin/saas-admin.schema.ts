@@ -12,7 +12,19 @@ export const UpdateOrgSchema = z.object({
   plan: z.enum(['FREE', 'PRO', 'ENTERPRISE']).optional(),
   suspended: z.boolean().optional(),
   creditLimit: z.number().int().min(0).optional(),
+  // Short code embedded in ticket numbers (ADMINISTRATOR-controlled). Uppercased.
+  orgCode: z.string().trim().regex(/^[A-Za-z0-9]{1,8}$/, 'Org code must be 1–8 letters or numbers')
+    .transform((s) => s.toUpperCase()).optional(),
 });
+
+// Global ticket-number format (ADMINISTRATOR-only).
+export const TicketNumberFormatSchema = z.object({
+  prefix: z.string().trim().regex(/^[A-Za-z0-9]{1,8}$/, 'Prefix must be 1–8 letters or numbers').transform((s) => s.toUpperCase()),
+  includeOrgCode: z.boolean(),
+  separator: z.enum(['-', '_', '/', '.', '']),
+  padWidth: z.number().int().min(1).max(8),
+});
+export type TicketNumberFormatInput = z.infer<typeof TicketNumberFormatSchema>;
 
 export const ToggleFlagSchema = z.object({
   value: z.boolean(),

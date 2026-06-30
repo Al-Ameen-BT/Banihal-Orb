@@ -34,6 +34,7 @@ interface OrgDetail {
     id: string; name: string; slug: string; plan: string; industry: string | null;
     contractValue: number; healthScore: number; csm: string | null;
     suspended: boolean; ssoEnabled: boolean; mfaRequired: boolean; creditLimit: number;
+    orgCode: string | null;
     createdAt: string;
     _count: { users: number; services: number; requests: number };
     users: OrgUser[];
@@ -652,6 +653,7 @@ export default function OrgDetailPage() {
                     <div className="flex justify-between"><span className="text-slate-500">Credit Limit</span><span className="font-mono tabular-nums font-semibold text-slate-900">{org.creditLimit.toLocaleString()}</span></div>
                     <div className="flex justify-between"><span className="text-slate-500">Open Requests</span><span className="font-mono tabular-nums font-semibold text-slate-900">{org._count.requests}</span></div>
                   </div>
+                  <OrgCodeRow orgId={orgId} current={org.orgCode} />
                 </div>
               </motion.div>
             </div>
@@ -845,6 +847,39 @@ function StatCard({ label, value, tone }: { label: string; value: number | strin
         <span className={`w-2 h-2 rounded-full ${dot}`} />
       </div>
       <p className="font-mono text-xl font-bold text-slate-900 tabular-nums leading-none">{value}</p>
+    </div>
+  );
+}
+
+// Editable ticket org code (embedded in ticket numbers when the platform format
+// includes it). ADMINISTRATOR-only page, so editing here is admin-only.
+function OrgCodeRow({ orgId, current }: { orgId: string; current: string | null }) {
+  const qc = useQueryClient();
+  const [code, setCode] = useState(current ?? '');
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => { setCode(current ?? ''); }, [current]);
+
+  const mut = useMutation({
+    mutationFn: () => saasAdminApi.updateOrg(orgId, { orgCode: code.trim() }),
+    onSuccess: () => { setError(''); setSaved(true); qc.invalidateQueries({ queryKey: ['org-detail'] }); setTimeout(() => setSaved(false), 2000); },
+    onError: (e: unknown) => setError((e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Failed to save'),
+  });
+
+  const dirty = code.trim().length > 0 && code.trim().toUpperCase() !== (current ?? '').toUpperCase();
+
+  return (
+    <div className="pt-3 border-t border-slate-100">
+      <label className="block text-sm text-slate-700 mb-1.5">Ticket org code</label>
+      <div className="flex items-center gap-2">
+        <input value={code} maxLength={8} onChange={(e) => setCode(e.target.value.replace(/[^A-Za-z0-9]/g, '').toUpperCase())}
+          placeholder="e.g. DVB" className="input !py-1.5 text-sm font-mono" />
+        <GlowButton className="py-1.5 px-3 text-xs" onClick={() => mut.mutate()} disabled={!dirty || mut.isPending} loading={mut.isPending}>Save</GlowButton>
+      </div>
+      <p className="text-[11px] text-slate-400 mt-1">Used in ticket numbers when the format includes the org code (e.g. TKT-{code || 'DVB'}-001).</p>
+      {error && <p className="text-[11px] text-red-600 mt-1">{error}</p>}
+      {saved && <p className="text-[11px] text-emerald-600 mt-1">Saved</p>}
     </div>
   );
 }

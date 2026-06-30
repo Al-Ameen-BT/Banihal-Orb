@@ -22,6 +22,8 @@ const EnvSchema = z.object({
   PORT: z.coerce.number().default(3001),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   ALLOWED_ORIGINS: z.string().default('http://localhost:3000'),
+  // Public URL of the frontend — used to build links in emails (password reset).
+  FRONTEND_URL: z.string().url().default('http://localhost:3000'),
   // Comma-separated work-email domains allowed to hold the ADMINISTRATOR (software
   // provider) role. REQUIRED for admin login — when empty, admin login is disabled.
   ADMIN_DOMAINS: z.string().default(''),
@@ -49,6 +51,11 @@ const EnvSchema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
   MAIL_FROM: z.string().default('noreply@b2bsaas.com'),
+  // Email MFA: a 6-digit code is required on every login. TTL, max wrong-code
+  // attempts before the challenge is burned, and a resend cooldown (anti-spam).
+  MFA_CODE_TTL_MINUTES: z.coerce.number().min(1).default(10),
+  MFA_MAX_ATTEMPTS: z.coerce.number().min(1).default(5),
+  MFA_RESEND_COOLDOWN_SECONDS: z.coerce.number().min(0).default(30),
 });
 
 const result = EnvSchema.safeParse(process.env);

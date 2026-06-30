@@ -21,6 +21,10 @@ model Customer {
   contactPerson String
   contactNumber String
   domain        String?               @unique // derived from mailId (null for gmail.com); one org per domain
+  // Short code embedded in ticket numbers when the format includes the org
+  // (e.g. "DVB" → TKT-DVB-001). Auto-defaulted from the name; editable by an
+  // ADMINISTRATOR. Unique so per-org ticket sequences never collide.
+  orgCode       String?               @unique
   // ─── B2B / Cybersecurity fields ───────────────────────────────
   industry      String?
   contractValue Int                   @default(0)
@@ -40,6 +44,19 @@ model Customer {
   @@map("customers")
 }
 
+// Global, platform-wide ticket-number format — a single row (id = "default"),
+// editable only by an ADMINISTRATOR. Consumed by the ticketing module when it
+// allocates a ticket number. Absent row ⇒ built-in defaults (TKT-001).
+model TicketNumberSetting {
+  id             String   @id @default("default")
+  prefix         String   @default("TKT")
+  includeOrgCode Boolean  @default(false)
+  separator      String   @default("-")
+  padWidth       Int      @default(3)
+  updatedById    String?
+  updatedAt      DateTime @updatedAt
+}
+
 model User {
   id            String         @id @default(cuid())
   email         String         @unique
@@ -54,6 +71,7 @@ model User {
   auditLogs           AuditLog[]
   refreshTokens       RefreshToken[]
   passwordResetTokens PasswordResetToken[]
+  emailMfaChallenges  EmailMfaChallenge[]
   requests            ServiceRequest[] @relation("UserRequests")
   announcements       Announcement[] @relation("UserAnnouncements")
   escalations         TicketEscalation[] @relation("UserEscalations")
@@ -90,6 +108,23 @@ model PasswordResetToken {
 
   @@index([userId])
   @@index([tokenHash])
+}
+
+// Short-lived email MFA challenge. Issued after a password check at login; the
+// emailed 6-digit code is stored hashed (never in plaintext). Verifying the code
+// is what actually issues session tokens. One live challenge per user at a time.
+model EmailMfaChallenge {
+  id         String    @id @default(cuid())
+  userId     String
+  codeHash   String
+  attempts   Int       @default(0)
+  expiresAt  DateTime
+  lastSentAt DateTime  @default(now())
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model AuditLog {

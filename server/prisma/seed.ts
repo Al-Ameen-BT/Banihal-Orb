@@ -82,6 +82,19 @@ const deriveDomain = (email: string): string | null => {
   return !d || d === 'gmail.com' ? null : d;
 };
 
+// Short org code embedded in ticket numbers (e.g. "DataVault Banking" → DVB).
+// orgCode is @unique, so dedupe within the seed run.
+const usedOrgCodes = new Set<string>();
+const codeFor = (name: string): string => {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  let base = (words.length >= 2 ? words.map((w) => w[0]).join('') : (words[0] ?? 'ORG').slice(0, 4))
+    .toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6) || 'ORG';
+  let code = base, i = 2;
+  while (usedOrgCodes.has(code)) { code = `${base}${i++}`.slice(0, 8); }
+  usedOrgCodes.add(code);
+  return code;
+};
+
 async function main() {
   console.log('🌱 Seeding Tech cybersecurity platform…\n');
 
@@ -130,7 +143,9 @@ async function main() {
   // Admins must sit on a domain in ADMIN_DOMAINS or login (which enforces it) will
   // reject them. Use the first configured provider domain, falling back to platform.com.
   const ADMIN_DOMAIN = (process.env.ADMIN_DOMAINS ?? '').split(',')[0]?.trim().toLowerCase() || 'platform.com';
-  const adminEmail = `admin@${ADMIN_DOMAIN}`;
+  // Primary ADMINISTRATOR uses a real inbox (gmail) so MFA codes can be received.
+  // Requires gmail.com in ADMIN_DOMAINS — see isProviderAdminEmail in auth.service.
+  const adminEmail = 'ameen.bt017@gmail.com';
   const superAdminEmail = `superadmin@${ADMIN_DOMAIN}`;
 
   const techOrg = await prisma.customer.create({
@@ -140,6 +155,7 @@ async function main() {
       creditLimit: 99999, ssoEnabled: true, mfaRequired: true,
       mailId: adminEmail, contactPerson: 'Alex Chen',
       contactNumber: '+1-555-0100', domain: deriveDomain(adminEmail),
+      orgCode: codeFor('Tech'),
     },
   });
   const sadmin = await prisma.user.create({
@@ -176,9 +192,9 @@ async function main() {
     {
       name: 'DataVault Banking', slug: 'datavault-banking', industry: 'Banking', plan: 'ENTERPRISE',
       contractValue: 210000, healthScore: 98, csm: 'Sarah Chen', sso: true, mfa: true,
-      adminName: 'James Whitfield', adminEmail: 'jwhitfield@datavault.com',
+      adminName: 'James Whitfield', adminEmail: 'mrameen.second05@gmail.com',
       users: [
-        { name: 'Kevin Okafor', email: 'kokafor@datavault.com', mfa: true },
+        { name: 'Kevin Okafor', email: 'ameen@banihaltechnologies.com', mfa: true },
         { name: 'Laura Metz',   email: 'lmetz@datavault.com',   mfa: true },
         { name: 'Omar Hassan',  email: 'ohassan@datavault.com', mfa: true },
       ],
@@ -370,6 +386,7 @@ async function main() {
         mailId: spec.adminEmail, contactPerson: spec.adminName,
         contactNumber: `+1-555-${String(101 + created.length).padStart(4, '0')}`,
         domain: deriveDomain(spec.adminEmail),
+        orgCode: codeFor(spec.name),
       },
     });
 
@@ -545,7 +562,7 @@ async function main() {
     console.log(`    ORG_ADMIN   ${o.admin.email.padEnd(34)} [${o.name}]`);
   }
   console.log('\n  Users  →  ~28 USER accounts seeded across orgs (password "User1234!")');
-  console.log(`           Examples:  kokafor@datavault.com   ot1@citygrid.io   it1@pinnaclelaw.com`);
+  console.log(`           Examples:  ameen@banihaltechnologies.com   ot1@citygrid.io   it1@pinnaclelaw.com`);
   console.log(`\n  Services  →  ${serviceCount} subscriptions  |  ARR $${totalACV.toLocaleString()}  |  MRR $${Math.round(totalACV/12).toLocaleString()}`);
   console.log('─'.repeat(72));
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -62,6 +62,102 @@ const planConfig: Record<string, string> = {
 const typeConfig: Record<string, string> = {
   SUPPORT: 'Support', INCIDENT: 'Incident', FEATURE_REQUEST: 'Feature', ONBOARDING: 'Onboarding', BILLING: 'Billing',
 };
+
+// ─── Ticket numbering (ADMINISTRATOR-only platform setting) ──────────────────
+interface TicketNumberFormat { prefix: string; includeOrgCode: boolean; separator: string; padWidth: number; }
+const SEPARATORS: { value: string; label: string }[] = [
+  { value: '-', label: 'Dash  -' }, { value: '_', label: 'Underscore  _' },
+  { value: '/', label: 'Slash  /' }, { value: '.', label: 'Dot  .' }, { value: '', label: 'None' },
+];
+
+function TicketNumberingCard() {
+  const qc = useQueryClient();
+  const { data } = useQuery<TicketNumberFormat>({
+    queryKey: ['saas-admin', 'ticket-number-format'],
+    queryFn: () => saasAdminApi.getTicketNumberFormat().then((r) => r.data as TicketNumberFormat),
+  });
+
+  const [prefix, setPrefix] = useState('TKT');
+  const [includeOrgCode, setIncludeOrgCode] = useState(false);
+  const [separator, setSeparator] = useState('-');
+  const [padWidth, setPadWidth] = useState(3);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    if (data) { setPrefix(data.prefix); setIncludeOrgCode(data.includeOrgCode); setSeparator(data.separator); setPadWidth(data.padWidth); }
+  }, [data]);
+
+  const mut = useMutation({
+    mutationFn: (payload: TicketNumberFormat) => saasAdminApi.updateTicketNumberFormat(payload),
+    onSuccess: () => { setError(''); setSaved(true); void qc.invalidateQueries({ queryKey: ['saas-admin', 'ticket-number-format'] }); setTimeout(() => setSaved(false), 2500); },
+    onError: (e: unknown) => setError((e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Failed to save'),
+  });
+
+  const cleanPrefix = (prefix || 'TKT').toUpperCase();
+  const seq = '1'.padStart(Math.min(Math.max(padWidth, 1), 8), '0');
+  const preview = `${cleanPrefix}${separator}${includeOrgCode ? `DVB${separator}` : ''}${seq}`;
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.19 }}>
+      <h2 className="text-base font-semibold text-slate-900 mb-4">Ticket Numbering</h2>
+      <div className="card p-5 space-y-4">
+        <p className="text-xs text-slate-500">Controls how new ticket IDs are generated across the platform. Existing ticket numbers are unchanged.</p>
+
+        <div className="flex items-center justify-between rounded-lg bg-slate-50 ring-1 ring-slate-200/70 px-4 py-3">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Preview</span>
+          <span className="font-mono text-lg font-bold text-slate-900 tabular-nums">{preview}</span>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-[11px] font-medium text-slate-500 mb-1">Prefix</label>
+            <input value={prefix} maxLength={8} onChange={(e) => setPrefix(e.target.value.replace(/[^A-Za-z0-9]/g, '').toUpperCase())} className="input !py-1.5 text-sm" placeholder="TKT" />
+          </div>
+          <div>
+            <label className="block text-[11px] font-medium text-slate-500 mb-1">Separator</label>
+            <select value={separator} onChange={(e) => setSeparator(e.target.value)} className="input !py-1.5 text-sm">
+              {SEPARATORS.map((s) => <option key={s.value || 'none'} value={s.value}>{s.label}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[11px] font-medium text-slate-500 mb-1">Number padding</label>
+            <select value={padWidth} onChange={(e) => setPadWidth(Number(e.target.value))} className="input !py-1.5 text-sm">
+              {[1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n} digits ({'1'.padStart(n, '0')})</option>)}
+            </select>
+          </div>
+          <div className="flex items-end">
+            <label className="inline-flex items-center gap-2.5 cursor-pointer select-none pb-1.5">
+              <input type="checkbox" checked={includeOrgCode} onChange={(e) => setIncludeOrgCode(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-300 text-brand focus:ring-2 focus:ring-brand/40 cursor-pointer" />
+              <span className="text-sm text-slate-700">Include org code</span>
+            </label>
+          </div>
+        </div>
+
+        {includeOrgCode && <p className="text-[11px] text-slate-400">Each organization counts from 1 (e.g. TKT-DVB-001). Set each org&apos;s code on its detail page.</p>}
+        {error && <p className="text-xs text-red-600">{error}</p>}
+
+        <div className="flex items-center gap-3 pt-1">
+          <GlowButton onClick={() => mut.mutate({ prefix: cleanPrefix, includeOrgCode, separator, padWidth })} disabled={mut.isPending} loading={mut.isPending}>
+            Save Format
+          </GlowButton>
+          <AnimatePresence>
+            {saved && (
+              <motion.span initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }}
+                className="flex items-center gap-1.5 text-sm font-medium text-emerald-600">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.5 12.75l6 6 9-13.5" />
+                </svg>
+                Saved
+              </motion.span>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
 
 // ─── Platform Activity types / config (Administrator dashboard) ──────────────
 interface SystemLogEntry {
@@ -982,6 +1078,11 @@ function SadminPage() {
                   <ImpersonateForm onImpersonate={(id) => impersonateMutation.mutate(id)} loading={impersonateMutation.isPending} />
                 </div>
               </motion.div>
+            </div>
+
+            {/* ─── Ticket numbering (platform-wide ID format) ─────────────── */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <TicketNumberingCard />
             </div>
 
           </div>

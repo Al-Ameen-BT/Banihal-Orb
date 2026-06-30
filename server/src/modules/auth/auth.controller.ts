@@ -1,8 +1,16 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { RegisterSchema, RegisterUserSchema, LoginSchema, ForgotPasswordSchema, ResetPasswordSchema } from './auth.schema';
+import { RegisterSchema, RegisterUserSchema, LoginSchema, ForgotPasswordSchema, ResetPasswordSchema, VerifyMfaSchema, ResendMfaSchema } from './auth.schema';
 import * as authService from './auth.service';
 import { env } from '../../config/env';
+
+// Partially mask an email for display on the verification screen (j***e@acme.com).
+function maskEmail(email: string): string {
+  const [local, domain] = email.split('@');
+  if (!local || !domain) return email;
+  const visible = local.length <= 2 ? local.charAt(0) : `${local.charAt(0)}${'*'.repeat(Math.min(local.length - 2, 4))}${local.charAt(local.length - 1)}`;
+  return `${visible}@${domain}`;
+}
 
 const COOKIE_OPTS = {
   httpOnly: true,
@@ -54,15 +62,38 @@ function parseCurrentSession(req: Request): authService.CurrentSession | null {
   }
 }
 
+// Step 1 of login: validate the password and email a one-time code. No session
+// cookies are set here — the client must complete /auth/mfa/verify.
 export async function login(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const input = LoginSchema.parse(req.body);
     // Refresh cookie (path /api/auth) is the durable same-browser proof — the
     // access cookie expires after 15 minutes and may be absent here.
     const rawRefresh = (req.cookies['refreshToken'] as string | undefined) ?? null;
-    const tokens = await authService.login(input, parseCurrentSession(req), rawRefresh);
+    const challenge = await authService.initiateLogin(input, parseCurrentSession(req), rawRefresh);
+    res.json({ mfaRequired: true, challengeId: challenge.challengeId, email: maskEmail(challenge.email) });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Step 2 of login: verify the emailed code and issue session cookies.
+export async function verifyMfa(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = VerifyMfaSchema.parse(req.body);
+    const tokens = await authService.verifyMfa(input.challengeId, input.code);
     setTokenCookies(res, tokens);
     res.json({ message: 'Login successful' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function resendMfa(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = ResendMfaSchema.parse(req.body);
+    const { email } = await authService.resendMfaCode(input.challengeId);
+    res.json({ message: 'A new code has been sent.', email: maskEmail(email) });
   } catch (err) {
     next(err);
   }

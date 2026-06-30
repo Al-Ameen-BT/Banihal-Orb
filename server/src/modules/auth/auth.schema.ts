@@ -46,6 +46,24 @@ export type ForgotPasswordInput = z.infer<typeof ForgotPasswordSchema>;
 
 export const ResetPasswordSchema = z.object({
   token: z.string().min(1, 'Token is required'),
-  newPassword: z.string().min(8, 'Password must be at least 8 characters'),
+  newPassword: z
+    .string()
+    .min(12)
+    .regex(
+      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])/,
+      'Password must contain uppercase, lowercase, number, and special character',
+    ),
 });
 export type ResetPasswordInput = z.infer<typeof ResetPasswordSchema>;
+
+// Email MFA: step 2 of login. `code` is the 6-digit value from the email.
+export const VerifyMfaSchema = z.object({
+  challengeId: z.string().min(1, 'Challenge is required'),
+  code: z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code'),
+});
+export type VerifyMfaInput = z.infer<typeof VerifyMfaSchema>;
+
+export const ResendMfaSchema = z.object({
+  challengeId: z.string().min(1, 'Challenge is required'),
+});
+export type ResendMfaInput = z.infer<typeof ResendMfaSchema>;

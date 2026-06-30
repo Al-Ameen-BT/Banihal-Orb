@@ -161,7 +161,7 @@ function EscalationsSection() {
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['admin-escalations'] }); },
   });
 
-  const escalations = data?.escalations;
+  const escalations = data?.escalations ?? [];
 
   // Categorized by organization, most recent escalation first within each group.
   const byOrg = useMemo(() => {
@@ -551,7 +551,7 @@ export default function AdminPlatformDashboard() {
     },
   });
 
-  const orgs = orgsData?.orgs;
+  const orgs = orgsData?.orgs ?? [];
 
   // At-risk scoring: low health, critical tickets, expired/expiring services.
   const atRisk = useMemo(() => (orgs ?? [])

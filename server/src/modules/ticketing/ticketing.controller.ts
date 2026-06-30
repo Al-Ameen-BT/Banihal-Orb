@@ -40,7 +40,7 @@ export async function createTicket(req: Request, res: Response, next: NextFuncti
   try {
     const input = CreateTicketSchema.parse(req.body);
     const me = await actor(req);
-    const ticket = await service.createTicket(me.id, input);
+    const ticket = await service.createTicket(me.id, input, req.user.customerId);
     res.status(201).json(ticket);
   } catch (err) { next(err); }
 }

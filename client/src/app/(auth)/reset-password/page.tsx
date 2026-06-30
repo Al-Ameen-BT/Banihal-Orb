@@ -10,7 +10,13 @@ import AmbientBackdrop from '@/components/ui/AmbientBackdrop';
 import { z } from 'zod';
 
 const ResetPasswordSchema = z.object({
-  password: z.string().min(8, 'Password must be at least 8 characters'),
+  password: z
+    .string()
+    .min(12, 'Password must be at least 12 characters')
+    .regex(
+      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])/,
+      'Must include uppercase, lowercase, number, and special character',
+    ),
   confirmPassword: z.string(),
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Passwords don't match",
@@ -119,7 +125,7 @@ function ResetPasswordForm() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             className="input"
-            placeholder="••••••••••••"
+            placeholder="Min. 12 chars, upper, lower, number, symbol"
           />
           {errors['password'] && <p className="mt-1.5 text-xs text-red-600">{errors['password']}</p>}
         </div>

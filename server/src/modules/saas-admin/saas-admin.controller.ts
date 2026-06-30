@@ -8,8 +8,22 @@ import {
   UpdateUserSchema, SystemActivitySchema,
   CreateAnnouncementSchema, UpdateAnnouncementSchema,
   ListEscalationsSchema, UpdateEscalationSchema,
+  TicketNumberFormatSchema,
 } from './saas-admin.schema';
 import * as saasAdminService from './saas-admin.service';
+
+export async function getTicketNumberFormat(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    res.json(await saasAdminService.getTicketNumberFormat());
+  } catch (err) { next(err); }
+}
+
+export async function updateTicketNumberFormat(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = TicketNumberFormatSchema.parse(req.body);
+    res.json(await saasAdminService.updateTicketNumberFormat(input, req.user.userId));
+  } catch (err) { next(err); }
+}
 
 export async function listOrgs(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
