@@ -2,12 +2,24 @@
 
 import { useState, useRef, useEffect, useMemo, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { ticketingApi } from '@/lib/api';
+import type { TicketProject, TicketType, TicketPriority, TicketDTO, Role } from '@/lib/schemas';
+
+interface TicketMeta {
+  ticketNumber: string;
+  title: string;
+  priority: string;
+  type: string;
+  projectName: string | null;
+}
 
 interface Message {
   id: string;
   role: 'user' | 'bot';
   content: string;
   timestamp: number;
+  ticketMeta?: TicketMeta;
 }
 
 interface ChatTurn {
@@ -31,6 +43,8 @@ interface ChatbotProps {
   onNewChat?: () => void;
   userName?: string;
   orgName?: string;
+  /** User role — drives which ticket form fields are shown. */
+  userRole?: Role;
   className?: string;
 }
 
@@ -51,6 +65,25 @@ const QUICK_PROMPTS: Array<{ label: string; text: string; dot: string }> = [
   { label: 'Outlook not syncing',  dot: 'bg-emerald-500',
     text: 'Outlook is not syncing new emails on my system. How can I resolve this?' },
 ];
+
+// ─── Ticket form option sets ─────────────────────────────────────────────────
+const TK_TYPES: { value: TicketType; label: string }[] = [
+  { value: 'task', label: 'Task' }, { value: 'bug', label: 'Bug' },
+  { value: 'story', label: 'Story' }, { value: 'feature', label: 'Feature' },
+];
+const TK_PRIORITIES: { value: TicketPriority; label: string }[] = [
+  { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' }, { value: 'urgent', label: 'Urgent' },
+];
+const TK_PRI_CLS: Record<string, string> = {
+  low: 'bg-slate-100 text-slate-600 ring-slate-500/15',
+  medium: 'bg-cyan-50 text-cyan-700 ring-cyan-600/15',
+  high: 'bg-amber-50 text-amber-700 ring-amber-600/15',
+  urgent: 'bg-red-50 text-red-700 ring-red-600/15',
+};
+const TK_PRI_DOT: Record<string, string> = {
+  low: 'bg-slate-400', medium: 'bg-cyan-500', high: 'bg-amber-500', urgent: 'bg-red-500',
+};
 
 // Keyword-aware canned replies for demo/offline mode (no onUserMessage prop)
 function pickReply(text: string, fallbackIdx: number): string {
@@ -242,7 +275,41 @@ function BotAvatar({ size = 'sm' }: { size?: 'sm' | 'md' }) {
   );
 }
 
-export default function Chatbot({ onUserMessage, initialMessages, onNewChat, userName, orgName, className }: ChatbotProps) {
+// ─── Ticket confirmation card (shown inline in the chat thread) ──────────────
+function TicketCreatedCard({ meta }: { meta: TicketMeta }) {
+  const priCls = TK_PRI_CLS[meta.priority] ?? TK_PRI_CLS['medium']!;
+  const priDot = TK_PRI_DOT[meta.priority] ?? TK_PRI_DOT['medium']!;
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 text-emerald-600">
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+        </svg>
+        <span className="text-xs font-bold uppercase tracking-wider">Ticket Created</span>
+      </div>
+      <div className="rounded-lg bg-slate-50/80 border border-slate-200 p-3 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-mono text-xs font-bold text-brand">{meta.ticketNumber}</span>
+          <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-semibold ring-1 ring-inset ${priCls}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${priDot}`} />
+            {meta.priority.charAt(0).toUpperCase() + meta.priority.slice(1)}
+          </span>
+        </div>
+        <p className="text-sm font-semibold text-slate-800 leading-snug">{meta.title}</p>
+        <div className="flex items-center gap-2 text-[11px] text-slate-500">
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 font-semibold text-slate-600">
+            {meta.type.charAt(0).toUpperCase() + meta.type.slice(1)}
+          </span>
+          {meta.projectName && <span className="truncate">· {meta.projectName}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function Chatbot({ onUserMessage, initialMessages, onNewChat, userName, orgName, userRole, className }: ChatbotProps) {
+  const queryClient = useQueryClient();
+
   const greeting = useMemo(() => {
     const who = userName ? `, ${userName.split(' ')[0]}` : '';
     const where = orgName ? ` at ${orgName}` : '';
@@ -268,6 +335,24 @@ export default function Chatbot({ onUserMessage, initialMessages, onNewChat, use
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // ── Ticket form state ────────────────────────────────────────────────────
+  const [showTicketForm, setShowTicketForm] = useState(false);
+  const [tkTitle, setTkTitle] = useState('');
+  const [tkDesc, setTkDesc] = useState('');
+  const [tkProjectId, setTkProjectId] = useState('');
+  const [tkType, setTkType] = useState<TicketType>('task');
+  const [tkPriority, setTkPriority] = useState<TicketPriority>('medium');
+  const [tkSubmitting, setTkSubmitting] = useState(false);
+  const [tkError, setTkError] = useState<string | null>(null);
+
+  // Fetch projects on-demand when the ticket form opens.
+  const { data: tkProjects } = useQuery<TicketProject[]>({
+    queryKey: ['ticketing', 'projects'],
+    queryFn: () => ticketingApi.listProjects().then((r) => (r.data as { projects: TicketProject[] }).projects),
+    enabled: showTicketForm,
+    staleTime: 60_000,
+  });
+
   // The org/user queries usually resolve after first paint — refresh the greeting
   // in place so it doesn't permanently miss the org name.
   useEffect(() => {
@@ -290,7 +375,7 @@ export default function Chatbot({ onUserMessage, initialMessages, onNewChat, use
     if (!typing && !streamingMsgId) inputRef.current?.focus();
   }, [typing, streamingMsgId]);
 
-  const busy = typing || !!streamingMsgId;
+  const busy = typing || !!streamingMsgId || tkSubmitting;
 
   async function sendText(raw: string) {
     const text = raw.trim();
@@ -303,7 +388,7 @@ export default function Chatbot({ onUserMessage, initialMessages, onNewChat, use
 
     // Cap to the server's limits (20 turns × 2000 chars) — exceeding either 400s.
     const history: ChatTurn[] = messages
-      .filter((m) => m.id !== 'bot-greet' && m.content.trim().length > 0)
+      .filter((m) => m.id !== 'bot-greet' && m.content.trim().length > 0 && !m.ticketMeta)
       .map((m) => ({
         role: m.role === 'user' ? ('user' as const) : ('assistant' as const),
         content: m.content.slice(0, MAX_TURN_CHARS),
@@ -364,6 +449,71 @@ export default function Chatbot({ onUserMessage, initialMessages, onNewChat, use
     }
   }
 
+  // ── Ticket form handlers ─────────────────────────────────────────────────
+  function openTicketForm() {
+    // Pre-populate description from recent chat context so the support team
+    // has visibility into what was discussed before the ticket was raised.
+    const recent = messages.filter((m) => m.id !== 'bot-greet' && !m.ticketMeta).slice(-4);
+    if (recent.length > 0) {
+      const context = recent
+        .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content.slice(0, 300)}`)
+        .join('\n\n');
+      setTkDesc(`Chat context:\n${context}`);
+    } else {
+      setTkDesc('');
+    }
+    setTkTitle('');
+    setTkProjectId('');
+    setTkType('task');
+    setTkPriority('medium');
+    setTkError(null);
+    setShowTicketForm(true);
+  }
+
+  async function handleCreateTicket(e: React.FormEvent) {
+    e.preventDefault();
+    if (!tkTitle.trim() || !tkDesc.trim() || !tkProjectId || tkSubmitting) return;
+    setTkSubmitting(true);
+    setTkError(null);
+    try {
+      const payload: Record<string, unknown> = {
+        title: tkTitle.trim(),
+        description: tkDesc.trim(),
+        projectId: tkProjectId,
+        type: tkType,
+        priority: tkPriority,
+      };
+      // ORG_ADMIN and ADMINISTRATOR can set status; default to 'todo' for in-chat tickets.
+      const { data } = await ticketingApi.createTicket(payload);
+      const ticket = data as TicketDTO;
+
+      // Insert a ticket confirmation card as a bot message.
+      setMessages((prev) => [...prev, {
+        id: `tk-${Date.now()}`,
+        role: 'bot',
+        content: `Ticket ${ticket.ticketNumber} created.`,
+        timestamp: Date.now(),
+        ticketMeta: {
+          ticketNumber: ticket.ticketNumber,
+          title: ticket.title,
+          priority: ticket.priority,
+          type: ticket.type,
+          projectName: ticket.projectName,
+        },
+      }]);
+
+      // Close the form.
+      setShowTicketForm(false);
+
+      // Invalidate ticketing cache so the Ticketing page reflects the new ticket.
+      await queryClient.invalidateQueries({ queryKey: ['ticketing'] });
+    } catch {
+      setTkError('Could not create the ticket. Please try again.');
+    } finally {
+      setTkSubmitting(false);
+    }
+  }
+
   const isLive = !!onUserMessage;
   const showPrompts = messages.length === 1 && messages[0]?.id === 'bot-greet' && !typing;
   const inConversation = messages.some((m) => m.id !== 'bot-greet');
@@ -414,10 +564,16 @@ export default function Chatbot({ onUserMessage, initialMessages, onNewChat, use
                     ? 'bg-brand text-white rounded-br-md'
                     : 'bg-white border border-slate-200 text-slate-800 rounded-bl-md shadow-xs'
                 }`}>
-                  {renderContent(msg.content)}
-                  {/* Blinking cursor while this message is still streaming */}
-                  {streamingMsgId === msg.id && (
-                    <span className="inline-block w-0.5 h-3.5 bg-slate-400 opacity-75 animate-pulse ml-0.5 align-middle rounded-full" />
+                  {msg.ticketMeta ? (
+                    <TicketCreatedCard meta={msg.ticketMeta} />
+                  ) : (
+                    <>
+                      {renderContent(msg.content)}
+                      {/* Blinking cursor while this message is still streaming */}
+                      {streamingMsgId === msg.id && (
+                        <span className="inline-block w-0.5 h-3.5 bg-slate-400 opacity-75 animate-pulse ml-0.5 align-middle rounded-full" />
+                      )}
+                    </>
                   )}
                 </div>
                 <p className={`text-[10px] text-slate-400 mt-1 ${msg.role === 'user' ? 'text-right pr-1' : 'pl-1'}`}>
@@ -468,6 +624,117 @@ export default function Chatbot({ onUserMessage, initialMessages, onNewChat, use
         </AnimatePresence>
       </div>
 
+      {/* ── Inline ticket creation form (slides up between messages and input) ─── */}
+      <AnimatePresence>
+        {showTicketForm && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            className="overflow-hidden border-t border-slate-100 bg-white flex-shrink-0"
+          >
+            <form onSubmit={handleCreateTicket} className="p-4 space-y-3">
+              {/* Form header */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-brand-50 to-brand-100 ring-1 ring-brand-200/60 flex items-center justify-center flex-shrink-0">
+                    <svg className="w-3.5 h-3.5 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6} d="M16.5 6v.75m0 3v.75m0 3v.75m0 3V18m-9-5.25h5.25M7.5 15h3M3.375 5.25c-.621 0-1.125.504-1.125 1.125v3.026a2.999 2.999 0 0 1 0 5.198v3.026c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-3.026a2.999 2.999 0 0 1 0-5.198V6.375c0-.621-.504-1.125-1.125-1.125H3.375Z" />
+                    </svg>
+                  </div>
+                  <h4 className="text-sm font-bold text-slate-900">Create Ticket</h4>
+                  <span className="text-[10px] text-slate-400 font-medium">from this conversation</span>
+                </div>
+                <button type="button" onClick={() => { setShowTicketForm(false); setTkError(null); }}
+                  className="text-slate-400 hover:text-slate-600 cursor-pointer p-1 rounded-md hover:bg-slate-100 transition-colors" aria-label="Close ticket form">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18 18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Title */}
+              <input
+                id="chat-tk-title"
+                value={tkTitle}
+                onChange={(e) => setTkTitle(e.target.value)}
+                maxLength={255}
+                placeholder="Brief summary of the issue"
+                className="w-full px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:border-brand focus:outline-none transition-colors"
+                autoFocus
+              />
+
+              {/* Project / Type / Priority row */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <select
+                  id="chat-tk-project"
+                  value={tkProjectId}
+                  onChange={(e) => setTkProjectId(e.target.value)}
+                  className="px-2.5 py-1.5 text-xs text-slate-700 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:border-brand focus:outline-none transition-colors cursor-pointer"
+                >
+                  <option value="">— Project * —</option>
+                  {(tkProjects ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+                <select
+                  id="chat-tk-type"
+                  value={tkType}
+                  onChange={(e) => setTkType(e.target.value as TicketType)}
+                  className="px-2.5 py-1.5 text-xs text-slate-700 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:border-brand focus:outline-none transition-colors cursor-pointer"
+                >
+                  {TK_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                </select>
+                <select
+                  id="chat-tk-priority"
+                  value={tkPriority}
+                  onChange={(e) => setTkPriority(e.target.value as TicketPriority)}
+                  className="px-2.5 py-1.5 text-xs text-slate-700 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:border-brand focus:outline-none transition-colors cursor-pointer"
+                >
+                  {TK_PRIORITIES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+                </select>
+              </div>
+
+              {/* Description */}
+              <textarea
+                id="chat-tk-desc"
+                value={tkDesc}
+                onChange={(e) => setTkDesc(e.target.value)}
+                rows={3}
+                maxLength={10_000}
+                placeholder="Describe the issue, error messages, affected systems…"
+                className="w-full px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:border-brand focus:outline-none transition-colors resize-none"
+              />
+
+              {/* Actions */}
+              <div className="flex items-center justify-end gap-2 pt-1">
+                {tkError && <span className="mr-auto text-xs text-red-600">{tkError}</span>}
+                {!tkError && (!tkTitle.trim() || !tkDesc.trim() || !tkProjectId) && (
+                  <span className="mr-auto text-[11px] text-slate-400">Title, project &amp; description required</span>
+                )}
+                <button type="button" onClick={() => { setShowTicketForm(false); setTkError(null); }}
+                  className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors cursor-pointer"
+                  disabled={tkSubmitting}>
+                  Cancel
+                </button>
+                <button type="submit"
+                  disabled={!tkTitle.trim() || !tkDesc.trim() || !tkProjectId || tkSubmitting}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-brand rounded-lg hover:bg-brand-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer">
+                  {tkSubmitting ? (
+                    <>
+                      <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      Creating…
+                    </>
+                  ) : 'Create Ticket'}
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Input bar */}
       <form
         onSubmit={(e) => { e.preventDefault(); void sendText(input); }}
@@ -482,6 +749,20 @@ export default function Chatbot({ onUserMessage, initialMessages, onNewChat, use
           disabled={busy}
           maxLength={MAX_TURN_CHARS}
         />
+        {/* Create Ticket button */}
+        <button
+          type="button"
+          onClick={openTicketForm}
+          disabled={busy || showTicketForm}
+          className="inline-flex items-center justify-center w-9 h-9 rounded-lg text-slate-400 hover:text-brand hover:bg-brand-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+          aria-label="Create ticket"
+          title="Create a ticket from this conversation"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6} d="M16.5 6v.75m0 3v.75m0 3v.75m0 3V18m-9-5.25h5.25M7.5 15h3M3.375 5.25c-.621 0-1.125.504-1.125 1.125v3.026a2.999 2.999 0 0 1 0 5.198v3.026c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-3.026a2.999 2.999 0 0 1 0-5.198V6.375c0-.621-.504-1.125-1.125-1.125H3.375Z" />
+          </svg>
+        </button>
+        {/* Send button */}
         <button
           type="submit"
           disabled={!input.trim() || busy}
