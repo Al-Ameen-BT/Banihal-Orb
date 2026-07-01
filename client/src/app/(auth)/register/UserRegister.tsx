@@ -106,6 +106,12 @@ export default function RegisterPage() {
             Sign in
           </Link>
         </p>
+
+        <p className="mt-4 text-center text-xs text-slate-400 leading-relaxed">
+          By creating an account you agree to our{' '}
+          <Link href="/terms" className="font-medium text-slate-500 hover:text-brand transition-colors">Terms</Link>{' '}and{' '}
+          <Link href="/privacy" className="font-medium text-slate-500 hover:text-brand transition-colors">Privacy Policy</Link>.
+        </p>
       </motion.div >
     </div >
   );

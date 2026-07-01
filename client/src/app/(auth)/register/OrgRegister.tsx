@@ -52,7 +52,7 @@ export default function RegisterPage() {
     { id: 'organizationName', label: 'Organization name', placeholder: 'Organization Name' },
     { id: 'name', label: 'Your full name', placeholder: 'Your Name' },
     { id: 'email', label: 'Work email', type: 'email', autoComplete: 'email', placeholder: 'you@organization.com' },
-    { id: 'contactNumber', label: 'Contact number', type: 'tel', autoComplete: 'tel', placeholder: '+91 0000000000' },
+    { id: 'contactNumber', label: 'Contact number', type: 'tel', autoComplete: 'tel', placeholder: '+91 ----------' },
     { id: 'password', label: 'Password', type: 'password', autoComplete: 'new-password', placeholder: 'New password' },
   ];
 
@@ -98,13 +98,6 @@ export default function RegisterPage() {
               </div>
             ))}
 
-            <div className="text-xs text-slate-500 text-center mt-6">
-              By creating an organization, you agree to our{' '}
-              <Link href="/terms" className="text-brand hover:underline">Terms of Service</Link>
-              {' '}and{' '}
-              <Link href="/privacy-policy" className="text-brand hover:underline">Privacy Policy</Link>.
-            </div>
-
             <GlowButton type="submit" loading={loading} className="w-full !mt-6">
               {loading ? 'Creating organization…' : 'Create organization'}
             </GlowButton>
@@ -116,6 +109,12 @@ export default function RegisterPage() {
           <Link href="/login" className="font-semibold text-brand hover:text-brand-700 transition-colors">
             Sign in
           </Link>
+        </p>
+
+        <p className="mt-4 text-center text-xs text-slate-400 leading-relaxed">
+          By creating an organization you agree to our{' '}
+          <Link href="/terms" className="font-medium text-slate-500 hover:text-brand transition-colors">Terms</Link>{' '}and{' '}
+          <Link href="/privacy" className="font-medium text-slate-500 hover:text-brand transition-colors">Privacy Policy</Link>.
         </p>
       </motion.div>
     </div>
