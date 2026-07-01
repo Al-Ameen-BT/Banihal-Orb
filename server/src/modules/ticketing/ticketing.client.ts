@@ -11,9 +11,12 @@ type UploadedFile = { filename: string; originalname: string; mimetype: string; 
 // ─── Includes ────────────────────────────────────────────────────────────────
 const userSel = { select: { id: true, firstName: true, lastName: true, email: true } } as const;
 
+// NOTE: the required Projects + reporter relations are deliberately NOT included here.
+// The admin ticket store (b2b_ticketing_admin) can hold tickets whose projectId/reporterId
+// reference rows that no longer exist; a required-relation `include` would then make Prisma
+// throw "Inconsistent query result: Field … is required to return data, got null" and 500
+// the whole request. We batch-load them separately (resolveTicketRefs) and tolerate gaps.
 const ticketInclude = {
-  Projects: { select: { id: true, name: true } },
-  Users_Tickets_reporterIdToUsers: userSel,
   Users_Tickets_assigneeIdToUsers: userSel,
   Customers: { select: { id: true, name: true } },
   SLAs: { select: { id: true, name: true, resolutionTime: true, timeUnit: true } },
@@ -27,7 +30,21 @@ function person(u: { id: string; firstName: string; lastName: string; email: str
   return { id: u.id, name: `${u.firstName} ${u.lastName}`.trim(), email: u.email };
 }
 
-function toTicketDTO(row: TicketRow): TicketDTO {
+// Batch-load the required-relation rows (project + reporter) for a set of tickets, keyed by
+// id, tolerating orphaned references (Map.get(...) ?? null) instead of throwing.
+async function resolveTicketRefs(rows: ReadonlyArray<{ projectId: string; reporterId: string }>) {
+  const db = getTicketDb();
+  const [projects, reporters] = await Promise.all([
+    db.projects.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.projectId))] } }, select: { id: true, name: true } }),
+    db.users.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.reporterId))] } }, ...userSel }),
+  ]);
+  return {
+    projects: new Map(projects.map((p) => [p.id, p])),
+    reporters: new Map(reporters.map((u) => [u.id, u])),
+  };
+}
+
+function toTicketDTO(row: TicketRow, project: { id: string; name: string } | null, reporter: PersonRef | null): TicketDTO {
   const sla = row.SLAs ? { id: row.SLAs.id, name: row.SLAs.name, resolutionTime: row.SLAs.resolutionTime, timeUnit: row.SLAs.timeUnit as string } : null;
   const evalSla = evaluateSla(
     { status: row.status, createdAt: row.createdAt, pausedTime: row.pausedTime, totalPausedTime: row.totalPausedTime },
@@ -42,8 +59,8 @@ function toTicketDTO(row: TicketRow): TicketDTO {
     priority: row.priority as TicketPriority,
     type: row.type as TicketType,
     projectId: row.projectId,
-    projectName: row.Projects?.name ?? null,
-    reporter: person(row.Users_Tickets_reporterIdToUsers),
+    projectName: project?.name ?? null,
+    reporter,
     assignee: person(row.Users_Tickets_assigneeIdToUsers),
     customer: row.Customers ? { id: row.Customers.id, name: row.Customers.name } : null,
     storyPoints: row.storyPoints,
@@ -87,12 +104,15 @@ export async function listTickets(filters: TicketFilters = {}): Promise<TicketDT
     orderBy: { createdAt: 'desc' },
     take: 500,
   });
-  return rows.map(toTicketDTO);
+  const refs = await resolveTicketRefs(rows);
+  return rows.map((r) => toTicketDTO(r, refs.projects.get(r.projectId) ?? null, person(refs.reporters.get(r.reporterId) ?? null)));
 }
 
 export async function getTicketById(id: string): Promise<TicketDTO | null> {
   const row = await getTicketDb().tickets.findUnique({ where: { id }, include: ticketInclude });
-  return row ? toTicketDTO(row) : null;
+  if (!row) return null;
+  const refs = await resolveTicketRefs([row]);
+  return toTicketDTO(row, refs.projects.get(row.projectId) ?? null, person(refs.reporters.get(row.reporterId) ?? null));
 }
 
 // Minimal fields for status/assign transitions (pause accounting).
@@ -140,17 +160,18 @@ export function writeActivity(a: {
 }
 
 // ─── Projects ──────────────────────────────────────────────────────────────────
+// The required lead (Users) relation is loaded separately (see resolveTicketRefs rationale)
+// so an orphaned leadId degrades to a null lead instead of throwing/500-ing.
 const projectInclude = {
-  Users: userSel,
   _count: { select: { ProjectMembers: true, Tickets: true } },
 } as const;
 type ProjectRow = Awaited<ReturnType<typeof ticketPrisma.projects.findFirstOrThrow<{ include: typeof projectInclude }>>>;
 
-function toProjectDTO(row: ProjectRow): ProjectDTO {
+function toProjectDTO(row: ProjectRow, lead: PersonRef | null): ProjectDTO {
   return {
     id: row.id, name: row.name, description: row.description, status: row.status,
     category: row.category, type: row.type as string, priority: row.priority as ProjectPriority,
-    leadId: row.leadId, lead: person(row.Users), settings: row.settings,
+    leadId: row.leadId, lead, settings: row.settings,
     memberCount: row._count.ProjectMembers, ticketCount: row._count.Tickets,
     createdAt: row.createdAt.toISOString(),
   };
@@ -158,11 +179,15 @@ function toProjectDTO(row: ProjectRow): ProjectDTO {
 
 export async function listProjects(): Promise<ProjectDTO[]> {
   const rows = await getTicketDb().projects.findMany({ include: projectInclude, orderBy: { createdAt: 'desc' } });
-  return rows.map(toProjectDTO);
+  const leadRows = await getTicketDb().users.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.leadId))] } }, ...userSel });
+  const leads = new Map(leadRows.map((u) => [u.id, u]));
+  return rows.map((r) => toProjectDTO(r, person(leads.get(r.leadId) ?? null)));
 }
 export async function getProjectById(id: string): Promise<ProjectDTO | null> {
   const row = await getTicketDb().projects.findUnique({ where: { id }, include: projectInclude });
-  return row ? toProjectDTO(row) : null;
+  if (!row) return null;
+  const lead = await getTicketDb().users.findUnique({ where: { id: row.leadId }, ...userSel });
+  return toProjectDTO(row, person(lead));
 }
 export function getProjectSettings(id: string) {
   return getTicketDb().projects.findUnique({ where: { id }, select: { id: true, settings: true } });
@@ -300,12 +325,18 @@ export async function listActivities(ticketId: string): Promise<ActivityDTO[]> {
 }
 
 // ─── Stats source ────────────────────────────────────────────────────────────
-export function allTicketsForStats() {
-  return getTicketDb().tickets.findMany({
+export async function allTicketsForStats() {
+  const rows = await getTicketDb().tickets.findMany({
     select: {
       status: true, priority: true, type: true, projectId: true, createdAt: true,
-      Projects: { select: { name: true } },
       Users_Tickets_assigneeIdToUsers: { select: { firstName: true, lastName: true } },
     },
   });
+  // Resolve project names separately, tolerating orphaned projectIds (see ticketInclude note).
+  const projects = await getTicketDb().projects.findMany({
+    where: { id: { in: [...new Set(rows.map((r) => r.projectId))] } },
+    select: { id: true, name: true },
+  });
+  const byId = new Map(projects.map((p) => [p.id, p]));
+  return rows.map((r) => ({ ...r, Projects: byId.get(r.projectId) ?? null }));
 }
