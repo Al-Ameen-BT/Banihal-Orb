@@ -1,4 +1,4 @@
-import { ticketPrisma } from '../../config/ticketDatabase';
+import { ticketPrisma, getTicketDb } from '../../config/ticketDatabase';
 import { evaluateSla, type TimeUnit } from './services/slaService';
 import type {
   TicketDTO, ProjectDTO, SlaDTO, TicketFilters, PersonRef,
@@ -67,7 +67,7 @@ function toTicketDTO(row: TicketRow): TicketDTO {
 
 // ─── Tickets ─────────────────────────────────────────────────────────────────
 export async function listTickets(filters: TicketFilters = {}): Promise<TicketDTO[]> {
-  const rows = await ticketPrisma.tickets.findMany({
+  const rows = await getTicketDb().tickets.findMany({
     where: {
       ...(filters.status ? { status: filters.status } : {}),
       ...(filters.priority ? { priority: filters.priority } : {}),
@@ -91,30 +91,30 @@ export async function listTickets(filters: TicketFilters = {}): Promise<TicketDT
 }
 
 export async function getTicketById(id: string): Promise<TicketDTO | null> {
-  const row = await ticketPrisma.tickets.findUnique({ where: { id }, include: ticketInclude });
+  const row = await getTicketDb().tickets.findUnique({ where: { id }, include: ticketInclude });
   return row ? toTicketDTO(row) : null;
 }
 
 // Minimal fields for status/assign transitions (pause accounting).
 export function getTicketCore(id: string) {
-  return ticketPrisma.tickets.findUnique({
+  return getTicketDb().tickets.findUnique({
     where: { id },
     select: { id: true, status: true, priority: true, assigneeId: true, projectId: true, pausedTime: true, totalPausedTime: true },
   });
 }
 
 export async function createTicketRow(data: Parameters<typeof ticketPrisma.tickets.create>[0]['data']): Promise<string> {
-  const row = await ticketPrisma.tickets.create({ data, select: { id: true } });
+  const row = await getTicketDb().tickets.create({ data, select: { id: true } });
   return row.id;
 }
 
 export function updateTicketRow(id: string, data: Parameters<typeof ticketPrisma.tickets.update>[0]['data']) {
-  return ticketPrisma.tickets.update({ where: { id }, data, select: { id: true } });
+  return getTicketDb().tickets.update({ where: { id }, data, select: { id: true } });
 }
 
 // First active SLA whose priority matches the ticket priority (report §7.2 step 3).
 export async function findActiveSlaIdByPriority(priority: TicketPriority): Promise<string | null> {
-  const sla = await ticketPrisma.sLAs.findFirst({
+  const sla = await getTicketDb().sLAs.findFirst({
     where: { isActive: true, priority },
     orderBy: { createdAt: 'asc' },
     select: { id: true },
@@ -128,7 +128,7 @@ export function writeActivity(a: {
   type: ActivityType; ticketId: string; userId: string;
   field?: string; oldValue?: unknown; newValue?: unknown; description?: string;
 }) {
-  return ticketPrisma.activities.create({
+  return getTicketDb().activities.create({
     data: {
       type: a.type, ticketId: a.ticketId, userId: a.userId,
       field: a.field ?? null,
@@ -157,32 +157,43 @@ function toProjectDTO(row: ProjectRow): ProjectDTO {
 }
 
 export async function listProjects(): Promise<ProjectDTO[]> {
-  const rows = await ticketPrisma.projects.findMany({ include: projectInclude, orderBy: { createdAt: 'desc' } });
+  const rows = await getTicketDb().projects.findMany({ include: projectInclude, orderBy: { createdAt: 'desc' } });
   return rows.map(toProjectDTO);
 }
 export async function getProjectById(id: string): Promise<ProjectDTO | null> {
-  const row = await ticketPrisma.projects.findUnique({ where: { id }, include: projectInclude });
+  const row = await getTicketDb().projects.findUnique({ where: { id }, include: projectInclude });
   return row ? toProjectDTO(row) : null;
 }
 export function getProjectSettings(id: string) {
-  return ticketPrisma.projects.findUnique({ where: { id }, select: { id: true, settings: true } });
+  return getTicketDb().projects.findUnique({ where: { id }, select: { id: true, settings: true } });
 }
 export function setProjectSettings(id: string, settings: object) {
-  return ticketPrisma.projects.update({ where: { id }, data: { settings }, select: { id: true } });
+  return getTicketDb().projects.update({ where: { id }, data: { settings }, select: { id: true } });
 }
 export async function createProjectRow(data: Parameters<typeof ticketPrisma.projects.create>[0]['data']): Promise<string> {
-  const row = await ticketPrisma.projects.create({ data, select: { id: true } });
+  const row = await getTicketDb().projects.create({ data, select: { id: true } });
   return row.id;
 }
+// Find (or lazily create) the "Escalations" project in the CURRENT store — where
+// escalated client tickets land in the admin DB.
+export async function getOrCreateEscalationProject(leadId: string): Promise<string> {
+  const existing = await getTicketDb().projects.findFirst({ where: { name: 'Escalations' }, select: { id: true } });
+  if (existing) return existing.id;
+  const created = await getTicketDb().projects.create({
+    data: { name: 'Escalations', description: 'Tickets escalated from client organizations', category: 'escalation', type: 'other', priority: 'high', leadId },
+    select: { id: true },
+  });
+  return created.id;
+}
 export function updateProjectRow(id: string, data: Parameters<typeof ticketPrisma.projects.update>[0]['data']) {
-  return ticketPrisma.projects.update({ where: { id }, data, select: { id: true } });
+  return getTicketDb().projects.update({ where: { id }, data, select: { id: true } });
 }
 export function countProjectTickets(id: string) {
-  return ticketPrisma.tickets.count({ where: { projectId: id } });
+  return getTicketDb().tickets.count({ where: { projectId: id } });
 }
 export async function deleteProjectById(id: string): Promise<void> {
   // Tickets.projectId is NOT NULL — the service blocks deletion when tickets exist.
-  await ticketPrisma.projects.delete({ where: { id } });
+  await getTicketDb().projects.delete({ where: { id } });
 }
 
 // ─── SLAs ──────────────────────────────────────────────────────────────────────
@@ -197,24 +208,24 @@ function toSlaDTO(row: Awaited<ReturnType<typeof ticketPrisma.sLAs.findFirstOrTh
   };
 }
 export async function listSlas(): Promise<SlaDTO[]> {
-  const rows = await ticketPrisma.sLAs.findMany({ orderBy: { createdAt: 'asc' } });
+  const rows = await getTicketDb().sLAs.findMany({ orderBy: { createdAt: 'asc' } });
   return rows.map(toSlaDTO);
 }
 export async function createSlaRow(data: Parameters<typeof ticketPrisma.sLAs.create>[0]['data']): Promise<SlaDTO> {
-  const row = await ticketPrisma.sLAs.create({ data });
+  const row = await getTicketDb().sLAs.create({ data });
   return toSlaDTO(row);
 }
 export async function updateSlaRow(id: string, data: Parameters<typeof ticketPrisma.sLAs.update>[0]['data']): Promise<SlaDTO> {
-  const row = await ticketPrisma.sLAs.update({ where: { id }, data });
+  const row = await getTicketDb().sLAs.update({ where: { id }, data });
   return toSlaDTO(row);
 }
 export function deleteSlaById(id: string) {
-  return ticketPrisma.sLAs.delete({ where: { id } });
+  return getTicketDb().sLAs.delete({ where: { id } });
 }
 
 // ─── Staff (assignee pool) ─────────────────────────────────────────────────────
 export async function listStaff(): Promise<Array<{ id: string; name: string; email: string; role: string }>> {
-  const rows = await ticketPrisma.users.findMany({
+  const rows = await getTicketDb().users.findMany({
     where: { isActive: true },
     select: { id: true, firstName: true, lastName: true, email: true, role: true },
     orderBy: [{ firstName: 'asc' }],
@@ -229,7 +240,7 @@ function attDTO(a: { id: string; originalName: string | null; mimeType: string |
 }
 
 export async function listComments(ticketId: string): Promise<CommentDTO[]> {
-  const rows = await ticketPrisma.comments.findMany({
+  const rows = await getTicketDb().comments.findMany({
     where: { ticketId },
     include: { Users: userSel, CommentAttachments: { include: { Users: userSel } } },
     orderBy: { createdAt: 'asc' },
@@ -241,47 +252,47 @@ export async function listComments(ticketId: string): Promise<CommentDTO[]> {
   }));
 }
 export async function createComment(ticketId: string, userId: string, content: string): Promise<string> {
-  const c = await ticketPrisma.comments.create({ data: { ticketId, userId, content }, select: { id: true } });
+  const c = await getTicketDb().comments.create({ data: { ticketId, userId, content }, select: { id: true } });
   return c.id;
 }
 export function addCommentAttachment(commentId: string, file: UploadedFile, uploadedBy: string) {
-  return ticketPrisma.commentAttachments.create({
+  return getTicketDb().commentAttachments.create({
     data: { commentId, filename: file.filename, originalName: file.originalname, mimeType: file.mimetype, size: file.size, path: file.path, uploadedBy },
   });
 }
 
 // ─── Ticket attachments ─────────────────────────────────────────────────────────
 export async function listTicketAttachments(ticketId: string): Promise<AttachmentDTO[]> {
-  const rows = await ticketPrisma.ticketAttachments.findMany({ where: { ticketId }, include: { Users: userSel }, orderBy: { createdAt: 'asc' } });
+  const rows = await getTicketDb().ticketAttachments.findMany({ where: { ticketId }, include: { Users: userSel }, orderBy: { createdAt: 'asc' } });
   return rows.map((a) => attDTO(a, 'ticket', a.Users));
 }
 export function addTicketAttachment(ticketId: string, file: UploadedFile, uploadedBy: string | null) {
-  return ticketPrisma.ticketAttachments.create({
+  return getTicketDb().ticketAttachments.create({
     data: { ticketId, filename: file.filename, originalName: file.originalname, mimeType: file.mimetype, size: file.size, path: file.path, uploadedBy },
   });
 }
 export async function getAttachmentFile(id: string): Promise<{ path: string | null; originalName: string | null; mimeType: string | null } | null> {
-  const t = await ticketPrisma.ticketAttachments.findUnique({ where: { id }, select: { path: true, originalName: true, mimeType: true } });
+  const t = await getTicketDb().ticketAttachments.findUnique({ where: { id }, select: { path: true, originalName: true, mimeType: true } });
   if (t) return t;
-  return ticketPrisma.commentAttachments.findUnique({ where: { id }, select: { path: true, originalName: true, mimeType: true } });
+  return getTicketDb().commentAttachments.findUnique({ where: { id }, select: { path: true, originalName: true, mimeType: true } });
 }
 
 // ─── Watchers ───────────────────────────────────────────────────────────────────
 export async function listWatchers(ticketId: string): Promise<PersonRef[]> {
-  const rows = await ticketPrisma.ticketWatchers.findMany({ where: { ticketId }, include: { Users: userSel } });
+  const rows = await getTicketDb().ticketWatchers.findMany({ where: { ticketId }, include: { Users: userSel } });
   return rows.map((w) => person(w.Users)).filter((p): p is PersonRef => p !== null);
 }
 export async function addWatcher(ticketId: string, userId: string): Promise<void> {
-  const n = await ticketPrisma.ticketWatchers.count({ where: { ticketId, userId } });
-  if (!n) await ticketPrisma.ticketWatchers.create({ data: { ticketId, userId } });
+  const n = await getTicketDb().ticketWatchers.count({ where: { ticketId, userId } });
+  if (!n) await getTicketDb().ticketWatchers.create({ data: { ticketId, userId } });
 }
 export async function removeWatcher(ticketId: string, userId: string): Promise<void> {
-  await ticketPrisma.ticketWatchers.deleteMany({ where: { ticketId, userId } });
+  await getTicketDb().ticketWatchers.deleteMany({ where: { ticketId, userId } });
 }
 
 // ─── Activity history ─────────────────────────────────────────────────────────
 export async function listActivities(ticketId: string): Promise<ActivityDTO[]> {
-  const rows = await ticketPrisma.activities.findMany({ where: { ticketId }, include: { Users: userSel }, orderBy: { createdAt: 'desc' } });
+  const rows = await getTicketDb().activities.findMany({ where: { ticketId }, include: { Users: userSel }, orderBy: { createdAt: 'desc' } });
   return rows.map((a) => ({
     id: a.id, type: a.type as string, field: a.field, oldValue: a.oldValue, newValue: a.newValue,
     description: a.description, user: person(a.Users), createdAt: a.createdAt.toISOString(),
@@ -290,7 +301,7 @@ export async function listActivities(ticketId: string): Promise<ActivityDTO[]> {
 
 // ─── Stats source ────────────────────────────────────────────────────────────
 export function allTicketsForStats() {
-  return ticketPrisma.tickets.findMany({
+  return getTicketDb().tickets.findMany({
     select: {
       status: true, priority: true, type: true, projectId: true, createdAt: true,
       Projects: { select: { name: true } },

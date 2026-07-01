@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import {
   ListTicketsSchema, CreateTicketSchema, UpdateTicketSchema,
-  CreateProjectSchema, UpdateProjectSchema, CreateSlaSchema, ReportSchema, UpdateEscalationSchema,
+  CreateProjectSchema, UpdateProjectSchema, CreateSlaSchema, ReportSchema,
 } from './ticketing.schema';
 import * as service from './ticketing.service';
 import * as db from './ticketing.client';
@@ -166,16 +166,10 @@ export async function unwatchTicket(req: Request, res: Response, next: NextFunct
   try { const me = await actor(req); await service.unwatch(req.params['id']!, me.id); res.status(204).end(); } catch (err) { next(err); }
 }
 
-// ─── Escalation (ORG_ADMIN → b2b_ticketing_admin / ADMINISTRATOR portal) ────────
+// ─── Escalation: ORG_ADMIN/ADMINISTRATOR copies a b2b_ticket ticket into the
+//     administrators' store (b2b_ticketing_admin, same 14-table schema). ───────
 export async function escalateTicket(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const me = await actor(req);
-    res.status(201).json(await escalation.escalateTicket(me.id, req.user.customerId, req.params['id']!));
+    res.status(201).json(await escalation.escalateTicket(req.user.userId, req.user.role, req.params['id']!));
   } catch (err) { next(err); }
-}
-export async function listEscalations(_req: Request, res: Response, next: NextFunction): Promise<void> {
-  try { res.json({ escalations: await escalation.listEscalations() }); } catch (err) { next(err); }
-}
-export async function updateEscalation(req: Request, res: Response, next: NextFunction): Promise<void> {
-  try { res.json(await escalation.updateEscalation(req.params['id']!, UpdateEscalationSchema.parse(req.body))); } catch (err) { next(err); }
 }

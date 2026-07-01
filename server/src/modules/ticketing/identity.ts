@@ -1,6 +1,6 @@
 import type { Role } from '@prisma/client';
 import { prisma } from '../../config/database';
-import { ticketPrisma } from '../../config/ticketDatabase';
+import { getTicketDb, getTicketDbScope } from '../../config/ticketDatabase';
 
 // ─── Identity bridge ─────────────────────────────────────────────────────────
 // The B2B-Site login is the source of truth. The full ticketing schema has its
@@ -23,7 +23,9 @@ const ROLE_MAP: Record<Role, TicketStaffRole> = {
 // never match a bcrypt check, so the client portal / staff login stays closed.
 const BRIDGED_PASSWORD = '__sso_bridged__';
 
-// email → ticketing Users.id (avoids an upsert on every request).
+// scope+email → ticketing Users.id (avoids an upsert on every request). Keyed by
+// DB scope too: the SAME email maps to DIFFERENT Users.id rows in the shared vs
+// admin ticket stores, so the caches must never collide.
 const cache = new Map<string, string>();
 
 function splitName(name: string): { firstName: string; lastName: string } {
@@ -51,16 +53,20 @@ export async function resolveTicketActor(b2bUserId: string, platformRole: Role):
   if (!b2bUser) throw Object.assign(new Error('User not found'), { status: 401, code: 'AUTH_REQUIRED' });
 
   const email = b2bUser.email.toLowerCase();
-  const cached = cache.get(email);
+  // Key the cache by the ACTIVE DB scope (not the role): escalation bridges an
+  // ORG_ADMIN into the admin store too, so the same email is a different Users.id
+  // row depending on which store the current AsyncLocalStorage scope selects.
+  const cacheKey = `${getTicketDbScope()}:${email}`;
+  const cached = cache.get(cacheKey);
   if (cached) return { id: cached, role };
 
   const { firstName, lastName } = splitName(b2bUser.name);
-  const row = await ticketPrisma.users.upsert({
+  const row = await getTicketDb().users.upsert({
     where: { email },
     create: { email, firstName, lastName, password: BRIDGED_PASSWORD, role },
     update: { role, firstName, lastName, lastLogin: new Date() },
     select: { id: true },
   });
-  cache.set(email, row.id);
+  cache.set(cacheKey, row.id);
   return { id: row.id, role };
 }

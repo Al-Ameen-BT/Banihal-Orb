@@ -144,6 +144,13 @@ export default function TicketDetail({ ticketId, onClose }: { ticketId: string; 
     mutationFn: () => (isWatching ? ticketingApi.unwatch(ticketId) : ticketingApi.watch(ticketId)),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['ticketing', 'watchers', ticketId] }),
   });
+  // Escalation is an ORG_ADMIN action on a client (b2b_ticket) ticket — it copies
+  // the ticket into the platform administrators' store (b2b_ticketing_admin).
+  const escalateMut = useMutation({
+    mutationFn: () => ticketingApi.escalate(ticketId),
+    onSuccess: () => void invalidate(),
+    onError: (e: unknown) => alert((e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Could not escalate the ticket.'),
+  });
 
   return (
     <Drawer open onClose={onClose} width="max-w-3xl">
@@ -222,6 +229,21 @@ export default function TicketDetail({ ticketId, onClose }: { ticketId: string; 
 
             {/* Sidebar */}
             <div className="p-6 space-y-5 bg-slate-50/40">
+              {user?.role === 'ORG_ADMIN' && (
+                ticket.labels.includes('escalated') ? (
+                  <div className="rounded-xl bg-amber-50 ring-1 ring-amber-200/70 px-3.5 py-2.5 flex items-center gap-2 text-xs font-semibold text-amber-700">
+                    <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
+                    </svg>
+                    Escalated to platform administrators
+                  </div>
+                ) : (
+                  <GlowButton variant="secondary" className="w-full py-2 text-xs" loading={escalateMut.isPending} disabled={escalateMut.isPending}
+                    onClick={() => { if (confirm('Escalate this ticket to the platform administrators?')) escalateMut.mutate(); }}>
+                    Escalate to platform
+                  </GlowButton>
+                )
+              )}
               {isStaff && <QuickEdit ticket={ticket} />}
 
               <div className="space-y-2.5 text-xs">

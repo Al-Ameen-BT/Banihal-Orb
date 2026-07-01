@@ -1,4 +1,4 @@
-import { ticketPrisma } from '../../../config/ticketDatabase';
+import { getTicketDb } from '../../../config/ticketDatabase';
 import type { NumberFormat } from '../services/numberFormat';
 
 // Ticket number generation: build a base from the configured format
@@ -11,11 +11,12 @@ export async function nextTicketNumber(fmt: NumberFormat, orgCode: string | null
   if (fmt.includeOrgCode && orgCode) segs.push(orgCode);
   const base = segs.join(fmt.separator) + fmt.separator; // e.g. "TKT-DVB-"
 
-  // Match by literal prefix via left()/= — NOT LIKE (a '_' separator would act as
-  // a wildcard) and NOT a SQL regex (the external ticket DB mangles backslash
-  // escapes). Parse the trailing digit run in JS to find the current max.
-  const rows = await ticketPrisma.$queryRaw<{ ticketNumber: string }[]>`
-    SELECT "ticketNumber" FROM "Tickets" WHERE left("ticketNumber", ${base.length}) = ${base}`;
+  // Match by literal prefix via starts_with() — NOT LIKE (a '_' separator would
+  // act as a wildcard), NOT a SQL regex (the external ticket DB mangles backslash
+  // escapes), and NOT left(col, n) (Prisma binds the JS length as bigint and
+  // Postgres has no left(varchar, bigint)). Parse the trailing digits in JS.
+  const rows = await getTicketDb().$queryRaw<{ ticketNumber: string }[]>`
+    SELECT "ticketNumber" FROM "Tickets" WHERE starts_with("ticketNumber", ${base})`;
 
   let max = 0;
   for (const r of rows) {

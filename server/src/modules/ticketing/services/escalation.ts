@@ -1,99 +1,67 @@
-import { prisma } from '../../../config/database';
-import { adminTicketingPrisma } from '../../../config/adminTicketingDatabase';
+import type { Role } from '@prisma/client';
 import * as db from '../ticketing.client';
+import { runWithTicketDb } from '../../../config/ticketDatabase';
+import { resolveTicketActor } from '../identity';
+import { nextTicketNumber } from '../utils/ticketNumber';
+import { getTicketNumberFormat } from './numberFormat';
 
-// ─── Escalation ──────────────────────────────────────────────────────────────
-// An ORG_ADMIN escalates a ticket: a SNAPSHOT of the full b2b_ticket ticket is
-// copied into the administrators' database (b2b_ticketing_admin, the simpler
-// Ticket schema) where platform ADMINISTRATORs manage it from the Escalations
-// tab. The snapshot row shares the source ticket id so escalation is idempotent
-// and the source can be flagged "escalated". Only escalated tickets flow in.
+// ─── Escalation: client (b2b_ticket) → administrators (b2b_ticketing_admin) ───
+// Both stores share the SAME 14-table schema. An ORG_ADMIN/ADMINISTRATOR escalates
+// a ticket: we COPY it into the admin store as a fresh ticket (new number, in the
+// admin store's "Escalations" project, reported by the bridged actor) and flag the
+// source with an `escalated` label + activity so the org-admin side reflects it.
+// Cross-store reads/writes are wrapped in the matching runWithTicketDb scope.
 
 const notFound = (w: string) => Object.assign(new Error(`${w} not found`), { status: 404, code: 'NOT_FOUND' });
 
-// full status/priority → simple-schema enums
-const STATUS_MAP: Record<string, 'TODO' | 'IN_PROGRESS' | 'COMPLETED'> = {
-  todo: 'TODO', in_progress: 'IN_PROGRESS', client_pending: 'IN_PROGRESS', completed: 'COMPLETED',
-};
-const PRIORITY_MAP: Record<string, 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'> = {
-  low: 'LOW', medium: 'MEDIUM', high: 'HIGH', urgent: 'CRITICAL',
-};
-
-export async function escalateTicket(actorId: string, customerId: string, sourceTicketId: string) {
-  const t = await db.getTicketById(sourceTicketId);
-  if (!t) throw notFound('Ticket');
-
-  const existing = await adminTicketingPrisma.ticket.findUnique({ where: { id: sourceTicketId }, select: { id: true } });
-  if (existing) throw Object.assign(new Error('This ticket has already been escalated.'), { status: 409, code: 'ALREADY_ESCALATED' });
-
-  // Snapshot into b2b_ticketing_admin (sharing the source id for a 1:1 link).
-  await adminTicketingPrisma.ticket.create({
-    data: {
-      id: sourceTicketId,
-      customerId,
-      subject: t.title,
-      description: t.description,
-      issueType: t.type,
-      status: STATUS_MAP[t.status] ?? 'TODO',
-      priority: PRIORITY_MAP[t.priority] ?? 'MEDIUM',
-      assignee: t.assignee?.name ?? null,
-      raisedByName: t.reporter?.name ?? null,
-      raisedByEmail: t.reporter?.email ?? null,
-      clientName: t.customer?.name ?? null,
-      branch: t.branch,
-      onSiteSupport: t.onSiteSupportRequired,
-    },
-  });
-
-  // Flag the source ticket (label) + log it, so the org-admin side shows "escalated".
-  if (!t.labels.includes('escalated')) {
-    await db.updateTicketRow(sourceTicketId, { labels: [...t.labels, 'escalated'] });
+export async function escalateTicket(b2bUserId: string, platformRole: Role, sourceTicketId: string): Promise<{ escalated: true; ticketNumber: string }> {
+  // Source lives in the shared (default) store.
+  const source = await runWithTicketDb('default', () => db.getTicketById(sourceTicketId));
+  if (!source) throw notFound('Ticket');
+  if (source.labels.includes('escalated')) {
+    throw Object.assign(new Error('This ticket has already been escalated.'), { status: 409, code: 'ALREADY_ESCALATED' });
   }
-  await db.writeActivity({ type: 'updated', ticketId: sourceTicketId, userId: actorId, field: 'escalated', newValue: true, description: 'Escalated to platform administrators' });
 
-  return { escalated: true, ticketNumber: t.ticketNumber };
-}
+  // Copy into the ADMIN store (14-table). Reporter + project are resolved in that
+  // store; ticket number is allocated from the admin store's sequence.
+  await runWithTicketDb('admin', async () => {
+    const actor = await resolveTicketActor(b2bUserId, platformRole);
+    const projectId = await db.getOrCreateEscalationProject(actor.id);
+    const fmt = await getTicketNumberFormat();
 
-export interface EscalationDTO {
-  id: string;
-  subject: string;
-  description: string;
-  issueType: string;
-  status: string;
-  priority: string;
-  assignee: string | null;
-  raisedByName: string | null;
-  raisedByEmail: string | null;
-  branch: string | null;
-  onSiteSupport: boolean;
-  org: string;
-  createdAt: string;
-}
-
-export async function listEscalations(): Promise<EscalationDTO[]> {
-  const rows = await adminTicketingPrisma.ticket.findMany({ orderBy: { createdAt: 'desc' }, take: 500 });
-  const ids = [...new Set(rows.map((r) => r.customerId))];
-  const customers = await prisma.customer.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } });
-  const nameById = new Map(customers.map((c) => [c.id, c.name] as const));
-  return rows.map((r) => ({
-    id: r.id, subject: r.subject, description: r.description, issueType: r.issueType,
-    status: r.status, priority: r.priority, assignee: r.assignee,
-    raisedByName: r.raisedByName, raisedByEmail: r.raisedByEmail,
-    branch: r.branch, onSiteSupport: r.onSiteSupport,
-    org: nameById.get(r.customerId) ?? 'Unknown org',
-    createdAt: r.createdAt.toISOString(),
-  }));
-}
-
-export async function updateEscalation(id: string, input: { status?: 'TODO' | 'IN_PROGRESS' | 'COMPLETED'; assignee?: string | null }) {
-  const existing = await adminTicketingPrisma.ticket.findUnique({ where: { id }, select: { id: true } });
-  if (!existing) throw notFound('Escalation');
-  await adminTicketingPrisma.ticket.update({
-    where: { id },
-    data: {
-      ...(input.status !== undefined ? { status: input.status, completedAt: input.status === 'COMPLETED' ? new Date() : null } : {}),
-      ...(input.assignee !== undefined ? { assignee: input.assignee } : {}),
-    },
+    let created = false;
+    for (let attempt = 0; attempt < 10 && !created; attempt++) {
+      const ticketNumber = await nextTicketNumber(fmt, null);
+      try {
+        await db.createTicketRow({
+          ticketNumber,
+          title: source.title,
+          description: `Escalated from ${source.ticketNumber} (${source.customer?.name ?? source.projectName ?? 'client'}).\n\n${source.description}`,
+          type: source.type,
+          priority: source.priority,
+          status: 'todo',
+          projectId,
+          reporterId: actor.id,
+          createdBy: actor.id,
+          labels: ['escalated', `src:${source.ticketNumber}`],
+          branch: source.branch,
+          onSiteSupportRequired: source.onSiteSupportRequired,
+        });
+        created = true;
+      } catch (err) {
+        if ((err as { code?: string }).code === 'P2002') continue; // number collision → retry
+        throw err;
+      }
+    }
+    if (!created) throw Object.assign(new Error('Could not allocate an escalation ticket number'), { status: 500, code: 'TICKET_NUMBER_RACE' });
   });
-  return { id, ...input };
+
+  // Flag + log the source in the shared store.
+  await runWithTicketDb('default', async () => {
+    const actor = await resolveTicketActor(b2bUserId, platformRole);
+    await db.updateTicketRow(sourceTicketId, { labels: [...source.labels, 'escalated'] });
+    await db.writeActivity({ type: 'updated', ticketId: sourceTicketId, userId: actor.id, field: 'escalated', newValue: true, description: 'Escalated to platform administrators' });
+  });
+
+  return { escalated: true, ticketNumber: source.ticketNumber };
 }

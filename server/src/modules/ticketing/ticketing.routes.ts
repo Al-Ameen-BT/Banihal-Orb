@@ -1,10 +1,18 @@
 import { Router } from 'express';
 import * as ticketingController from './ticketing.controller';
 import { requireRole } from '../../middleware/rbac.middleware';
+import { runWithTicketDb } from '../../config/ticketDatabase';
 import { upload } from './uploads';
 
 const router = Router();
 const staff = requireRole('ORG_ADMIN', 'ADMINISTRATOR'); // management surfaces
+
+// Scope every ticketing request to a store by the caller's platform role:
+// ADMINISTRATOR → the isolated admin store (b2b_ticketing_admin); everyone else →
+// the shared client store (b2b_ticket). All ticketing.client queries read this
+// scope via getTicketDb(). (Escalation overrides the scope per-operation.)
+router.use((req, _res, next) =>
+  runWithTicketDb(req.user?.role === 'ADMINISTRATOR' ? 'admin' : 'default', () => next()));
 
 // All authenticated users: raise + view tickets, see projects + the assignee pool.
 router.get('/tickets', ticketingController.listTickets);
@@ -23,6 +31,9 @@ router.get('/attachments/:id/download', ticketingController.downloadAttachment);
 router.get('/tickets/:id/watchers', ticketingController.getWatchers);
 router.post('/tickets/:id/watch', ticketingController.watchTicket);
 router.delete('/tickets/:id/watch', ticketingController.unwatchTicket);
+
+// Escalation — copy a client (b2b_ticket) ticket into the ADMINISTRATOR store.
+router.post('/tickets/:id/escalate', staff, ticketingController.escalateTicket);
 
 // Management surfaces — ORG_ADMIN / ADMINISTRATOR.
 router.patch('/tickets/:id', staff, ticketingController.updateTicket);

@@ -126,6 +126,7 @@ export const ticketingApi = {
   getTicket: (id: string) => api.get(`/ticketing/tickets/${id}`),
   createTicket: (data: unknown) => api.post('/ticketing/tickets', data),
   updateTicket: (id: string, data: unknown) => api.patch(`/ticketing/tickets/${id}`, data),
+  escalate: (id: string) => api.post(`/ticketing/tickets/${id}/escalate`),
   getStats: () => api.get('/ticketing/stats'),
   getAnalytics: () => api.get('/ticketing/analytics'),
   listProjects: () => api.get('/ticketing/projects'),

@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, Area, XAxis, YAxis } from 'recharts';
 import { ticketingApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import GlowButton from '@/components/ui/GlowButton';
@@ -17,8 +17,8 @@ import {
 import TicketDetail from './TicketDetail';
 import type { TicketDTO, TicketProject, TicketSla, TicketStats, TicketAnalytics, TicketReport, TicketStatus, TicketPriority } from '@/lib/schemas';
 
-const DONUT_COLORS = ['#4f46e5', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#64748b'];
 type Staff = { id: string; name: string; email: string; role: string };
+const STATUS_TONES: Record<string, string> = { todo: '#64748b', in_progress: '#06b6d4', client_pending: '#f59e0b', completed: '#10b981' };
 
 const TABS = ['overview', 'tickets', 'projects', 'slas', 'reports', 'new'] as const;
 type Tab = typeof TABS[number];
@@ -49,50 +49,93 @@ function OverviewTab() {
     queryKey: ['ticketing', 'analytics'], queryFn: () => ticketingApi.getAnalytics().then((r) => r.data as TicketAnalytics), staleTime: 30_000,
   });
   const t = stats?.tickets;
-  const dist = analytics?.issueDistribution ?? [];
-  const distTotal = dist.reduce((s, d) => s + d.count, 0) || 1;
+  const daily = analytics?.daily ?? [];
+  const createdTotal = daily.reduce((s, d) => s + d.created, 0);
+  const peak = Math.max(1, ...daily.map((d) => d.created));
   const byPriority = analytics?.byPriority ?? [];
   const maxPrio = Math.max(1, ...byPriority.map((p) => p.count));
 
+  const statusData = t ? ([
+    { key: 'todo', name: 'To Do', value: t.todo },
+    { key: 'in_progress', name: 'In Progress', value: t.inProgress },
+    { key: 'client_pending', name: 'Client Pending', value: t.clientPending },
+    { key: 'completed', name: 'Completed', value: t.completed },
+  ]).filter((d) => d.value > 0) : [];
+  const statusTotal = statusData.reduce((s, d) => s + d.value, 0) || 1;
+
+  const StatSkeleton = <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">{Array.from({ length: 6 }).map((_, i) => <ShimmerCard key={i} />)}</div>;
+
   return (
     <div className="space-y-6">
-      {sl ? (
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">{Array.from({ length: 6 }).map((_, i) => <ShimmerCard key={i} />)}</div>
-      ) : (
+      {sl ? StatSkeleton : (
         <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
           <StatTile label="Total" value={t?.total ?? 0} tone="bg-brand" sub={`${t?.today ?? 0} today`} />
-          <StatTile label="Open" value={t?.open ?? 0} tone="bg-amber-500" />
+          <StatTile label="Open" value={t?.open ?? 0} tone="bg-amber-500" sub="unresolved" />
           <StatTile label="In Progress" value={t?.inProgress ?? 0} tone="bg-cyan-500" />
           <StatTile label="Completed" value={t?.completed ?? 0} tone="bg-emerald-500" />
-          <StatTile label="High / Urgent" value={t?.highPriority ?? 0} tone="bg-red-500" />
+          <StatTile label="High / Urgent" value={t?.highPriority ?? 0} tone="bg-red-500" sub="needs attention" />
           <StatTile label="Completion" value={`${t?.completionRate ?? 0}%`} tone="bg-violet-500" />
         </div>
       )}
 
+      {/* Created trend — last 14 days */}
+      <div className="card p-5">
+        <div className="flex items-baseline justify-between mb-3">
+          <h3 className="text-base font-semibold text-slate-900">Created — last 14 days</h3>
+          <span className="text-xs text-slate-400">
+            <span className="font-mono font-bold text-slate-700 tabular-nums">{createdTotal}</span> new · peak <span className="font-mono font-semibold text-slate-600 tabular-nums">{peak}</span>/day
+          </span>
+        </div>
+        {al ? <div className="h-[200px]"><ShimmerCard /></div> : (
+          <div className="h-[200px] -ml-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={daily} margin={{ top: 8, right: 10, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="createdFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#2563EB" stopOpacity={0.22} />
+                    <stop offset="100%" stopColor="#2563EB" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="date" tickFormatter={(d: string) => d.slice(5)} tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} interval={1} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} width={26} />
+                <Tooltip formatter={(v: number) => [`${v} ticket${v === 1 ? '' : 's'}`, 'Created']} labelFormatter={(d: string) => d}
+                  contentStyle={{ borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12, boxShadow: '0 4px 12px -2px rgba(15,23,42,0.1)' }} />
+                <Area type="monotone" dataKey="created" stroke="#2563EB" strokeWidth={2} fill="url(#createdFill)" dot={false} activeDot={{ r: 4 }} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Status breakdown donut with total in the center */}
         <div className="card p-5">
-          <h3 className="text-base font-semibold text-slate-900 mb-2">Ticket types</h3>
-          {al ? <ShimmerCard /> : dist.length === 0 ? (
+          <h3 className="text-base font-semibold text-slate-900 mb-2">Status breakdown</h3>
+          {sl ? <ShimmerCard /> : statusData.length === 0 ? (
             <p className="py-12 text-center text-sm text-slate-500">No tickets to analyze yet.</p>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
-              <div className="h-[220px]">
+              <div className="relative h-[220px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
-                    <Pie data={dist} dataKey="count" nameKey="issue" innerRadius={58} outerRadius={88} paddingAngle={2} strokeWidth={0}>
-                      {dist.map((_, i) => <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />)}
+                    <Pie data={statusData} dataKey="value" nameKey="name" innerRadius={64} outerRadius={92} paddingAngle={2} strokeWidth={0}>
+                      {statusData.map((d) => <Cell key={d.key} fill={STATUS_TONES[d.key]} />)}
                     </Pie>
-                    <Tooltip formatter={(v: number, name: string) => [`${v} tickets`, name]} />
+                    <Tooltip formatter={(v: number, n: string) => [`${v} tickets`, n]} />
                   </PieChart>
                 </ResponsiveContainer>
+                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                  <span className="font-mono text-2xl font-bold text-slate-900 tabular-nums leading-none">{t?.total ?? 0}</span>
+                  <span className="text-[11px] text-slate-400 mt-1">total tickets</span>
+                </div>
               </div>
-              <div className="space-y-1.5">
-                {dist.map((d, i) => (
-                  <div key={d.issue} className="flex items-center gap-2 text-xs">
-                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: DONUT_COLORS[i % DONUT_COLORS.length] }} />
-                    <span className="flex-1 text-slate-700 truncate capitalize">{d.issue}</span>
-                    <span className="font-mono tabular-nums font-semibold text-slate-900">{d.count}</span>
-                    <span className="font-mono tabular-nums text-slate-400 w-12 text-right">({((d.count / distTotal) * 100).toFixed(0)}%)</span>
+              <div className="space-y-2">
+                {statusData.map((d) => (
+                  <div key={d.key} className="flex items-center gap-2 text-xs">
+                    <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: STATUS_TONES[d.key] }} />
+                    <span className="flex-1 text-slate-700 truncate">{d.name}</span>
+                    <span className="font-mono tabular-nums font-semibold text-slate-900">{d.value}</span>
+                    <span className="font-mono tabular-nums text-slate-400 w-12 text-right">({((d.value / statusTotal) * 100).toFixed(0)}%)</span>
                   </div>
                 ))}
               </div>
@@ -100,6 +143,7 @@ function OverviewTab() {
           )}
         </div>
 
+        {/* Priority distribution */}
         <div className="card p-5">
           <h3 className="text-base font-semibold text-slate-900 mb-4">Tickets by priority</h3>
           {al ? <ShimmerCard /> : byPriority.length === 0 ? (
@@ -113,7 +157,7 @@ function OverviewTab() {
                     <motion.div initial={{ width: 0 }} animate={{ width: `${(p.count / maxPrio) * 100}%` }} transition={{ duration: 0.5 }}
                       className={`h-full rounded-full ${priorityCls[p.priority]?.split(' ').find((c) => c.startsWith('bg-')) ?? 'bg-slate-400'}`} />
                   </div>
-                  <span className="w-8 text-right font-mono tabular-nums text-sm font-semibold text-slate-900">{p.count}</span>
+                  <span className="w-10 text-right font-mono tabular-nums text-sm font-semibold text-slate-900">{p.count}</span>
                 </div>
               ))}
             </div>
@@ -550,8 +594,13 @@ export default function AdminTicketing() {
 
   return (
     <div className="p-6 sm:p-8 max-w-[1300px] mx-auto space-y-6">
-      <PageHeader eyebrow="Ticketing · Control System" title="Ticketing Dashboard"
-        subtitle="Manage tickets, projects, and SLA policies — with ticket numbering, SLA timers, round-robin assignment, and an activity trail." icon={Icons.board({ className: 'w-6 h-6' })} />
+      {user?.role === 'ADMINISTRATOR' ? (
+        <PageHeader eyebrow="Platform · Administrators store" title="Platform Ticketing"
+          subtitle="The platform administrators' isolated ticket store (b2b_ticketing_admin) — escalations from client organizations plus tickets you create here. Separate from every client's tickets." icon={Icons.board({ className: 'w-6 h-6' })} />
+      ) : (
+        <PageHeader eyebrow="Ticketing · Control System" title="Ticketing Dashboard"
+          subtitle="Manage tickets, projects, and SLA policies — with ticket numbering, SLA timers, round-robin assignment, and an activity trail." icon={Icons.board({ className: 'w-6 h-6' })} />
+      )}
 
       <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.04 }}
         className="inline-flex items-center gap-1 p-1 rounded-xl bg-slate-100 ring-1 ring-slate-200/70 overflow-x-auto max-w-full">
