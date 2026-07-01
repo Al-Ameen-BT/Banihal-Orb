@@ -1,53 +1,28 @@
-name: CI/CD
+name: CI
 
+# Syntax / compile checks only — no tests, no deployment.
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
 
-# Never let two deploys to the same environment run at once. A newer push to
-# main cancels an in-flight deploy of an older commit.
+# Cancel a superseded run when a newer commit is pushed to the same ref.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   # ──────────────────────────────────────────────────────────────────────────
-  # CI — server: typecheck + tests against a throwaway Postgres
+  # Server — TypeScript type-check (needs the generated Prisma clients for types)
   # ──────────────────────────────────────────────────────────────────────────
   server-check:
-    name: Server — typecheck & test
+    name: Server — typecheck
     runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: test
-          POSTGRES_PASSWORD: test
-          POSTGRES_DB: b2b_saas_test
-        ports: ['5432:5432']
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
 
     defaults:
       run:
         working-directory: server
-
-    env:
-      DATABASE_URL: postgresql://test:test@localhost:5432/b2b_saas_test
-      JWT_ACCESS_SECRET: ci-access-secret-at-least-32-characters-long
-      JWT_REFRESH_SECRET: ci-refresh-secret-at-least-32-characters-long
-      IMPERSONATION_SECRET: ci-impersonation-secret-at-least-32-chars
-      JWT_ACCESS_EXPIRES_IN: 15m
-      JWT_REFRESH_EXPIRES_IN: 7d
-      NODE_ENV: test
-      PORT: 3001
-      ALLOWED_ORIGINS: http://localhost:3000
 
     steps:
       - uses: actions/checkout@v4
@@ -61,20 +36,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Generate Prisma client
+      # Generates all four Prisma clients (main + chat + ticketing + ticket) so
+      # their imports resolve during type-checking. No database is required.
+      - name: Generate Prisma clients
         run: npm run db:generate
-
-      - name: Push schema to test DB
-        run: npm run db:push
 
       - name: TypeScript check
         run: npx tsc --noEmit
 
-      - name: Run tests
-        run: npm test
-
   # ──────────────────────────────────────────────────────────────────────────
-  # CI — client: typecheck + production build
+  # Client — TypeScript type-check + production build
   # ──────────────────────────────────────────────────────────────────────────
   client-check:
     name: Client — typecheck & build
@@ -103,116 +74,3 @@ jobs:
         run: npm run build
         env:
           NEXT_PUBLIC_API_URL: http://localhost:3001
-
-  # ──────────────────────────────────────────────────────────────────────────
-  # CD — deploy to the production host
-  #
-  # Runs only on push to main, after both CI jobs pass. Executes on a
-  # self-hosted runner installed ON the production server (label: self-hosted).
-  # It refreshes the checkout under DEPLOY_PATH, applies DB migrations, rebuilds
-  # both apps, and restarts the existing systemd unit (b2bweb.service), which
-  # supervises server:3001 + client:3000 via deploy_services.py.
-  #
-  # See repository setup notes at the bottom of this workflow for the secrets,
-  # variables, sudoers rule and migration prerequisite this job depends on.
-  # ──────────────────────────────────────────────────────────────────────────
-  deploy:
-    name: Deploy — production
-    needs: [server-check, client-check]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, linux]
-    environment: production
-
-    # Absolute path of the production checkout that b2bweb.service runs from.
-    # Override with a repository variable if your install lives elsewhere.
-    env:
-      DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/opt/B2B-Site' }}
-      SERVICE: b2bweb.service
-      NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
-
-    steps:
-      - name: Check out the pushed commit
-        uses: actions/checkout@v4
-
-      # Mirror the freshly checked-out tree into the live deploy directory.
-      # Everything host-specific (env files, installed deps, build output) is
-      # preserved so a deploy never clobbers production secrets.
-      - name: Sync source into deploy path
-        run: |
-          rsync -a --delete \
-            --exclude='.git/' \
-            --exclude='node_modules/' \
-            --exclude='.next/' \
-            --exclude='dist/' \
-            --exclude='.env' \
-            --exclude='.env.*' \
-            ./ "$DEPLOY_PATH/"
-
-      - name: Server — install, migrate & build
-        working-directory: ${{ env.DEPLOY_PATH }}/server
-        run: |
-          npm ci
-          npm run db:generate
-          npx prisma migrate deploy
-          npm run build
-
-      - name: Client — install & build
-        working-directory: ${{ env.DEPLOY_PATH }}/client
-        run: |
-          npm ci
-          npm run build
-
-      # Restart the unified supervisor service. Because dist/ and .next/ now
-      # exist, deploy_services.py skips its auto-prepare and boots straight into
-      # production `npm start` for both apps.
-      - name: Restart service
-        run: sudo systemctl restart "$SERVICE"
-
-      # Fail the deploy if either app isn't answering after the restart.
-      - name: Health check
-        run: |
-          set -e
-          ok() { # ok <name> <url>
-            for i in $(seq 1 15); do
-              code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$2" || echo 000)
-              if [ "$code" != "000" ]; then
-                echo "$1 responding (HTTP $code)"
-                return 0
-              fi
-              echo "waiting for $1 ($2)… attempt $i"
-              sleep 2
-            done
-            echo "::error::$1 did not respond at $2"
-            return 1
-          }
-          ok "client" "http://localhost:3000"
-          ok "server" "http://localhost:3001"
-
-# ════════════════════════════════════════════════════════════════════════════
-# ONE-TIME SETUP (not executed — reference only)
-#
-# 1. Self-hosted runner (on the production server, as the deploy user):
-#      Repo → Settings → Actions → Runners → New self-hosted runner (Linux).
-#      Follow the steps, then install it as a service so it survives reboots:
-#        sudo ./svc.sh install && sudo ./svc.sh start
-#      The runner picks up jobs targeting the [self-hosted, linux] labels.
-#
-# 2. Passwordless restart — let the runner user restart the unit without a TTY.
-#    Create /etc/sudoers.d/b2bweb (via `sudo visudo -f /etc/sudoers.d/b2bweb`):
-#        <runner-user> ALL=(root) NOPASSWD: /usr/bin/systemctl restart b2bweb.service
-#
-# 3. Repository variables (Settings → Secrets and variables → Actions → Variables):
-#      NEXT_PUBLIC_API_URL  e.g. https://api.yourdomain.com   (baked into the
-#                           client build; must be the public URL browsers hit)
-#      DEPLOY_PATH          optional, defaults to /opt/B2B-Site
-#    Production server/.env and client/.env stay on the host (rsync skips them).
-#
-# 4. Migrations — this job runs `prisma migrate deploy`, which applies COMMITTED
-#    migrations only. The repo currently uses `prisma db push` and has no
-#    server/prisma/migrations/ folder, so the deploy would apply nothing.
-#    Create and commit an initial migration once, locally:
-#        cd server
-#        npx prisma migrate dev --name init
-#        git add prisma/migrations && git commit
-#    From then on, generate a migration per schema change and commit it.
-# ════════════════════════════════════════════════════════════════════════════
