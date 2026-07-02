@@ -260,6 +260,17 @@ export interface TicketComment {
   createdAt: string;
 }
 
+// Notification feed item: an update on a ticket the user reported.
+export interface TicketUpdateAlert {
+  id: string;
+  ticketId: string;
+  ticketNumber: string;
+  title: string;
+  type: string;
+  description: string | null;
+  createdAt: string;
+}
+
 export interface TicketActivity {
   id: string;
   type: string;

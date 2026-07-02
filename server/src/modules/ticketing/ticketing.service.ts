@@ -199,6 +199,24 @@ export async function getNewTickets(since: string, excludeUserId: string) {
   return tickets.filter((t) => t.reporter?.id !== excludeUserId).slice(0, 10);
 }
 
+// ─── Notifications ──────────────────────────────────────────────────────────
+export const getMyTicketUpdates = (actorId: string, since: string) => db.getMyTicketUpdates(actorId, since);
+export const getEscalationAlerts = (since: string, excludeUserId: string) => db.listEscalationAlerts(since, excludeUserId);
+
+// First-wins claim of an (escalated) admin-store ticket: atomically self-assign
+// while unassigned; if someone already claimed it, surface who.
+export async function claimTicket(claimerId: string, ticketId: string): Promise<TicketDTO> {
+  const existing = await db.getTicketCore(ticketId);
+  if (!existing) throw notFound('Ticket');
+  const won = await db.claimTicket(ticketId, claimerId);
+  if (!won) {
+    const t = await db.getTicketById(ticketId);
+    throw Object.assign(new Error(`Already claimed by ${t?.assignee?.name ?? 'another administrator'}.`), { status: 409, code: 'ALREADY_CLAIMED' });
+  }
+  await db.writeActivity({ type: 'assigned', ticketId, userId: claimerId, field: 'assigneeId', newValue: claimerId, description: 'Claimed the escalated ticket' });
+  return (await db.getTicketById(ticketId))!;
+}
+
 // ─── Collaboration: comments / attachments / watchers / history ─────────────────
 export const listComments = (ticketId: string) => db.listComments(ticketId);
 export const listActivities = (ticketId: string) => db.listActivities(ticketId);

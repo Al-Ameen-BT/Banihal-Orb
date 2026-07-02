@@ -6,6 +6,7 @@ import {
 import * as service from './ticketing.service';
 import * as db from './ticketing.client';
 import * as escalation from './services/escalation';
+import { listAdminAssignees } from './services/adminAssignees';
 import { resolveTicketActor } from './identity';
 
 // Bridge the B2B-Site user to a ticketing staff Users row (id + mapped role).
@@ -93,8 +94,13 @@ export async function deleteSla(req: Request, res: Response, next: NextFunction)
   try { await service.deleteSla(req.params['id']!); res.status(204).end(); } catch (err) { next(err); }
 }
 
-export async function listAssignees(_req: Request, res: Response, next: NextFunction): Promise<void> {
-  try { res.json({ assignees: await db.listStaff() }); } catch (err) { next(err); }
+export async function listAssignees(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    // Admin store's assignee pool is the platform administrators (bridged);
+    // the client store's pool is its own staff.
+    const assignees = req.user.role === 'ADMINISTRATOR' ? await listAdminAssignees() : await db.listStaff();
+    res.json({ assignees });
+  } catch (err) { next(err); }
 }
 
 export async function getStats(_req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -171,5 +177,32 @@ export async function unwatchTicket(req: Request, res: Response, next: NextFunct
 export async function escalateTicket(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     res.status(201).json(await escalation.escalateTicket(req.user.userId, req.user.role, req.params['id']!));
+  } catch (err) { next(err); }
+}
+
+// ─── Notifications ───────────────────────────────────────────────────────────
+// Every role: updates on the tickets they reported.
+export async function myUpdates(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const since = String(req.query['since'] ?? new Date().toISOString());
+    const me = await actor(req);
+    res.json({ updates: await service.getMyTicketUpdates(me.id, since), now: new Date().toISOString() });
+  } catch (err) { next(err); }
+}
+
+// ADMINISTRATOR: new escalated tickets in the admin store (notify-all source).
+export async function escalationAlerts(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const since = String(req.query['since'] ?? new Date().toISOString());
+    const me = await actor(req);
+    res.json({ tickets: await service.getEscalationAlerts(since, me.id), now: new Date().toISOString() });
+  } catch (err) { next(err); }
+}
+
+// ADMINISTRATOR: first-wins claim of an escalated ticket → self-assign.
+export async function claimTicket(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const me = await actor(req);
+    res.json(await service.claimTicket(me.id, req.params['id']!));
   } catch (err) { next(err); }
 }

@@ -3,8 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import TicketAlerts from './TicketAlerts';
-import EscalationAlerts from './EscalationAlerts';
+import { UserNotifications, OrgNotifications, AdminNotifications } from './NotificationBell';
 
 const icons = {
   ticketing: 'M16.5 3.75V16.5L12 14.25 7.5 16.5V3.75m9 0H18A2.25 2.25 0 0120.25 6v12A2.25 2.25 0 0118 20.25H6A2.25 2.25 0 013.75 18V6A2.25 2.25 0 016 3.75h1.5m9 0h-9',
@@ -119,16 +118,9 @@ export default function Sidebar() {
               {roleCfg.label}
             </span>
           )}
-          {/* Org admins: new-ticket alerts. Administrators: escalation alerts. */}
-          {isSaas ? (
-            <EscalationAlerts />
-          ) : isAdmin ? (
-            <TicketAlerts />
-          ) : (
-            <span className="flex items-center gap-1 text-[10px] text-slate-400">
-              <kbd className="kbd">⌘</kbd><kbd className="kbd">K</kbd>
-            </span>
-          )}
+          {/* Notifications: administrators → escalations (+claim); org admins → new
+              tickets; users → updates on their own tickets. */}
+          {isSaas ? <AdminNotifications /> : isAdmin ? <OrgNotifications /> : <UserNotifications />}
         </div>
 
         {/* Sign out */}

@@ -27,7 +27,7 @@ function buildPrisma() {
           // Models without customerId (global tables or tables without customerId relation).
           // Announcement is global because customerId:null means "all orgs" — auto-injecting
           // the tenant filter would hide those rows; the service scopes visibility manually.
-          const globalModels = ['FeatureFlag', 'Customer', 'RefreshToken', 'Announcement'];
+          const globalModels = ['FeatureFlag', 'Customer', 'RefreshToken', 'Announcement', 'TicketNumberSetting'];
 
           if (store?.customerId && scopedOps.includes(operation) && !globalModels.includes(model)) {
             const existingWhere = (args['where'] as Record<string, unknown>) ?? {};

@@ -6,6 +6,7 @@ import { upload } from './uploads';
 
 const router = Router();
 const staff = requireRole('ORG_ADMIN', 'ADMINISTRATOR'); // management surfaces
+const onlyAdministrator = requireRole('ADMINISTRATOR');   // platform admin store
 
 // Scope every ticketing request to a store by the caller's platform role:
 // ADMINISTRATOR → the isolated admin store (b2b_ticketing_admin); everyone else →
@@ -32,8 +33,15 @@ router.get('/tickets/:id/watchers', ticketingController.getWatchers);
 router.post('/tickets/:id/watch', ticketingController.watchTicket);
 router.delete('/tickets/:id/watch', ticketingController.unwatchTicket);
 
+// Notifications — updates on your own tickets (any authenticated role).
+router.get('/my-updates', ticketingController.myUpdates);
+
 // Escalation — copy a client (b2b_ticket) ticket into the ADMINISTRATOR store.
 router.post('/tickets/:id/escalate', staff, ticketingController.escalateTicket);
+
+// ADMINISTRATOR escalation notifications + first-wins claim (admin store).
+router.get('/admin/escalation-alerts', onlyAdministrator, ticketingController.escalationAlerts);
+router.post('/admin/tickets/:id/claim', onlyAdministrator, ticketingController.claimTicket);
 
 // Management surfaces — ORG_ADMIN / ADMINISTRATOR.
 router.patch('/tickets/:id', staff, ticketingController.updateTicket);

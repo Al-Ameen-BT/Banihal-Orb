@@ -132,6 +132,26 @@ export function updateTicketRow(id: string, data: Parameters<typeof ticketPrisma
   return getTicketDb().tickets.update({ where: { id }, data, select: { id: true } });
 }
 
+// Atomic claim (first-wins): assign only while still unassigned. A single guarded
+// UPDATE means two concurrent claims can never double-assign — exactly one wins.
+export async function claimTicket(id: string, assigneeId: string): Promise<boolean> {
+  const res = await getTicketDb().tickets.updateMany({ where: { id, assigneeId: null }, data: { assigneeId } });
+  return res.count === 1;
+}
+
+// New escalated tickets in the current store since `since` (admin notification
+// source). Escalated snapshots carry the 'escalated' label. Excludes the viewer's own.
+export async function listEscalationAlerts(since: string, excludeUserId: string): Promise<TicketDTO[]> {
+  const rows = await getTicketDb().tickets.findMany({
+    where: { createdAt: { gt: new Date(since) }, labels: { has: 'escalated' } },
+    include: ticketInclude, orderBy: { createdAt: 'desc' }, take: 25,
+  });
+  const refs = await resolveTicketRefs(rows);
+  return rows
+    .map((r) => toTicketDTO(r, refs.projects.get(r.projectId) ?? null, person(refs.reporters.get(r.reporterId) ?? null)))
+    .filter((t) => t.reporter?.id !== excludeUserId);
+}
+
 // First active SLA whose priority matches the ticket priority (report §7.2 step 3).
 export async function findActiveSlaIdByPriority(priority: TicketPriority): Promise<string | null> {
   const sla = await getTicketDb().sLAs.findFirst({
@@ -322,6 +342,28 @@ export async function listActivities(ticketId: string): Promise<ActivityDTO[]> {
     id: a.id, type: a.type as string, field: a.field, oldValue: a.oldValue, newValue: a.newValue,
     description: a.description, user: person(a.Users), createdAt: a.createdAt.toISOString(),
   }));
+}
+
+// Updates on tickets the user reported (their notification feed) — status changes,
+// (re)assignment, and new comments since `since`, excluding the user's own actions.
+export interface TicketUpdateDTO { id: string; ticketId: string; ticketNumber: string; title: string; type: string; description: string | null; createdAt: string; }
+export async function getMyTicketUpdates(actorId: string, since: string): Promise<TicketUpdateDTO[]> {
+  const mine = await getTicketDb().tickets.findMany({ where: { reporterId: actorId }, select: { id: true, ticketNumber: true, title: true } });
+  if (mine.length === 0) return [];
+  const byId = new Map(mine.map((t) => [t.id, t] as const));
+  const acts = await getTicketDb().activities.findMany({
+    where: {
+      ticketId: { in: [...byId.keys()] },
+      createdAt: { gt: new Date(since) },
+      userId: { not: actorId },
+      type: { in: ['status_changed', 'assigned', 'commented'] },
+    },
+    orderBy: { createdAt: 'desc' }, take: 25,
+  });
+  return acts.map((a) => {
+    const t = byId.get(a.ticketId)!;
+    return { id: a.id, ticketId: a.ticketId, ticketNumber: t.ticketNumber, title: t.title, type: a.type as string, description: a.description, createdAt: a.createdAt.toISOString() };
+  });
 }
 
 // ─── Stats source ────────────────────────────────────────────────────────────
