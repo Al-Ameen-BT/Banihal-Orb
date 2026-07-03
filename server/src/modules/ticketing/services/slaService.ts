@@ -44,24 +44,34 @@ export interface SlaEvaluation {
   deadline: string | null; // ISO; createdAt + budget + paused, approximate live ETA
 }
 
-// Drives the SLA timer UI: paused / breached / critical (≤10% left) / warning (≤25%) / normal.
-export function evaluateSla(t: TicketTimeFields, sla: SlaLike | null, now = new Date()): SlaEvaluation {
-  if (!sla) return { status: 'none', budgetSeconds: null, remainingSeconds: null, deadline: null };
+// Core clock evaluation against an arbitrary budget (seconds). Shared by both the
+// resolution and response evaluators so their bar/pill behaviour stays identical.
+function evaluateAgainstBudget(t: TicketTimeFields, budget: number | null, now: Date): SlaEvaluation {
+  if (budget == null) return { status: 'none', budgetSeconds: null, remainingSeconds: null, deadline: null };
   if (t.status === RESOLVED_STATUS) {
-    const budget = convertToSeconds(sla.resolutionTime, sla.timeUnit);
+    // Completed → the clock is stopped; expose the budget but no live remaining/deadline.
     return { status: 'normal', budgetSeconds: budget, remainingSeconds: null, deadline: null };
   }
-
-  const budget = convertToSeconds(sla.resolutionTime, sla.timeUnit);
   const elapsed = effectiveElapsedSeconds(t, now);
   const remaining = budget - elapsed;
   const deadline = new Date(now.getTime() + remaining * 1000).toISOString();
-
   if (t.status === PAUSED_STATUS) return { status: 'paused', budgetSeconds: budget, remainingSeconds: remaining, deadline };
   if (remaining <= 0) return { status: 'breached', budgetSeconds: budget, remainingSeconds: remaining, deadline };
   const ratio = remaining / budget;
   const status: SlaStatus = ratio <= 0.1 ? 'critical' : ratio <= 0.25 ? 'warning' : 'normal';
   return { status, budgetSeconds: budget, remainingSeconds: remaining, deadline };
+}
+
+// Drives the SLA timer UI: paused / breached / critical (≤10% left) / warning (≤25%) / normal.
+export function evaluateSla(t: TicketTimeFields, sla: SlaLike | null, now = new Date()): SlaEvaluation {
+  return evaluateAgainstBudget(t, sla ? convertToSeconds(sla.resolutionTime, sla.timeUnit) : null, now);
+}
+
+// Response SLA — APPROXIMATION: there is no true "first response" timestamp in the
+// 14-table schema, so we run the same effective-elapsed clock against the response
+// budget. `completed`/`client_pending` render as stopped, exactly like the resolution bar.
+export function evaluateResponseSla(t: TicketTimeFields, sla: { responseTime: number; timeUnit: TimeUnit } | null, now = new Date()): SlaEvaluation {
+  return evaluateAgainstBudget(t, sla ? convertToSeconds(sla.responseTime, sla.timeUnit) : null, now);
 }
 
 // Pause bookkeeping on a status transition. Returns the fields to persist (if any).

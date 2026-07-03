@@ -22,6 +22,7 @@ export async function listTickets(req: Request, res: Response, next: NextFunctio
       ...(input.type ? { type: input.type } : {}),
       ...(input.projectId ? { projectId: input.projectId } : {}),
       ...(input.assigneeId ? { assigneeId: input.assigneeId } : {}),
+      ...(input.escalatedOnly ? { escalatedOnly: true } : {}),
       ...(input.search ? { search: input.search } : {}),
       ...(me ? { mineUserId: me.id } : {}),
     });

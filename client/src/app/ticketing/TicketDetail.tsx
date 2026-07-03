@@ -127,6 +127,12 @@ export default function TicketDetail({ ticketId, onClose }: { ticketId: string; 
   const isWatching = !!user && watchers.some((w) => w.email && w.email.toLowerCase() === user.email.toLowerCase());
   const invalidate = () => qc.invalidateQueries({ queryKey: ['ticketing'] });
 
+  // Escalation (ORG_ADMIN only): route the ticket to the ADMINISTRATOR group — the
+  // org-admin selects the assignee as "Administrator" (no individual names), then
+  // escalates. Only offered on UNCLOSED, not-yet-escalated tickets.
+  const isOrgAdmin = user?.role === 'ORG_ADMIN';
+  const [escalateTo, setEscalateTo] = useState('');
+
   const commentMut = useMutation({
     mutationFn: () => {
       const form = new FormData();
@@ -144,11 +150,12 @@ export default function TicketDetail({ ticketId, onClose }: { ticketId: string; 
     mutationFn: () => (isWatching ? ticketingApi.unwatch(ticketId) : ticketingApi.watch(ticketId)),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['ticketing', 'watchers', ticketId] }),
   });
-  // Escalation is an ORG_ADMIN action on a client (b2b_ticket) ticket — it copies
-  // the ticket into the platform administrators' store (b2b_ticketing_admin).
+  // Escalation is an ORG_ADMIN action on a client (b2b_ticket) ticket — it copies the
+  // ticket into the platform administrators' store (b2b_ticketing_admin), pre-assigned
+  // to the chosen administrator.
   const escalateMut = useMutation({
     mutationFn: () => ticketingApi.escalate(ticketId),
-    onSuccess: () => void invalidate(),
+    onSuccess: () => { setEscalateTo(''); void invalidate(); },
     onError: (e: unknown) => alert((e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Could not escalate the ticket.'),
   });
 
@@ -229,19 +236,29 @@ export default function TicketDetail({ ticketId, onClose }: { ticketId: string; 
 
             {/* Sidebar */}
             <div className="p-6 space-y-5 bg-slate-50/40">
-              {user?.role === 'ORG_ADMIN' && (
+              {isOrgAdmin && (
                 ticket.labels.includes('escalated') ? (
                   <div className="rounded-xl bg-amber-50 ring-1 ring-amber-200/70 px-3.5 py-2.5 flex items-center gap-2 text-xs font-semibold text-amber-700">
                     <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
                     </svg>
-                    Escalated to platform administrators
+                    Escalated to a platform administrator
                   </div>
-                ) : (
-                  <GlowButton variant="secondary" className="w-full py-2 text-xs" loading={escalateMut.isPending} disabled={escalateMut.isPending}
-                    onClick={() => { if (confirm('Escalate this ticket to the platform administrators?')) escalateMut.mutate(); }}>
-                    Escalate to platform
-                  </GlowButton>
+                ) : ticket.status === 'completed' ? null : (
+                  <div className="rounded-xl bg-white ring-1 ring-slate-200/70 p-3.5 space-y-2">
+                    <p className="eyebrow">Escalate</p>
+                    <label className="block">
+                      <span className="block text-[11px] font-medium text-slate-500 mb-1">Assignee</span>
+                      <select value={escalateTo} onChange={(e) => setEscalateTo(e.target.value)} className="input !py-1.5 text-xs">
+                        <option value="">Select assignee…</option>
+                        <option value="ADMINISTRATOR">Administrator</option>
+                      </select>
+                    </label>
+                    <GlowButton variant="secondary" className="w-full py-2 text-xs" loading={escalateMut.isPending} disabled={escalateTo !== 'ADMINISTRATOR' || escalateMut.isPending}
+                      onClick={() => { if (escalateTo === 'ADMINISTRATOR' && confirm('Escalate this ticket to the platform administrators?')) escalateMut.mutate(); }}>
+                      Escalate to administrators
+                    </GlowButton>
+                  </div>
                 )
               )}
               {isStaff && <QuickEdit ticket={ticket} />}

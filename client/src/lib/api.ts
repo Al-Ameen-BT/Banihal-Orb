@@ -119,6 +119,31 @@ export const announcementsApi = {
   list: () => api.get('/announcements'),
 };
 
+// Slack bots — ADMINISTRATOR registry (manage bots, forms, org assignment, live status).
+export const slackBotsApi = {
+  list: () => api.get('/slack-bots'),
+  get: (id: string) => api.get(`/slack-bots/${id}`),
+  create: (data: unknown) => api.post('/slack-bots', data),
+  update: (id: string, data: unknown) => api.patch(`/slack-bots/${id}`, data),
+  remove: (id: string) => api.delete(`/slack-bots/${id}`),
+  connect: (id: string) => api.post(`/slack-bots/${id}/connect`),
+  disconnect: (id: string) => api.post(`/slack-bots/${id}/disconnect`),
+  customers: () => api.get('/slack-bots/customers'),
+  // form fields
+  addField: (id: string, data: unknown) => api.post(`/slack-bots/${id}/fields`, data),
+  updateField: (id: string, fieldId: string, data: unknown) => api.patch(`/slack-bots/${id}/fields/${fieldId}`, data),
+  deleteField: (id: string, fieldId: string) => api.delete(`/slack-bots/${id}/fields/${fieldId}`),
+  // org assignment
+  assignOrg: (id: string, customerId: string) => api.post(`/slack-bots/${id}/orgs`, { customerId }),
+  unassignOrg: (id: string, customerId: string) => api.delete(`/slack-bots/${id}/orgs/${customerId}`),
+};
+
+// Slack bots — ORG-facing (this org's assigned bots + create a bot-assigned ticket).
+export const botsApi = {
+  list: () => api.get('/bots'),
+  createTicket: (id: string, data: unknown) => api.post(`/bots/${id}/tickets`, data),
+};
+
 // In-app Ticketing Tool — proxied through our server to the external ticketing
 // system (fallback data served until the external API is configured).
 export const ticketingApi = {

@@ -4,16 +4,16 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
-import { saasAdminApi } from '@/lib/api';
+import { saasAdminApi, ticketingApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import RoleGuard from '@/components/guards/RoleGuard';
 import Sidebar from '@/components/ui/Sidebar';
 import KpiCard from '@/components/ui/KpiCard';
 import GlowButton from '@/components/ui/GlowButton';
 import { ShimmerCard, ShimmerRow } from '@/components/ui/Shimmer';
+import { StatusBadge as TicketStatusBadge, PriorityBadge as TicketPriorityBadge } from '@/app/ticketing/shared';
 import type {
-  SlaBreachReport, SlaTicket, ChatAnalytics, Announcement, AnnouncementLevel,
-  TicketEscalation, EscalationStatus,
+  SlaBreachReport, SlaTicket, ChatAnalytics, Announcement, AnnouncementLevel, TicketDTO,
 } from '@/lib/schemas';
 
 // ─── Local response types (saas-admin endpoints) ─────────────────────────────
@@ -93,6 +93,21 @@ function daysUntil(iso: string): number {
   return Math.ceil((new Date(iso).getTime() - Date.now()) / 86400_000);
 }
 
+// Numbered structural group header — gives the dashboard a scannable order:
+// ① Overview → ② Operations → ③ Accounts & Services → ④ Engagement → ⑤ Communication & Governance.
+function GroupHeader({ index, title, caption }: { index: number; title: string; caption: string }) {
+  return (
+    <div className="flex items-center gap-3 pt-2">
+      <span className="w-6 h-6 rounded-lg bg-slate-900 text-white text-[11px] font-bold flex items-center justify-center flex-shrink-0">{index}</span>
+      <div className="min-w-0">
+        <p className="text-[13px] font-bold uppercase tracking-[0.08em] text-slate-900 leading-none">{title}</p>
+        <p className="text-[11px] text-slate-400 mt-1">{caption}</p>
+      </div>
+      <span className="flex-1 h-px bg-slate-200" />
+    </div>
+  );
+}
+
 function SectionHeader({ title, hint, right }: { title: string; hint?: string; right?: React.ReactNode }) {
   return (
     <div className="flex items-baseline justify-between mb-4 flex-wrap gap-2">
@@ -138,110 +153,85 @@ function SlaRow({ t, breached }: { t: SlaTicket; breached: boolean }) {
   );
 }
 
-// ─── Escalated tickets (forwarded by org admins), grouped by organization ────
-const escStatusCfg: Record<EscalationStatus, { cls: string; label: string }> = {
-  OPEN:         { cls: 'text-rose-700 bg-rose-50',       label: 'Open' },
-  ACKNOWLEDGED: { cls: 'text-cyan-700 bg-cyan-50',       label: 'Acknowledged' },
-  RESOLVED:     { cls: 'text-emerald-700 bg-emerald-50', label: 'Resolved' },
-};
+// ─── Escalated tickets — REAL source: the administrators' ticket store ────────
+// Escalations are copied into b2b_ticketing_admin with the `escalated` label; an
+// ADMINISTRATOR's /ticketing requests are scoped to that store, so listTickets
+// with escalatedOnly returns them. Grouped per organization; actioning happens
+// in Platform Ticketing (no status mutations here).
+type EscFilter = 'open' | 'completed' | 'all';
 
 function EscalationsSection() {
-  const qc = useQueryClient();
-  const [filter, setFilter] = useState<EscalationStatus | 'ALL'>('OPEN');
+  const [filter, setFilter] = useState<EscFilter>('open');
 
-  const { data, isLoading } = useQuery<{ escalations: TicketEscalation[]; total: number }>({
-    queryKey: ['admin-escalations', filter],
-    queryFn: () => saasAdminApi.listEscalations(filter === 'ALL' ? {} : { status: filter })
-      .then((r) => r.data as { escalations: TicketEscalation[]; total: number }),
-    staleTime: 10_000,
+  const { data, isLoading } = useQuery<{ tickets: TicketDTO[] }>({
+    queryKey: ['admin-escalated-tickets'],
+    queryFn: () => ticketingApi.listTickets({ escalatedOnly: true }).then((r) => r.data as { tickets: TicketDTO[] }),
+    staleTime: 15_000,
+    refetchInterval: 30_000,
   });
 
-  const updateMut = useMutation({
-    mutationFn: ({ id, status }: { id: string; status: EscalationStatus }) => saasAdminApi.updateEscalation(id, { status }),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['admin-escalations'] }); },
-  });
+  const tickets = (data?.tickets ?? []).filter((t) =>
+    filter === 'all' ? true : filter === 'completed' ? t.status === 'completed' : t.status !== 'completed');
 
-  const escalations = data?.escalations ?? [];
-
-  // Categorized by organization, most recent escalation first within each group.
+  // Categorized by originating organization, most recent first within each group.
   const byOrg = useMemo(() => {
-    const groups = new Map<string, { name: string; items: TicketEscalation[] }>();
-    for (const e of escalations ?? []) {
-      const key = e.customer?.id ?? 'unknown';
-      const g = groups.get(key) ?? { name: e.customer?.name ?? 'Unknown organization', items: [] };
-      g.items.push(e);
-      groups.set(key, g);
-    }
-    return [...groups.values()].sort((a, b) =>
-      (b.items[0]?.createdAt ?? '').localeCompare(a.items[0]?.createdAt ?? ''));
-  }, [escalations]);
+    const orgOf = (t: TicketDTO) => t.customer?.name ?? t.labels.find((l) => l.startsWith('org:'))?.slice(4) ?? 'Unknown organization';
+    const groups = new Map<string, TicketDTO[]>();
+    for (const t of tickets) { const k = orgOf(t); (groups.get(k) ?? groups.set(k, []).get(k)!).push(t); }
+    return [...groups.entries()].sort((a, b) => (b[1][0]?.createdAt ?? '').localeCompare(a[1][0]?.createdAt ?? ''));
+  }, [tickets]);
 
   return (
     <div>
       <SectionHeader
         title="Escalated Tickets"
-        hint="Forwarded to the platform by org admins — categorized by organization"
+        hint="Escalated to the platform by org admins — categorized by organization"
         right={
           <div className="flex items-center gap-1">
-            {(['OPEN', 'ACKNOWLEDGED', 'RESOLVED', 'ALL'] as const).map((s) => (
+            {(['open', 'completed', 'all'] as const).map((s) => (
               <button key={s} type="button" onClick={() => setFilter(s)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold capitalize transition-colors cursor-pointer
                   ${filter === s ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}>
-                {s === 'ALL' ? 'All' : escStatusCfg[s].label}
+                {s}
               </button>
             ))}
+            <Link href="/ticketing?tab=tickets" className="ml-2 text-xs font-semibold text-brand hover:text-brand-700 transition-colors">
+              Platform Ticketing →
+            </Link>
           </div>
         }
       />
 
       {isLoading ? (
         <ShimmerCard />
-      ) : escalations.length === 0 ? (
+      ) : tickets.length === 0 ? (
         <div className="card p-8 text-center text-sm text-slate-500">
-          {filter === 'OPEN' ? 'No open escalations — nothing needs your attention.' : 'No escalations match this filter.'}
+          {filter === 'open' ? 'No open escalations — nothing needs your attention.' : 'No escalations match this filter.'}
         </div>
       ) : (
         <div className="space-y-4">
-          {byOrg.map((group) => (
-            <div key={group.name} className="card overflow-hidden">
+          {byOrg.map(([org, items]) => (
+            <div key={org} className="card overflow-hidden">
               <div className="px-5 py-2.5 bg-slate-50 border-b border-slate-200 flex items-baseline justify-between">
-                <p className="text-sm font-semibold text-slate-900">{group.name}</p>
-                <span className="text-[11px] text-slate-400 tabular-nums">{group.items.length} escalation{group.items.length === 1 ? '' : 's'}</span>
+                <p className="text-sm font-semibold text-slate-900">{org}</p>
+                <span className="text-[11px] text-slate-400 tabular-nums">{items.length} escalation{items.length === 1 ? '' : 's'}</span>
               </div>
               <div className="divide-y divide-slate-100">
-                {group.items.map((e) => (
-                  <div key={e.id} className="px-5 py-3.5 flex items-start gap-3">
-                    <span className={`inline-flex px-2 py-0.5 rounded-md text-[11px] font-semibold flex-shrink-0 mt-0.5 ${priorityCls[e.priority]}`}>
-                      {e.priority}
-                    </span>
+                {items.map((t) => (
+                  <Link key={t.id} href="/ticketing?tab=tickets" className="px-5 py-3.5 flex items-start gap-3 hover:bg-slate-50 transition-colors group block">
+                    <span className="font-mono text-[11px] font-bold text-slate-400 flex-shrink-0 mt-1">{t.ticketNumber}</span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-slate-900">{e.subject}</p>
+                      <p className="text-sm font-semibold text-slate-900 group-hover:text-brand transition-colors truncate">{t.title}</p>
                       <p className="text-[11px] text-slate-400 mt-0.5">
-                        {e.issueType} · escalated by {e.escalatedBy?.name ?? 'Unknown'} · {timeAgo(e.createdAt)}
-                        <span className="font-mono ml-1.5 text-slate-300">{e.ticketId.toUpperCase()}</span>
+                        {t.labels.find((l) => l.startsWith('src:'))?.replace('src:', 'from ') ?? 'escalated'} · {timeAgo(t.createdAt)}
+                        {t.assignee ? ` · ${t.assignee.name}` : ' · unassigned'}
                       </p>
-                      {e.note && (
-                        <p className="text-xs text-slate-600 mt-1.5 italic border-l-2 border-slate-200 pl-2">&quot;{e.note}&quot;</p>
-                      )}
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
-                      <span className={`inline-flex px-2 py-0.5 rounded-md text-[11px] font-semibold ${escStatusCfg[e.status].cls}`}>
-                        {escStatusCfg[e.status].label}
-                      </span>
-                      {e.status === 'OPEN' && (
-                        <GlowButton variant="secondary" className="py-1 px-2.5 text-xs"
-                          onClick={() => updateMut.mutate({ id: e.id, status: 'ACKNOWLEDGED' })} disabled={updateMut.isPending}>
-                          Acknowledge
-                        </GlowButton>
-                      )}
-                      {e.status !== 'RESOLVED' && (
-                        <GlowButton variant="ghost" className="py-1 px-2.5 text-xs"
-                          onClick={() => updateMut.mutate({ id: e.id, status: 'RESOLVED' })} disabled={updateMut.isPending}>
-                          Resolve
-                        </GlowButton>
-                      )}
+                      <TicketPriorityBadge priority={t.priority} />
+                      <TicketStatusBadge status={t.status} />
                     </div>
-                  </div>
+                  </Link>
                 ))}
               </div>
             </div>
@@ -260,6 +250,7 @@ function AnnouncementsManager({ orgs }: { orgs: OrgOverview[] }) {
   const [level, setLevel] = useState<AnnouncementLevel>('INFO');
   const [target, setTarget] = useState('');     // '' = all orgs
   const [expiresAt, setExpiresAt] = useState('');
+  const [published, setPublished] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery<{ announcements: Announcement[] }>({
     queryKey: ['admin-announcements'],
@@ -270,7 +261,15 @@ function AnnouncementsManager({ orgs }: { orgs: OrgOverview[] }) {
   const invalidate = () => qc.invalidateQueries({ queryKey: ['admin-announcements'] });
   const createMut = useMutation({
     mutationFn: (payload: unknown) => saasAdminApi.createAnnouncement(payload),
-    onSuccess: () => { setTitle(''); setMessage(''); setLevel('INFO'); setTarget(''); setExpiresAt(''); void invalidate(); },
+    onSuccess: () => {
+      const audience = target ? (orgs.find((o) => o.id === target)?.name ?? 'the selected organization') : 'all organizations';
+      setPublished(`Broadcast published — delivered to ${audience}.`);
+      setTitle(''); setMessage(''); setLevel('INFO'); setTarget(''); setExpiresAt('');
+      void invalidate();
+      // Refresh the org-facing banner feed too (in case the admin also views a dashboard).
+      void qc.invalidateQueries({ queryKey: ['announcements'] });
+      setTimeout(() => setPublished(null), 6000);
+    },
   });
   const toggleMut = useMutation({
     mutationFn: ({ id, active }: { id: string; active: boolean }) => saasAdminApi.updateAnnouncement(id, { active }),
@@ -331,6 +330,12 @@ function AnnouncementsManager({ orgs }: { orgs: OrgOverview[] }) {
           disabled={!isValid || createMut.isPending} loading={createMut.isPending}>
           {createMut.isPending ? 'Publishing…' : 'Publish Announcement'}
         </GlowButton>
+        {published && (
+          <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 flex items-center gap-1.5">
+            <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
+            {published}
+          </p>
+        )}
         {createMut.isError && <p className="text-xs text-red-600">Could not publish. Check the fields and try again.</p>}
       </div>
 
@@ -577,7 +582,7 @@ export default function AdminPlatformDashboard() {
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">
-          <div className="p-8 max-w-[1400px] mx-auto space-y-8">
+          <div className="p-8 max-w-[1400px] mx-auto space-y-10">
 
             {/* Header */}
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.22 }} className="flex items-start justify-between gap-4 flex-wrap">
@@ -594,8 +599,9 @@ export default function AdminPlatformDashboard() {
               </Link>
             </motion.div>
 
-            {/* KPI strip */}
-            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.03 }}>
+            {/* ① Overview */}
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.03 }} className="space-y-6">
+              <GroupHeader index={1} title="Overview" caption="Platform health at a glance" />
               {metricsLoading ? (
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">{Array.from({ length: 4 }).map((_, i) => <ShimmerCard key={i} />)}</div>
               ) : (
@@ -610,8 +616,10 @@ export default function AdminPlatformDashboard() {
               )}
             </motion.div>
 
-            {/* SLA breach monitor */}
-            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.06 }}>
+            {/* ② Operations — SLA monitor + escalations */}
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.06 }} className="space-y-6">
+              <GroupHeader index={2} title="Operations" caption="Tickets needing platform attention — SLA breaches and org escalations" />
+              <div>
               <SectionHeader
                 title="SLA Breach Monitor"
                 hint="Open tickets past their response SLA — Critical 1h · High 4h · Medium 1d · Low 3d"
@@ -651,16 +659,42 @@ export default function AdminPlatformDashboard() {
                   </div>
                 )}
               </div>
-            </motion.div>
+              </div>
 
-            {/* Escalated tickets (forwarded by org admins) */}
-            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.08 }}>
               <EscalationsSection />
             </motion.div>
 
-            {/* Watchtower + At-risk orgs */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.09 }}>
+            {/* ③ Accounts & Services — at-risk orgs + expiring services */}
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.09 }} className="space-y-6">
+              <GroupHeader index={3} title="Accounts & Services" caption="Account risk and service expiry across client organizations" />
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+              <div>
+                <SectionHeader title="At-Risk Accounts" hint="Low health, critical tickets, or lapsing services — for CSM follow-up" />
+                <div className="space-y-2.5">
+                  {atRisk.length === 0 ? (
+                    <div className="card p-8 text-center text-sm text-slate-500">No accounts flagged. All organizations look healthy.</div>
+                  ) : (
+                    atRisk.map((o) => (
+                      <Link key={o.id} href={`/saas-admin/orgs/${o.id}`} className="card p-4 flex items-center gap-4 hover:shadow-card-hover hover:border-slate-300 transition-all group block">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-slate-900 group-hover:text-brand transition-colors truncate">{o.name}</p>
+                          <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                            {o.reasons.map((r) => (
+                              <span key={r} className="text-[10px] font-semibold text-red-700 bg-red-50 px-1.5 py-0.5 rounded">{r}</span>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="text-right flex-shrink-0">
+                          <p className="font-mono text-lg font-bold tabular-nums text-slate-900 leading-none">{o.healthScore}</p>
+                          <p className="text-[10px] text-slate-400 mt-1">health</p>
+                        </div>
+                      </Link>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div>
                 <SectionHeader
                   title="Service Expiry Watchtower"
                   hint={`${metrics?.servicesExpiring ?? 0} expiring in 30 days · ${metrics?.servicesExpired ?? 0} already expired`}
@@ -692,37 +726,14 @@ export default function AdminPlatformDashboard() {
                     })
                   )}
                 </div>
-              </motion.div>
+              </div>
+              </div>
+            </motion.div>
 
-              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.12 }}>
-                <SectionHeader title="At-Risk Accounts" hint="Low health, critical tickets, or lapsing services — for CSM follow-up" />
-                <div className="space-y-2.5">
-                  {atRisk.length === 0 ? (
-                    <div className="card p-8 text-center text-sm text-slate-500">No accounts flagged. All organizations look healthy.</div>
-                  ) : (
-                    atRisk.map((o) => (
-                      <Link key={o.id} href={`/saas-admin/orgs/${o.id}`} className="card p-4 flex items-center gap-4 hover:shadow-card-hover hover:border-slate-300 transition-all group block">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-slate-900 group-hover:text-brand transition-colors truncate">{o.name}</p>
-                          <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                            {o.reasons.map((r) => (
-                              <span key={r} className="text-[10px] font-semibold text-red-700 bg-red-50 px-1.5 py-0.5 rounded">{r}</span>
-                            ))}
-                          </div>
-                        </div>
-                        <div className="text-right flex-shrink-0">
-                          <p className="font-mono text-lg font-bold tabular-nums text-slate-900 leading-none">{o.healthScore}</p>
-                          <p className="text-[10px] text-slate-400 mt-1">health</p>
-                        </div>
-                      </Link>
-                    ))
-                  )}
-                </div>
-              </motion.div>
-            </div>
-
-            {/* Chat analytics */}
-            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.15 }}>
+            {/* ④ Engagement — assistant analytics */}
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.12 }} className="space-y-6">
+              <GroupHeader index={4} title="Engagement" caption="How client organizations use the platform" />
+              <div>
               <SectionHeader title="Assistant Analytics" hint="AI assistant adoption across client organizations" />
               {chatLoading ? (
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">{Array.from({ length: 3 }).map((_, i) => <ShimmerCard key={i} />)}</div>
@@ -786,18 +797,20 @@ export default function AdminPlatformDashboard() {
                   </div>
                 </div>
               )}
+              </div>
             </motion.div>
 
-            {/* Announcements */}
-            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.18 }}>
-              <SectionHeader title="Platform Announcements" hint="Broadcast maintenance windows and incident notices to client dashboards" />
-              <AnnouncementsManager orgs={orgs} />
-            </motion.div>
-
-            {/* Audit log */}
-            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.21 }}>
-              <SectionHeader title="Audit Log" hint="Search the platform audit trail and export filtered results" />
-              <AuditLogSection orgs={orgs} />
+            {/* ⑤ Communication & Governance — broadcasts + audit trail */}
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.15 }} className="space-y-6">
+              <GroupHeader index={5} title="Communication & Governance" caption="Broadcast to client organizations and review the platform audit trail" />
+              <div>
+                <SectionHeader title="Platform Announcements" hint="Broadcast maintenance windows and incident notices to client dashboards" />
+                <AnnouncementsManager orgs={orgs} />
+              </div>
+              <div>
+                <SectionHeader title="Audit Log" hint="Search the platform audit trail and export filtered results" />
+                <AuditLogSection orgs={orgs} />
+              </div>
             </motion.div>
 
           </div>

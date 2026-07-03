@@ -337,3 +337,92 @@ enum AnnouncementLevel {
   WARNING
   CRITICAL
 }
+
+// ─── Slack bots (global; managed by ADMINISTRATOR) ───────────────────────────
+// Each bot is a distinct "function" registered by an administrator. Tokens are
+// stored ENCRYPTED (AES-256-GCM) and never returned to the client. `ticketUserId`
+// is the bridged Users.id in the external b2b_ticket DB so the bot can be a ticket
+// assignee. Live status is refreshed by the Slack manager's poll loop.
+model SlackBot {
+  id            String         @id @default(cuid())
+  name          String
+  slug          String         @unique
+  description   String?
+  botTokenEnc   String
+  appTokenEnc   String?
+  botUserId     String?
+  teamName      String?
+  status        SlackBotStatus @default(DISCONNECTED)
+  lastError     String?
+  lastCheckedAt DateTime?
+  ticketUserId  String?
+  enabled       Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  formFields    SlackBotFormField[]
+  orgs          SlackBotOrg[]
+
+  @@map("slackBots")
+}
+
+// Admin-maintained dynamic ticket-form schema for a bot.
+model SlackBotFormField {
+  id          String       @id @default(cuid())
+  botId       String
+  key         String
+  label       String
+  type        BotFieldType @default(TEXT)
+  required    Boolean      @default(false)
+  options     Json?
+  placeholder String?
+  helpText    String?
+  order       Int          @default(0)
+  bot         SlackBot     @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@unique([botId, key])
+  @@index([botId])
+  @@map("slackBotFormFields")
+}
+
+// Which organizations may use a bot (per-org assignment). Tenant-scoped for org reads.
+model SlackBotOrg {
+  id         String   @id @default(cuid())
+  botId      String
+  customerId String
+  createdAt  DateTime @default(now())
+  bot        SlackBot @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@unique([botId, customerId])
+  @@index([customerId])
+  @@map("slackBotOrgs")
+}
+
+// Submitted dynamic-form values for a bot-assigned ticket (ticket lives in b2b_ticket).
+model BotTicketSubmission {
+  id           String   @id @default(cuid())
+  botId        String
+  customerId   String
+  ticketId     String
+  ticketNumber String
+  values       Json
+  createdById  String
+  createdAt    DateTime @default(now())
+
+  @@index([customerId])
+  @@index([botId])
+  @@map("botTicketSubmissions")
+}
+
+enum SlackBotStatus {
+  CONNECTED
+  DISCONNECTED
+  ERROR
+}
+
+enum BotFieldType {
+  TEXT
+  TEXTAREA
+  NUMBER
+  SELECT
+  CHECKBOX
+}

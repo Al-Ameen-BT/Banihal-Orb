@@ -42,6 +42,9 @@ const EnvSchema = z.object({
   // Chatbot backend — Analytics Agent (SSE streaming) on the same host.
   // The agent wraps the LLM + knowledge base; /api/chat proxies to it.
   AGENT_URL: z.string().url().default('http://localhost:8001'),
+  // Secret for encrypting Slack bot tokens at rest (AES-256-GCM). Falls back to
+  // JWT_ACCESS_SECRET when unset so no extra config is required in dev.
+  SLACK_TOKEN_SECRET: z.string().optional(),
   // Legacy Ollama settings (the agent manages its own model now; kept for the deploy preflight)
   OLLAMA_URL: z.string().url().default('http://localhost:11435'),
   OLLAMA_MODEL: z.string().default('qwen2.5:3b'),

@@ -5,6 +5,7 @@ import { env } from './config/env';
 import { prisma } from './config/database';
 import { chatPrisma } from './config/chatDatabase';
 import { ticketingPrisma } from './config/ticketingDatabase';
+import { slackManager } from './modules/slack-bots/slackManager';
 
 const PORT = env.PORT;
 
@@ -20,6 +21,9 @@ async function main() {
   app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT} [${env.NODE_ENV}]`);
   });
+
+  // Connect enabled Slack bots + start the live-status poll loop (non-fatal).
+  slackManager.init().catch((err) => console.error('⚠️  Slack manager init failed:', err));
 }
 
 main().catch((err) => {

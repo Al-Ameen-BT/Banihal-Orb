@@ -27,7 +27,10 @@ function buildPrisma() {
           // Models without customerId (global tables or tables without customerId relation).
           // Announcement is global because customerId:null means "all orgs" — auto-injecting
           // the tenant filter would hide those rows; the service scopes visibility manually.
-          const globalModels = ['FeatureFlag', 'Customer', 'RefreshToken', 'Announcement', 'TicketNumberSetting'];
+          // SlackBot / SlackBotFormField are platform-global (no customerId), managed by
+          // administrators cross-tenant. SlackBotOrg / BotTicketSubmission keep customerId and
+          // stay tenant-scoped so org reads auto-filter (admin routes carry no tenant context).
+          const globalModels = ['FeatureFlag', 'Customer', 'RefreshToken', 'Announcement', 'TicketNumberSetting', 'SlackBot', 'SlackBotFormField'];
 
           if (store?.customerId && scopedOps.includes(operation) && !globalModels.includes(model)) {
             const existingWhere = (args['where'] as Record<string, unknown>) ?? {};

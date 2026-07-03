@@ -6,6 +6,7 @@ import { upload } from './uploads';
 
 const router = Router();
 const staff = requireRole('ORG_ADMIN', 'ADMINISTRATOR'); // management surfaces
+const onlyOrgAdmin = requireRole('ORG_ADMIN');            // escalation is an org-side action
 const onlyAdministrator = requireRole('ADMINISTRATOR');   // platform admin store
 
 // Scope every ticketing request to a store by the caller's platform role:
@@ -36,8 +37,9 @@ router.delete('/tickets/:id/watch', ticketingController.unwatchTicket);
 // Notifications — updates on your own tickets (any authenticated role).
 router.get('/my-updates', ticketingController.myUpdates);
 
-// Escalation — copy a client (b2b_ticket) ticket into the ADMINISTRATOR store.
-router.post('/tickets/:id/escalate', staff, ticketingController.escalateTicket);
+// Escalation — ORG_ADMIN copies an unclosed client (b2b_ticket) ticket into the
+// ADMINISTRATOR store, routed to the administrator group (unassigned, notify-all).
+router.post('/tickets/:id/escalate', onlyOrgAdmin, ticketingController.escalateTicket);
 
 // ADMINISTRATOR escalation notifications + first-wins claim (admin store).
 router.get('/admin/escalation-alerts', onlyAdministrator, ticketingController.escalationAlerts);

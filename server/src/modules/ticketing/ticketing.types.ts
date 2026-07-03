@@ -2,7 +2,7 @@
 // These are OUR contract with the client; the Prisma rows are mapped onto them in
 // ticketing.client.ts so the verbose introspected relation names never leak out.
 
-import type { SlaStatus } from './services/slaService';
+import type { SlaStatus, SlaEvaluation } from './services/slaService';
 
 export type TicketStatus = 'todo' | 'in_progress' | 'client_pending' | 'completed';
 export type TicketPriority = 'low' | 'medium' | 'high' | 'urgent';
@@ -23,7 +23,7 @@ export interface TicketDTO {
   projectName: string | null;
   reporter: PersonRef | null;
   assignee: PersonRef | null;
-  customer: { id: string; name: string } | null;
+  customer: { id: string; name: string; email: string | null; contactPerson: string | null } | null;
   storyPoints: number | null;
   dueDate: string | null;
   labels: string[];
@@ -31,10 +31,14 @@ export interface TicketDTO {
   onSiteSupportRequired: boolean;
   reasonForDelay: string | null;
   resolvedMethods: string | null;
-  sla: { id: string; name: string; resolutionTime: number; timeUnit: string } | null;
+  sla: { id: string; name: string; responseTime: number; resolutionTime: number; timeUnit: string } | null;
   slaStatus: SlaStatus;
   slaRemainingSeconds: number | null;
   slaDeadline: string | null;
+  // Dual SLA (report §7.4): resolution mirrors the flat slaStatus fields above; response is
+  // an approximation (elapsed-vs-responseTime — no first-response timestamp exists).
+  responseSla: SlaEvaluation;
+  resolutionSla: SlaEvaluation;
   pausedTime: string | null;
   totalPausedTime: number;
   counts: { comments: number; attachments: number; watchers: number };
@@ -110,4 +114,5 @@ export interface TicketFilters {
   mineUserId?: string; // reporter OR assignee = this ticketing user id
   since?: string;
   search?: string;
+  escalatedOnly?: boolean; // admin "Escalated" category → labels has 'escalated'
 }

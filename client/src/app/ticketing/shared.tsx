@@ -3,9 +3,10 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ticketingApi } from '@/lib/api';
+import { ticketingApi, botsApi } from '@/lib/api';
 import GlowButton from '@/components/ui/GlowButton';
-import type { TicketDTO, TicketProject, TicketStatus, TicketPriority, TicketType, SlaStatus, Role } from '@/lib/schemas';
+import { BotFieldGrid } from '@/components/BotFormFields';
+import type { TicketDTO, TicketProject, TicketStatus, TicketPriority, TicketType, SlaStatus, SlaEvaluation, Role, OrgBot } from '@/lib/schemas';
 
 // ─── Option sets ──────────────────────────────────────────────────────────────
 export const TICKET_TYPES: { value: TicketType; label: string }[] = [
@@ -103,6 +104,43 @@ export function SlaBadge({ status, remainingSeconds }: { status: SlaStatus; rema
     ? ` · ${remainingSeconds <= 0 ? 'overdue' : formatDuration(remainingSeconds)}`
     : '';
   return <span className={`inline-flex px-2 py-0.5 rounded-md text-[11px] font-semibold ring-1 ring-inset ${cfg.cls}`}>{cfg.label}{extra}</span>;
+}
+
+// Dual SLA progress bar (matches the reference images: a labelled bar + a status pill
+// that reads "<Response|Resolution> SLA Stopped" when the clock is not running —
+// i.e. paused (client_pending) or the ticket is completed).
+export function SlaBar({ label, evaluation }: { label: 'Response' | 'Resolution'; evaluation: SlaEvaluation }) {
+  const { status, budgetSeconds, remainingSeconds } = evaluation;
+  const none = budgetSeconds == null;
+  const stopped = status === 'paused' || (budgetSeconds != null && remainingSeconds == null);
+  const overdue = !none && remainingSeconds != null && remainingSeconds <= 0;
+  const ratio = none ? 0
+    : remainingSeconds == null ? 1
+    : Math.min(1, Math.max(0, 1 - remainingSeconds / budgetSeconds!));
+  const barTone = none ? 'bg-slate-200'
+    : overdue || status === 'breached' || status === 'critical' ? 'bg-red-500'
+    : status === 'warning' ? 'bg-amber-500'
+    : stopped ? 'bg-slate-300'
+    : 'bg-emerald-500';
+  const pillTone = none || stopped ? 'text-slate-500 bg-slate-100'
+    : overdue || status === 'breached' || status === 'critical' ? 'text-red-700 bg-red-50'
+    : status === 'warning' ? 'text-amber-700 bg-amber-50'
+    : 'text-emerald-700 bg-emerald-50';
+  const pill = none ? 'No SLA'
+    : stopped ? `${label} SLA Stopped`
+    : overdue ? 'Overdue'
+    : `${formatDuration(remainingSeconds ?? 0)} left`;
+  return (
+    <div className="min-w-0">
+      <div className="flex items-center justify-between mb-1 gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{label} SLA</span>
+        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${pillTone}`}>{pill}</span>
+      </div>
+      <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
+        <div className={`h-full rounded-full ${barTone}`} style={{ width: `${ratio * 100}%` }} />
+      </div>
+    </div>
+  );
 }
 
 // ─── Avatar (deterministic initials chip) ───────────────────────────────────────
@@ -304,12 +342,20 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
   const queryClient = useQueryClient();
   const fields = ROLE_FIELDS[role] ?? ROLE_FIELDS.USER;
   const has = (f: FormField) => fields.includes(f);
+  const isOrgAdmin = role === 'ORG_ADMIN';
 
   const { data: assignees } = useQuery<{ id: string; name: string; email: string; role: string }[]>({
     queryKey: ['ticketing', 'assignees'],
     queryFn: () => ticketingApi.listAssignees().then((r) => (r.data as { assignees: { id: string; name: string; email: string; role: string }[] }).assignees),
     enabled: has('assignee'),
     staleTime: 60_000,
+  });
+  // Org-admins can assign a ticket to a Slack bot instead of a person (this org's bots).
+  const { data: orgBots } = useQuery<OrgBot[]>({
+    queryKey: ['bots', 'list'],
+    queryFn: () => botsApi.list().then((r) => (r.data as { bots: OrgBot[] }).bots),
+    enabled: isOrgAdmin,
+    staleTime: 30_000,
   });
 
   const [title, setTitle] = useState('');
@@ -321,15 +367,27 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
   const [assigneeId, setAssigneeId] = useState('');
   const [branch, setBranch] = useState('');
   const [onSite, setOnSite] = useState(false);
+  const [assigneeMode, setAssigneeMode] = useState<'person' | 'bot'>('person');
+  const [botId, setBotId] = useState('');
+  const [botValues, setBotValues] = useState<Record<string, unknown>>({});
   const [submitting, setSubmitting] = useState(false);
   const [createdNo, setCreatedNo] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const isValid = title.trim().length >= 1 && description.trim().length >= 1 && projectId !== '';
+  const botMode = isOrgAdmin && assigneeMode === 'bot';
+  const selectedBot = (orgBots ?? []).find((b) => b.id === botId) ?? null;
+  const botFieldsValid = !botMode || (!!selectedBot && selectedBot.formFields.every(
+    (f) => !f.required || f.type === 'CHECKBOX' || (botValues[f.key] !== undefined && botValues[f.key] !== ''),
+  ));
+  const isValid = title.trim().length >= 1 && description.trim().length >= 1 && projectId !== '' && (!botMode || !!botId) && botFieldsValid;
+  const effectiveFields = botMode ? fields.filter((f) => f !== 'assignee') : fields;
+
+  const setBotVal = (key: string, v: unknown) => setBotValues((p) => ({ ...p, [key]: v }));
 
   function resetForm() {
     setTitle(''); setDescription(''); setProjectId(''); setType('task'); setPriority('medium');
     setStatus('todo'); setAssigneeId(''); setBranch(''); setOnSite(false); setError(null);
+    setAssigneeMode('person'); setBotId(''); setBotValues({});
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -337,24 +395,34 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
     if (!isValid || submitting) return;
     setSubmitting(true); setError(null);
     try {
-      const { data } = await ticketingApi.createTicket({
-        title: title.trim(),
-        description: description.trim(),
-        projectId,
-        type,
-        priority,
-        ...(has('status') ? { status } : {}),
-        ...(has('assignee') ? { assigneeId: assigneeId || null } : {}),
-        ...(has('branch') ? { branch: branch.trim() || null } : {}),
-        ...(has('onSite') ? { onSiteSupportRequired: onSite } : {}),
-      });
-      setCreatedNo((data as TicketDTO).ticketNumber);
+      let ticketNumber: string;
+      if (botMode) {
+        // Assign the ticket to the selected bot; its dynamic form values are validated server-side.
+        const { data } = await botsApi.createTicket(botId, {
+          title: title.trim(), description: description.trim(), projectId, type, priority, values: botValues,
+        });
+        ticketNumber = (data as { ticket: TicketDTO }).ticket.ticketNumber;
+      } else {
+        const { data } = await ticketingApi.createTicket({
+          title: title.trim(),
+          description: description.trim(),
+          projectId,
+          type,
+          priority,
+          ...(has('status') ? { status } : {}),
+          ...(has('assignee') ? { assigneeId: assigneeId || null } : {}),
+          ...(has('branch') ? { branch: branch.trim() || null } : {}),
+          ...(has('onSite') ? { onSiteSupportRequired: onSite } : {}),
+        });
+        ticketNumber = (data as TicketDTO).ticketNumber;
+      }
+      setCreatedNo(ticketNumber);
       resetForm();
       await queryClient.invalidateQueries({ queryKey: ['ticketing'] });
       onCreated?.();
       setTimeout(() => setCreatedNo(null), 6000);
-    } catch {
-      setError('Could not create the ticket. Please try again.');
+    } catch (err) {
+      setError((err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Could not create the ticket. Please try again.');
     } finally { setSubmitting(false); }
   }
 
@@ -442,7 +510,34 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
         <input id="tk-title" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={255} className="input" placeholder="Brief summary of the issue" />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">{fields.map(renderField)}</div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">{effectiveFields.map(renderField)}</div>
+
+      {isOrgAdmin && (
+        <div className="rounded-xl bg-slate-50 ring-1 ring-slate-200/70 p-4 space-y-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <FieldLabel>Assign to</FieldLabel>
+            <Segmented value={assigneeMode} onChange={setAssigneeMode} size="sm" layoutId="nt-assignee-mode"
+              options={[{ value: 'person', label: 'Person' }, { value: 'bot', label: 'Bot' }]} />
+          </div>
+          {botMode && (
+            <>
+              <div>
+                <FieldLabel required>Bot</FieldLabel>
+                <select value={botId} onChange={(e) => { setBotId(e.target.value); setBotValues({}); }} className="input">
+                  <option value="">— Select a bot —</option>
+                  {(orgBots ?? []).map((b) => <option key={b.id} value={b.id}>{b.name}{b.status !== 'CONNECTED' ? ` (${b.status.toLowerCase()})` : ''}</option>)}
+                </select>
+                {(orgBots ?? []).length === 0 && <p className="text-xs text-slate-400 mt-1">No bots have been assigned to your organization yet.</p>}
+              </div>
+              {selectedBot && selectedBot.formFields.length > 0 && (
+                <div className="pt-1">
+                  <BotFieldGrid fields={selectedBot.formFields} values={botValues} onChange={setBotVal} />
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       <div>
         <FieldLabel htmlFor="tk-desc" required>Description</FieldLabel>

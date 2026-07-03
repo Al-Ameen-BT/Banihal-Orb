@@ -302,7 +302,11 @@ function AnnouncementBanners() {
   const { data } = useQuery<{ announcements: Announcement[] }>({
     queryKey: ['announcements'],
     queryFn: () => announcementsApi.list().then((r) => r.data as { announcements: Announcement[] }),
-    staleTime: 60_000,
+    // Broadcasts are near-real-time: poll so a newly published announcement reaches an
+    // already-open org dashboard within ~30s (and on tab refocus) without a manual reload.
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: true,
   });
 
   const visible = (data?.announcements ?? []).filter((a) => !dismissed.has(a.id));

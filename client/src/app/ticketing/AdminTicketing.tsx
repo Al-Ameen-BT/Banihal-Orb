@@ -8,13 +8,13 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, Area, XAx
 import { ticketingApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import GlowButton from '@/components/ui/GlowButton';
-import { ShimmerCard, ShimmerRow } from '@/components/ui/Shimmer';
+import { ShimmerCard } from '@/components/ui/Shimmer';
 import {
-  NewTicketForm, StatusBadge, PriorityBadge, TypeBadge, SlaBadge, PageHeader,
-  Toolbar, Segmented, SearchInput, EmptyState, TicketBoard, Avatar, Icons,
-  statusCfg, priorityCls, timeAgo, STATUS_OPTIONS, PRIORITY_OPTIONS,
+  NewTicketForm, StatusBadge, PriorityBadge, TypeBadge, SlaBar, PageHeader,
+  Toolbar, Segmented, SearchInput, EmptyState, Avatar, Icons,
+  priorityCls, timeAgo, STATUS_OPTIONS, PRIORITY_OPTIONS,
 } from './shared';
-import TicketDetail from './TicketDetail';
+import AdminTicketDetail from './AdminTicketDetail';
 import type { TicketDTO, TicketProject, TicketSla, TicketStats, TicketAnalytics, TicketReport, TicketStatus, TicketPriority } from '@/lib/schemas';
 
 type Staff = { id: string; name: string; email: string; role: string };
@@ -169,149 +169,100 @@ function OverviewTab() {
 }
 
 // ─── Tickets ───────────────────────────────────────────────────────────────────
-function TicketRow({ ticket, projects, staff, expanded, onToggle, onOpenDetail }: {
-  ticket: TicketDTO; projects: TicketProject[]; staff: Staff[]; expanded: boolean; onToggle: () => void; onOpenDetail: () => void;
-}) {
-  const qc = useQueryClient();
-  const [status, setStatus] = useState<TicketStatus>(ticket.status);
-  const [priority, setPriority] = useState<TicketPriority>(ticket.priority);
-  const [assigneeId, setAssigneeId] = useState(ticket.assignee?.id ?? '');
-  const [projectId, setProjectId] = useState(ticket.projectId);
-
-  const mut = useMutation({
-    mutationFn: (payload: unknown) => ticketingApi.updateTicket(ticket.id, payload),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['ticketing'] }); },
-  });
-  const dirty = status !== ticket.status || priority !== ticket.priority
-    || assigneeId !== (ticket.assignee?.id ?? '') || projectId !== ticket.projectId;
-
+// Image-matched admin card: #TKT + title + status/priority/type badges, assignee,
+// "Created X ago", and the dual Response/Resolution SLA bars.
+function AdminTicketCard({ ticket, onOpen }: { ticket: TicketDTO; onOpen: () => void }) {
   return (
-    <>
-      <tr onClick={onToggle} className={`border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors cursor-pointer ${expanded ? 'bg-slate-50' : ''}`}>
-        <td className="px-5 py-3.5 font-mono text-xs font-bold text-slate-400 whitespace-nowrap">{ticket.ticketNumber}</td>
-        <td className="px-5 py-3.5">
-          <div className="flex items-center gap-2">
-            <TypeBadge type={ticket.type} />
-            <p className="text-sm font-semibold text-slate-900 leading-tight truncate max-w-xs">{ticket.title}</p>
+    <div onClick={onOpen}
+      className="card p-4 cursor-pointer hover:shadow-card-hover hover:border-slate-300 transition-all">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-mono text-[10px] font-bold text-slate-400">{ticket.ticketNumber}</span>
+            <StatusBadge status={ticket.status} /><PriorityBadge priority={ticket.priority} /><TypeBadge type={ticket.type} />
           </div>
-          <p className="text-[11px] text-slate-400 mt-0.5">{ticket.projectName ?? 'No project'} · {ticket.reporter?.name ?? 'Unknown'} · {timeAgo(ticket.createdAt)}</p>
-        </td>
-        <td className="px-5 py-3.5"><StatusBadge status={ticket.status} /></td>
-        <td className="px-5 py-3.5"><PriorityBadge priority={ticket.priority} /></td>
-        <td className="px-5 py-3.5"><SlaBadge status={ticket.slaStatus} remainingSeconds={ticket.slaRemainingSeconds} /></td>
-        <td className="px-5 py-3.5 text-xs text-slate-600">
+          <p className="text-sm font-semibold text-slate-900 leading-snug mt-1.5 line-clamp-2">{ticket.title}</p>
+          <p className="text-[11px] text-slate-400 mt-1">Created {timeAgo(ticket.createdAt)}</p>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
           {ticket.assignee
-            ? <span className="inline-flex items-center gap-1.5"><Avatar name={ticket.assignee.name} size="xs" />{ticket.assignee.name}</span>
-            : <span className="text-red-500 font-semibold">Unassigned</span>}
-        </td>
-        <td className="px-5 py-3.5 text-right">
-          <Icons.chevron className={`w-4 h-4 text-slate-400 inline transition-transform ${expanded ? 'rotate-180' : ''}`} />
-        </td>
-      </tr>
-      {expanded && (
-        <tr className="bg-slate-50/70 border-b border-slate-100">
-          <td colSpan={7} className="px-5 py-4">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-              <div>
-                <div className="flex items-center gap-2 mb-1">{ticket.branch && <span className="text-[11px] font-mono text-slate-400">⎇ {ticket.branch}</span>}{ticket.onSiteSupportRequired && <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">ON-SITE</span>}</div>
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Description</p>
-                <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed line-clamp-4">{ticket.description || <span className="text-slate-400 italic">None</span>}</p>
-                <p className="text-[11px] text-slate-400 mt-2">
-                  {ticket.sla ? `SLA: ${ticket.sla.name} · ${ticket.sla.resolutionTime}${ticket.sla.timeUnit[0]}` : 'No SLA'} ·
-                  {' '}{ticket.counts.comments} comments · {ticket.counts.attachments} files · {ticket.counts.watchers} watchers
-                </p>
-                <button type="button" onClick={onOpenDetail} className="mt-2 text-xs font-semibold text-brand hover:text-brand-700 cursor-pointer">Open full detail →</button>
-              </div>
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Status</label>
-                    <select value={status} onChange={(e) => setStatus(e.target.value as TicketStatus)} className="input !py-1.5 text-xs">
-                      {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Priority</label>
-                    <select value={priority} onChange={(e) => setPriority(e.target.value as TicketPriority)} className="input !py-1.5 text-xs">
-                      {PRIORITY_OPTIONS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-                    </select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Assignee</label>
-                    <select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} className="input !py-1.5 text-xs">
-                      <option value="">Unassigned</option>
-                      {staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Project</label>
-                    <select value={projectId} onChange={(e) => setProjectId(e.target.value)} className="input !py-1.5 text-xs">
-                      {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                    </select>
-                  </div>
-                </div>
-                <GlowButton className="py-1.5 px-4 text-xs" disabled={!dirty || mut.isPending} loading={mut.isPending}
-                  onClick={() => mut.mutate({
-                    ...(status !== ticket.status ? { status } : {}),
-                    ...(priority !== ticket.priority ? { priority } : {}),
-                    ...(assigneeId !== (ticket.assignee?.id ?? '') ? { assigneeId: assigneeId || null } : {}),
-                    ...(projectId !== ticket.projectId ? { projectId } : {}),
-                  })}>
-                  {mut.isPending ? 'Saving…' : 'Save Changes'}
-                </GlowButton>
-              </div>
-            </div>
-          </td>
-        </tr>
-      )}
-    </>
+            ? <span className="hidden sm:inline-flex items-center gap-1.5 text-xs text-slate-600"><Avatar name={ticket.assignee.name} size="xs" />{ticket.assignee.name}</span>
+            : <span className="text-[10px] font-semibold text-red-500">Unassigned</span>}
+          <button type="button" aria-label="Open ticket" onClick={(e) => { e.stopPropagation(); onOpen(); }} className="text-slate-300 hover:text-slate-600 cursor-pointer">
+            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm0 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm0 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" /></svg>
+          </button>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2.5 mt-3 pt-3 border-t border-slate-100">
+        <SlaBar label="Response" evaluation={ticket.responseSla} />
+        <SlaBar label="Resolution" evaluation={ticket.resolutionSla} />
+      </div>
+    </div>
   );
 }
 
+type Category = 'all' | 'escalated';
+
 function TicketsTab({ projectFilter, onClearProject }: { projectFilter: string | null; onClearProject: () => void }) {
+  const [category, setCategory] = useState<Category>('all');
   const [statusFilter, setStatusFilter] = useState<'ALL' | TicketStatus>('ALL');
   const [priorityFilter, setPriorityFilter] = useState<'ALL' | TicketPriority>('ALL');
+  const [assigneeFilter, setAssigneeFilter] = useState<'ALL' | string>('ALL');
   const [search, setSearch] = useState('');
-  const [view, setView] = useState<'table' | 'board'>('table');
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [view, setView] = useState<'list' | 'grid'>('list');
   const [detailId, setDetailId] = useState<string | null>(null);
 
-  const { data, isLoading } = useQuery<{ tickets: TicketDTO[] }>({
-    queryKey: ['ticketing', 'tickets', statusFilter, priorityFilter, projectFilter, search],
-    queryFn: () => ticketingApi.listTickets({
-      ...(statusFilter !== 'ALL' ? { status: statusFilter } : {}),
-      ...(priorityFilter !== 'ALL' ? { priority: priorityFilter } : {}),
-      ...(projectFilter ? { projectId: projectFilter } : {}),
-      ...(search.trim() ? { search: search.trim() } : {}),
-    }).then((r) => r.data as { tickets: TicketDTO[] }),
-    staleTime: 10_000,
+  const { data: staffData } = useQuery<{ assignees: Staff[] }>({
+    queryKey: ['ticketing', 'assignees'], queryFn: () => ticketingApi.listAssignees().then((r) => r.data as { assignees: Staff[] }), staleTime: 60_000,
   });
   const { data: projectsData } = useQuery<{ projects: TicketProject[] }>({
     queryKey: ['ticketing', 'projects'], queryFn: () => ticketingApi.listProjects().then((r) => r.data as { projects: TicketProject[] }), staleTime: 60_000,
   });
-  const { data: staffData } = useQuery<{ assignees: Staff[] }>({
-    queryKey: ['ticketing', 'assignees'], queryFn: () => ticketingApi.listAssignees().then((r) => r.data as { assignees: Staff[] }), staleTime: 60_000,
+
+  const { data, isLoading } = useQuery<{ tickets: TicketDTO[] }>({
+    queryKey: ['ticketing', 'tickets', category, statusFilter, priorityFilter, assigneeFilter, projectFilter, search],
+    queryFn: () => ticketingApi.listTickets({
+      ...(category === 'escalated' ? { escalatedOnly: true } : {}),
+      ...(statusFilter !== 'ALL' ? { status: statusFilter } : {}),
+      ...(priorityFilter !== 'ALL' ? { priority: priorityFilter } : {}),
+      ...(assigneeFilter !== 'ALL' ? { assigneeId: assigneeFilter } : {}),
+      ...(projectFilter ? { projectId: projectFilter } : {}),
+      ...(search.trim() ? { search: search.trim() } : {}),
+    }).then((r) => r.data as { tickets: TicketDTO[] }),
+    staleTime: 10_000,
   });
 
   const tickets = data?.tickets ?? [];
   const projects = projectsData?.projects ?? [];
   const projectName = projectFilter ? projects.find((p) => p.id === projectFilter)?.name : null;
 
-  const statusOptions: { value: 'ALL' | TicketStatus; label: string }[] = [
-    { value: 'ALL', label: 'All' }, ...STATUS_OPTIONS,
-  ];
+  const statusOptions: { value: 'ALL' | TicketStatus; label: string }[] = [{ value: 'ALL', label: 'All' }, ...STATUS_OPTIONS];
+  const gridCls = view === 'grid' ? 'grid grid-cols-1 xl:grid-cols-2 gap-3' : 'space-y-3';
+
+  // Group by originating organization for the Escalated category.
+  const orgOf = (t: TicketDTO) => t.customer?.name ?? t.labels.find((l) => l.startsWith('org:'))?.slice(4) ?? 'Unknown organization';
+  const groups = new Map<string, TicketDTO[]>();
+  if (category === 'escalated') for (const t of tickets) { const k = orgOf(t); (groups.get(k) ?? groups.set(k, []).get(k)!).push(t); }
 
   return (
     <>
-      {detailId && <TicketDetail ticketId={detailId} onClose={() => setDetailId(null)} />}
+      {detailId && <AdminTicketDetail ticketId={detailId} onClose={() => setDetailId(null)} />}
       <div className="space-y-4">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <Segmented value={category} onChange={setCategory} layoutId="adminCategory"
+            options={[{ value: 'all', label: 'All tickets' }, { value: 'escalated', label: 'Escalated' }]} />
+          <p className="text-xs text-slate-400">{tickets.length} ticket{tickets.length === 1 ? '' : 's'}{category === 'escalated' ? ` · ${groups.size} organization${groups.size === 1 ? '' : 's'}` : ''}</p>
+        </div>
+
         <Toolbar>
-          <Segmented value={statusFilter} onChange={(v) => { setStatusFilter(v); setExpandedId(null); }} options={statusOptions} size="sm" layoutId="adminStatus" />
+          <Segmented value={statusFilter} onChange={setStatusFilter} options={statusOptions} size="sm" layoutId="adminStatus" />
           <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value as 'ALL' | TicketPriority)} className="input !py-1.5 text-xs w-auto">
             <option value="ALL">All priorities</option>
             {PRIORITY_OPTIONS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+          </select>
+          <select value={assigneeFilter} onChange={(e) => setAssigneeFilter(e.target.value)} className="input !py-1.5 text-xs w-auto">
+            <option value="ALL">All assignees</option>
+            {(staffData?.assignees ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
           {projectName && (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-brand bg-brand-50">
@@ -321,36 +272,33 @@ function TicketsTab({ projectFilter, onClearProject }: { projectFilter: string |
           )}
           <SearchInput value={search} onChange={setSearch} placeholder="Search title or TKT-number…" />
           <Segmented value={view} onChange={setView} size="sm" layoutId="adminView"
-            options={[{ value: 'table', label: 'Table', icon: Icons.list }, { value: 'board', label: 'Board', icon: Icons.board }]} />
+            options={[{ value: 'list', label: 'List', icon: Icons.list }, { value: 'grid', label: 'Grid', icon: Icons.board }]} />
         </Toolbar>
 
         {isLoading ? (
-          view === 'board'
-            ? <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">{Array.from({ length: 4 }).map((_, i) => <ShimmerCard key={i} />)}</div>
-            : <div className="card overflow-hidden">{Array.from({ length: 5 }).map((_, i) => <ShimmerRow key={i} />)}</div>
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">{Array.from({ length: 4 }).map((_, i) => <ShimmerCard key={i} />)}</div>
         ) : tickets.length === 0 ? (
-          <EmptyState icon={Icons.ticket({ className: 'w-6 h-6' })} title="No tickets match this filter" hint="Adjust the status, priority, or search filters above." />
-        ) : view === 'board' ? (
-          <TicketBoard tickets={tickets} onOpen={setDetailId} />
+          <EmptyState icon={Icons.ticket({ className: 'w-6 h-6' })}
+            title={category === 'escalated' ? 'No escalated tickets' : 'No tickets match this filter'}
+            hint={category === 'escalated' ? 'Escalations from organizations will appear here, grouped per organization.' : 'Adjust the status, priority, assignee, or search filters above.'} />
+        ) : category === 'escalated' ? (
+          <div className="space-y-6">
+            {[...groups.entries()].map(([org, list]) => (
+              <div key={org} className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-slate-800">{org}</h3>
+                  <span className="font-mono text-[11px] font-bold text-slate-400 tabular-nums">{list.length}</span>
+                  <span className="flex-1 h-px bg-slate-200" />
+                </div>
+                <div className={gridCls}>
+                  {list.map((t) => <AdminTicketCard key={`${t.id}-${t.updatedAt}`} ticket={t} onOpen={() => setDetailId(t.id)} />)}
+                </div>
+              </div>
+            ))}
+          </div>
         ) : (
-          <div className="card overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="min-w-full">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200">
-                    {['Ticket #', 'Title', 'Status', 'Priority', 'SLA', 'Assignee', ''].map((h, i) => (
-                      <th key={i} className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {tickets.map((t) => (
-                    <TicketRow key={`${t.id}-${t.updatedAt}`} ticket={t} projects={projects} staff={staffData?.assignees ?? []}
-                      expanded={expandedId === t.id} onToggle={() => setExpandedId((p) => (p === t.id ? null : t.id))} onOpenDetail={() => setDetailId(t.id)} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
+          <div className={gridCls}>
+            {tickets.map((t) => <AdminTicketCard key={`${t.id}-${t.updatedAt}`} ticket={t} onOpen={() => setDetailId(t.id)} />)}
           </div>
         )}
       </div>

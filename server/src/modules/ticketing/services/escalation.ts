@@ -5,28 +5,45 @@ import { resolveTicketActor } from '../identity';
 import { nextTicketNumber } from '../utils/ticketNumber';
 import { getTicketNumberFormat } from './numberFormat';
 
-// ─── Escalation: client (b2b_ticket) → administrators (b2b_ticketing_admin) ───
-// Both stores share the SAME 14-table schema. An ORG_ADMIN/ADMINISTRATOR escalates
-// a ticket: we COPY it into the admin store as a fresh ticket (new number, in the
-// admin store's "Escalations" project, reported by the bridged actor) and flag the
-// source with an `escalated` label + activity so the org-admin side reflects it.
-// Cross-store reads/writes are wrapped in the matching runWithTicketDb scope.
+// ─── Escalation: client (b2b_ticket) → administrators (b2b_ticketing_admin) ────
+// Both stores share the SAME 14-table schema. An ORG_ADMIN escalates an UNCLOSED ticket
+// to the platform ADMINISTRATORS as a group (not an individual admin). We COPY it into
+// the admin store as a fresh ticket — new number, "Escalations" project, reported by the
+// bridged actor, left UNASSIGNED (any administrator can pick it up), linked to a
+// replicated org Customers row (so it groups per organization and shows Client details) —
+// and flag the source with an `escalated` label + activity. Cross-store reads/writes are
+// wrapped in the matching runWithTicketDb scope. Additive only: nothing is deleted/altered.
 
 const notFound = (w: string) => Object.assign(new Error(`${w} not found`), { status: 404, code: 'NOT_FOUND' });
 
-export async function escalateTicket(b2bUserId: string, platformRole: Role, sourceTicketId: string): Promise<{ escalated: true; ticketNumber: string }> {
+export async function escalateTicket(
+  b2bUserId: string,
+  platformRole: Role,
+  sourceTicketId: string,
+): Promise<{ escalated: true; ticketNumber: string }> {
   // Source lives in the shared (default) store.
   const source = await runWithTicketDb('default', () => db.getTicketById(sourceTicketId));
   if (!source) throw notFound('Ticket');
+  if (source.status === 'completed') {
+    throw Object.assign(new Error('Closed tickets cannot be escalated.'), { status: 409, code: 'TICKET_CLOSED' });
+  }
   if (source.labels.includes('escalated')) {
     throw Object.assign(new Error('This ticket has already been escalated.'), { status: 409, code: 'ALREADY_ESCALATED' });
   }
 
-  // Copy into the ADMIN store (14-table). Reporter + project are resolved in that
-  // store; ticket number is allocated from the admin store's sequence.
+  const orgName = source.customer?.name ?? source.projectName ?? 'Unknown organization';
+
+  // Copy into the ADMIN store (14-table). Reporter + project + customer are resolved in
+  // that store; the ticket number is allocated from the admin store's sequence; the copy
+  // is left unassigned for the administrator group to handle.
   await runWithTicketDb('admin', async () => {
     const actor = await resolveTicketActor(b2bUserId, platformRole);
     const projectId = await db.getOrCreateEscalationProject(actor.id);
+    const customerId = await db.getOrCreateCustomerByName({
+      name: orgName,
+      email: source.customer?.email ?? null,
+      contactPerson: source.customer?.contactPerson ?? source.reporter?.name ?? null,
+    });
     const fmt = await getTicketNumberFormat();
 
     let created = false;
@@ -36,14 +53,15 @@ export async function escalateTicket(b2bUserId: string, platformRole: Role, sour
         await db.createTicketRow({
           ticketNumber,
           title: source.title,
-          description: `Escalated from ${source.ticketNumber} (${source.customer?.name ?? source.projectName ?? 'client'}).\n\n${source.description}`,
+          description: `Escalated from ${source.ticketNumber} (${orgName}).\n\n${source.description}`,
           type: source.type,
           priority: source.priority,
           status: 'todo',
           projectId,
           reporterId: actor.id,
           createdBy: actor.id,
-          labels: ['escalated', `src:${source.ticketNumber}`],
+          customerId,
+          labels: ['escalated', `src:${source.ticketNumber}`, `org:${orgName}`],
           branch: source.branch,
           onSiteSupportRequired: source.onSiteSupportRequired,
         });

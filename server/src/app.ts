@@ -22,6 +22,8 @@ import chatRoutes from './modules/chat/chat.routes';
 import requestsRoutes from './modules/requests/requests.routes';
 import announcementsRoutes from './modules/announcements/announcements.routes';
 import ticketingRoutes from './modules/ticketing/ticketing.routes';
+import slackBotsRoutes from './modules/slack-bots/slackBots.routes';
+import botsRoutes from './modules/bots/bots.routes';
 
 const app = express();
 
@@ -76,9 +78,13 @@ app.use('/api/chat', withTenant, chatRoutes);
 app.use('/api/requests', withTenant, requestsRoutes);
 app.use('/api/announcements', withTenant, announcementsRoutes);
 app.use('/api/ticketing', withTenant, ticketingRoutes);
+// Org-facing Slack bots — this org's assigned bots + create bot-assigned tickets.
+app.use('/api/bots', withTenant, botsRoutes);
 
 // Sadmin / Administrator — platform-level access, no tenant scope
 app.use('/api/saas-admin', requireRole('ADMINISTRATOR'), saasAdminRoutes);
+// Slack bot registry — administrators manage bots cross-tenant (no tenant scope).
+app.use('/api/slack-bots', requireRole('ADMINISTRATOR'), slackBotsRoutes);
 
 // ─── 404 handler ─────────────────────────────────────────────────────────────
 app.use((_req, res) => {

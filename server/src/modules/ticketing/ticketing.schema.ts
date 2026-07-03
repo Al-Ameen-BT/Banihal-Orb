@@ -12,6 +12,7 @@ export const ListTicketsSchema = z.object({
   projectId: z.string().uuid().optional(),
   assigneeId: z.string().uuid().optional(),
   mine: z.coerce.boolean().optional(),
+  escalatedOnly: z.coerce.boolean().optional(),
   search: z.string().max(200).optional(),
 });
 

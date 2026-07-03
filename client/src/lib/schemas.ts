@@ -193,6 +193,15 @@ export type SlaStatus = 'none' | 'paused' | 'breached' | 'critical' | 'warning' 
 
 export interface PersonRef { id: string; name: string; email: string | null }
 
+// One SLA clock (resolution or response). `budgetSeconds` is the policy target; when the
+// clock is stopped (completed) `remainingSeconds`/`deadline` are null.
+export interface SlaEvaluation {
+  status: SlaStatus;
+  budgetSeconds: number | null;
+  remainingSeconds: number | null;
+  deadline: string | null;
+}
+
 export interface TicketDTO {
   id: string;
   ticketNumber: string;
@@ -205,7 +214,7 @@ export interface TicketDTO {
   projectName: string | null;
   reporter: PersonRef | null;
   assignee: PersonRef | null;
-  customer: { id: string; name: string } | null;
+  customer: { id: string; name: string; email: string | null; contactPerson: string | null } | null;
   storyPoints: number | null;
   dueDate: string | null;
   labels: string[];
@@ -213,10 +222,12 @@ export interface TicketDTO {
   onSiteSupportRequired: boolean;
   reasonForDelay: string | null;
   resolvedMethods: string | null;
-  sla: { id: string; name: string; resolutionTime: number; timeUnit: string } | null;
+  sla: { id: string; name: string; responseTime: number; resolutionTime: number; timeUnit: string } | null;
   slaStatus: SlaStatus;
   slaRemainingSeconds: number | null;
   slaDeadline: string | null;
+  responseSla: SlaEvaluation;
+  resolutionSla: SlaEvaluation;
   pausedTime: string | null;
   totalPausedTime: number;
   counts: { comments: number; attachments: number; watchers: number };
@@ -332,6 +343,55 @@ export interface TicketReport {
   from: string | null;
   to: string | null;
   type: string;
+}
+
+// ─── Slack bots ──────────────────────────────────────────────────────────────
+export type BotFieldType = 'TEXT' | 'TEXTAREA' | 'NUMBER' | 'SELECT' | 'CHECKBOX';
+export type SlackBotStatus = 'CONNECTED' | 'DISCONNECTED' | 'ERROR';
+
+export interface SlackBotField {
+  id: string;
+  key: string;
+  label: string;
+  type: BotFieldType;
+  required: boolean;
+  options: string[] | null;
+  placeholder: string | null;
+  helpText: string | null;
+  order: number;
+}
+
+// Admin registry view — tokens are never returned (only a masked hint + whether set).
+export interface SlackBot {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  status: SlackBotStatus;
+  lastError: string | null;
+  lastCheckedAt: string | null;
+  teamName: string | null;
+  botUserId: string | null;
+  enabled: boolean;
+  botTokenHint: string;
+  appTokenSet: boolean;
+  fieldCount: number;
+  orgCount: number;
+  createdAt: string;
+  // present on the single-bot fetch
+  formFields?: SlackBotField[];
+  orgIds?: string[];
+}
+
+// Org-facing view — what an org-admin needs to assign a bot to a ticket.
+export interface OrgBot {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  status: SlackBotStatus;
+  ticketUserId: string | null;
+  formFields: SlackBotField[];
 }
 
 // ─── Chat analytics (ADMINISTRATOR) ──────────────────────────────────────────

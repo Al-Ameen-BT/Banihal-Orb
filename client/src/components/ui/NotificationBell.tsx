@@ -2,7 +2,7 @@
 
 import { useState, useRef } from 'react';
 import Link from 'next/link';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ticketingApi } from '@/lib/api';
 import type { TicketDTO, TicketUpdateAlert } from '@/lib/schemas';
@@ -196,9 +196,10 @@ export function OrgNotifications() {
   );
 }
 
-// ADMINISTRATOR: escalated tickets in the admin store — notify-all + first-wins claim.
+// ADMINISTRATOR: escalated tickets in the admin store — notify-all (informational).
+// Escalations are directed (pre-assigned to a chosen administrator), so there is no
+// first-click claim; the item just shows which admin the org routed it to.
 export function AdminNotifications() {
-  const qc = useQueryClient();
   return (
     <Bell label="Escalations" emptyText="No new escalations." storageKey="notif-admin-since" queryKey={['notif', 'admin']} accent="rose"
       fetchItems={async (since) => {
@@ -209,12 +210,9 @@ export function AdminNotifications() {
           items: res.tickets.map((t) => ({
             id: t.id,
             title: `${t.ticketNumber} ${t.title}`,
-            subtitle: `${t.customer?.name ?? t.projectName ?? 'client'} · ${t.priority}`,
+            subtitle: `${t.customer?.name ?? t.projectName ?? 'client'} · ${t.assignee ? `→ ${t.assignee.name}` : t.priority}`,
             tone: priorityDot[t.priority],
             href: '/ticketing?tab=tickets',
-            action: t.assignee
-              ? { label: `Claimed`, run: async () => {}, disabled: true }
-              : { label: 'Claim', run: async () => { await ticketingApi.claim(t.id); void qc.invalidateQueries({ queryKey: ['ticketing'] }); } },
           })),
         };
       }} />

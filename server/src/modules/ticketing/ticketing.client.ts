@@ -1,5 +1,5 @@
 import { ticketPrisma, getTicketDb } from '../../config/ticketDatabase';
-import { evaluateSla, type TimeUnit } from './services/slaService';
+import { evaluateSla, evaluateResponseSla, type TimeUnit } from './services/slaService';
 import type {
   TicketDTO, ProjectDTO, SlaDTO, TicketFilters, PersonRef,
   TicketStatus, TicketPriority, TicketType, ProjectPriority,
@@ -18,8 +18,8 @@ const userSel = { select: { id: true, firstName: true, lastName: true, email: tr
 // the whole request. We batch-load them separately (resolveTicketRefs) and tolerate gaps.
 const ticketInclude = {
   Users_Tickets_assigneeIdToUsers: userSel,
-  Customers: { select: { id: true, name: true } },
-  SLAs: { select: { id: true, name: true, resolutionTime: true, timeUnit: true } },
+  Customers: { select: { id: true, name: true, email: true, contactPerson: true } },
+  SLAs: { select: { id: true, name: true, responseTime: true, resolutionTime: true, timeUnit: true } },
   _count: { select: { Comments: true, TicketAttachments: true, TicketWatchers: true } },
 } as const;
 
@@ -45,11 +45,10 @@ async function resolveTicketRefs(rows: ReadonlyArray<{ projectId: string; report
 }
 
 function toTicketDTO(row: TicketRow, project: { id: string; name: string } | null, reporter: PersonRef | null): TicketDTO {
-  const sla = row.SLAs ? { id: row.SLAs.id, name: row.SLAs.name, resolutionTime: row.SLAs.resolutionTime, timeUnit: row.SLAs.timeUnit as string } : null;
-  const evalSla = evaluateSla(
-    { status: row.status, createdAt: row.createdAt, pausedTime: row.pausedTime, totalPausedTime: row.totalPausedTime },
-    row.SLAs ? { resolutionTime: row.SLAs.resolutionTime, timeUnit: row.SLAs.timeUnit as TimeUnit } : null,
-  );
+  const sla = row.SLAs ? { id: row.SLAs.id, name: row.SLAs.name, responseTime: row.SLAs.responseTime, resolutionTime: row.SLAs.resolutionTime, timeUnit: row.SLAs.timeUnit as string } : null;
+  const timeFields = { status: row.status, createdAt: row.createdAt, pausedTime: row.pausedTime, totalPausedTime: row.totalPausedTime };
+  const resolutionSla = evaluateSla(timeFields, row.SLAs ? { resolutionTime: row.SLAs.resolutionTime, timeUnit: row.SLAs.timeUnit as TimeUnit } : null);
+  const responseSla = evaluateResponseSla(timeFields, row.SLAs ? { responseTime: row.SLAs.responseTime, timeUnit: row.SLAs.timeUnit as TimeUnit } : null);
   return {
     id: row.id,
     ticketNumber: row.ticketNumber,
@@ -62,7 +61,7 @@ function toTicketDTO(row: TicketRow, project: { id: string; name: string } | nul
     projectName: project?.name ?? null,
     reporter,
     assignee: person(row.Users_Tickets_assigneeIdToUsers),
-    customer: row.Customers ? { id: row.Customers.id, name: row.Customers.name } : null,
+    customer: row.Customers ? { id: row.Customers.id, name: row.Customers.name, email: row.Customers.email, contactPerson: row.Customers.contactPerson } : null,
     storyPoints: row.storyPoints,
     dueDate: row.dueDate ? row.dueDate.toISOString() : null,
     labels: row.labels,
@@ -71,9 +70,11 @@ function toTicketDTO(row: TicketRow, project: { id: string; name: string } | nul
     reasonForDelay: row.reasonForDelay,
     resolvedMethods: row.resolvedMethods,
     sla,
-    slaStatus: evalSla.status,
-    slaRemainingSeconds: evalSla.remainingSeconds,
-    slaDeadline: evalSla.deadline,
+    slaStatus: resolutionSla.status,
+    slaRemainingSeconds: resolutionSla.remainingSeconds,
+    slaDeadline: resolutionSla.deadline,
+    responseSla,
+    resolutionSla,
     pausedTime: row.pausedTime ? row.pausedTime.toISOString() : null,
     totalPausedTime: row.totalPausedTime,
     counts: { comments: row._count.Comments, attachments: row._count.TicketAttachments, watchers: row._count.TicketWatchers },
@@ -91,6 +92,7 @@ export async function listTickets(filters: TicketFilters = {}): Promise<TicketDT
       ...(filters.type ? { type: filters.type } : {}),
       ...(filters.projectId ? { projectId: filters.projectId } : {}),
       ...(filters.assigneeId ? { assigneeId: filters.assigneeId } : {}),
+      ...(filters.escalatedOnly ? { labels: { has: 'escalated' } } : {}),
       ...(filters.since ? { createdAt: { gt: new Date(filters.since) } } : {}),
       ...(filters.mineUserId ? { OR: [{ reporterId: filters.mineUserId }, { assigneeId: filters.mineUserId }] } : {}),
       ...(filters.search ? {
@@ -126,6 +128,20 @@ export function getTicketCore(id: string) {
 export async function createTicketRow(data: Parameters<typeof ticketPrisma.tickets.create>[0]['data']): Promise<string> {
   const row = await getTicketDb().tickets.create({ data, select: { id: true } });
   return row.id;
+}
+
+// Find (or additively create) a Customers row by name in the CURRENT store — used by
+// escalation to replicate the source org into the admin store so escalated tickets can
+// be grouped per organization and expose Client Name/Email/Contact. Never mutates an
+// existing row (production-safe: the admin DB's existing customers are untouched).
+export async function getOrCreateCustomerByName(c: { name: string; email?: string | null; contactPerson?: string | null }): Promise<string> {
+  const existing = await getTicketDb().customers.findFirst({ where: { name: c.name }, select: { id: true } });
+  if (existing) return existing.id;
+  const created = await getTicketDb().customers.create({
+    data: { name: c.name, email: c.email ?? null, contactPerson: c.contactPerson ?? null },
+    select: { id: true },
+  });
+  return created.id;
 }
 
 export function updateTicketRow(id: string, data: Parameters<typeof ticketPrisma.tickets.update>[0]['data']) {
@@ -268,10 +284,28 @@ export function deleteSlaById(id: string) {
   return getTicketDb().sLAs.delete({ where: { id } });
 }
 
+// ─── Slack-bot assignees ────────────────────────────────────────────────────────
+// Bots participate in ticketing as bridged Users rows (like resolveTicketActor for
+// humans), so a ticket can be assigned to a bot. They carry a reserved email domain
+// so they can be recognised and kept out of the human staff pool. Additive upsert.
+export const BOT_EMAIL_DOMAIN = '@slackbots.local';
+export const botEmail = (slug: string) => `bot+${slug}${BOT_EMAIL_DOMAIN}`;
+
+export async function resolveBotTicketUser(bot: { name: string; slug: string }): Promise<string> {
+  const email = botEmail(bot.slug);
+  const existing = await getTicketDb().users.findUnique({ where: { email }, select: { id: true } });
+  if (existing) return existing.id;
+  const row = await getTicketDb().users.create({
+    data: { firstName: bot.name.slice(0, 255), lastName: '(bot)', email, password: '', role: 'developer', isActive: true },
+    select: { id: true },
+  });
+  return row.id;
+}
+
 // ─── Staff (assignee pool) ─────────────────────────────────────────────────────
 export async function listStaff(): Promise<Array<{ id: string; name: string; email: string; role: string }>> {
   const rows = await getTicketDb().users.findMany({
-    where: { isActive: true },
+    where: { isActive: true, NOT: { email: { endsWith: BOT_EMAIL_DOMAIN } } },
     select: { id: true, firstName: true, lastName: true, email: true, role: true },
     orderBy: [{ firstName: 'asc' }],
   });
