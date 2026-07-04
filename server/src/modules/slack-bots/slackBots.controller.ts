@@ -23,6 +23,9 @@ export async function connect(req: Request, res: Response, next: NextFunction): 
 export async function disconnect(req: Request, res: Response, next: NextFunction): Promise<void> {
   try { res.json(await service.setEnabled(req.params['id']!, false)); } catch (err) { next(err); }
 }
+export async function generateApiKey(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try { res.json(await service.generateApiKey(req.params['id']!)); } catch (err) { next(err); }
+}
 
 // ─── Form fields ────────────────────────────────────────────────────────────
 export async function listFields(req: Request, res: Response, next: NextFunction): Promise<void> {

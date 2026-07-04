@@ -13,6 +13,7 @@ router.patch('/:id', c.update);
 router.delete('/:id', c.remove);
 router.post('/:id/connect', c.connect);
 router.post('/:id/disconnect', c.disconnect);
+router.post('/:id/api-key', c.generateApiKey); // AD-automation machine key (returned once)
 
 // Per-bot dynamic form schema
 router.get('/:id/fields', c.listFields);

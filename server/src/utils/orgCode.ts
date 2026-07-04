@@ -4,21 +4,27 @@ import { prisma } from '../config/database';
 // auto-default Customer.orgCode and as a runtime fallback for orgs that don't
 // have one set yet, so ticket numbering works without a backfill.
 //
-//   "DataVault Banking"   → "DVB"
+// CamelCase words split into their humps and short ALL-CAPS acronyms are kept
+// whole, so compound brand names produce the expected code:
+//   "BankVault UK"          → "BVUK"  (Bank+Vault → BV, UK kept whole)
+//   "DataVault Banking"     → "DVB"
 //   "Nexus Financial Group" → "NFG"
-//   "Tech"                → "TECH"
-//   "BlueSky Insurance"   → "BSI"
+//   "BlueSky Insurance"     → "BSI"
+//   "Tech"                  → "TECH"
 export function deriveOrgCode(name: string): string {
   const cleaned = (name ?? '').trim();
   if (!cleaned) return 'ORG';
 
   const words = cleaned.split(/\s+/).filter(Boolean);
   let code: string;
-  if (words.length >= 2) {
-    // Initials of each word (e.g. DataVault Banking → DVB).
-    code = words.map((w) => w.charAt(0)).join('');
+  if (words.length >= 2 || /[a-z][A-Z]/.test(cleaned)) {
+    code = words.map((w) => {
+      if (/^[A-Z0-9]{2,4}$/.test(w)) return w;                    // acronym (UK, IBM) → whole
+      const humps = w.match(/[A-Z][a-z0-9]*|^[a-z0-9]+/g) ?? [w]; // BankVault → [Bank, Vault]
+      return humps.map((h) => h.charAt(0)).join('');
+    }).join('');
   } else {
-    // Single word → first 4 letters (e.g. Tech → TECH).
+    // Single plain word → first 4 letters (e.g. Tech → TECH).
     code = words[0]!.slice(0, 4);
   }
 

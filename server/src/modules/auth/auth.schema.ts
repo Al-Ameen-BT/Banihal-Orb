@@ -60,6 +60,7 @@ export type ResetPasswordInput = z.infer<typeof ResetPasswordSchema>;
 export const VerifyMfaSchema = z.object({
   challengeId: z.string().min(1, 'Challenge is required'),
   code: z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code'),
+  rememberDevice: z.boolean().optional(), // "Remember this device for 7 days"
 });
 export type VerifyMfaInput = z.infer<typeof VerifyMfaSchema>;
 

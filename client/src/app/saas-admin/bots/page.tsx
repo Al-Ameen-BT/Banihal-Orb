@@ -16,7 +16,7 @@ const STATUS_CFG: Record<string, { dot: string; text: string; label: string }> =
   DISCONNECTED: { dot: 'bg-slate-400',   text: 'text-slate-600 bg-slate-100 border-slate-200',      label: 'Disconnected' },
   ERROR:        { dot: 'bg-red-500',     text: 'text-red-700 bg-red-50 border-red-100',              label: 'Error' },
 };
-const FIELD_TYPES: BotFieldType[] = ['TEXT', 'TEXTAREA', 'NUMBER', 'SELECT', 'CHECKBOX'];
+const FIELD_TYPES: BotFieldType[] = ['TEXT', 'TEXTAREA', 'NUMBER', 'SELECT', 'CHECKBOX', 'USER_EMAIL'];
 
 function StatusPill({ status }: { status: string }) {
   const cfg = STATUS_CFG[status] ?? STATUS_CFG['DISCONNECTED']!;
@@ -44,10 +44,15 @@ function AddBotDrawer({ onClose }: { onClose: () => void }) {
   const [description, setDescription] = useState('');
   const [botToken, setBotToken] = useState('');
   const [appToken, setAppToken] = useState('');
+  const [webhookUrl, setWebhookUrl] = useState('');
   const [error, setError] = useState('');
 
   const createMut = useMutation({
-    mutationFn: () => slackBotsApi.create({ name: name.trim(), description: description.trim() || null, botToken: botToken.trim(), appToken: appToken.trim() || null }),
+    mutationFn: () => slackBotsApi.create({
+      name: name.trim(), description: description.trim() || null,
+      botToken: botToken.trim(), appToken: appToken.trim() || null,
+      webhookUrl: webhookUrl.trim() || null,
+    }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['slack-bots'] }); onClose(); },
     onError: (e: unknown) => setError((e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Failed to add the bot.'),
   });
@@ -64,6 +69,10 @@ function AddBotDrawer({ onClose }: { onClose: () => void }) {
         <Field label="App-level token (xapp-) — optional">
           <input value={appToken} onChange={(e) => setAppToken(e.target.value)} placeholder="xapp-…" className="input font-mono text-xs" />
           <p className="text-xs text-slate-400 mt-1">Enables Socket Mode so Slack messages are bridged to the assistant.</p>
+        </Field>
+        <Field label="Incoming Webhook URL — optional">
+          <input value={webhookUrl} onChange={(e) => setWebhookUrl(e.target.value)} placeholder="https://hooks.slack.com/services/…" className="input font-mono text-xs" />
+          <p className="text-xs text-slate-400 mt-1">Tickets assigned to this bot are posted into the webhook&apos;s channel with all form details.</p>
         </Field>
         {error && <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-4 py-2.5">{error}</p>}
       </div>
@@ -120,14 +129,17 @@ function SettingsTab({ bot, onChange, onDeleted }: { bot: SlackBot; onChange: ()
   const [description, setDescription] = useState(bot.description ?? '');
   const [botToken, setBotToken] = useState('');
   const [appToken, setAppToken] = useState('');
+  const [webhookUrl, setWebhookUrl] = useState('');
 
   const saveMut = useMutation({
     mutationFn: () => slackBotsApi.update(bot.id, {
       name: name.trim(), description: description.trim() || null,
       ...(botToken.trim() ? { botToken: botToken.trim() } : {}),
       ...(appToken.trim() ? { appToken: appToken.trim() } : {}),
+      ...(webhookUrl.trim() ? { webhookUrl: webhookUrl.trim() } : {}),
     }),
-    onSuccess: () => { setBotToken(''); setAppToken(''); onChange(); },
+    onSuccess: () => { setBotToken(''); setAppToken(''); setWebhookUrl(''); onChange(); },
+    onError: (e: unknown) => alert((e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Could not save the bot.'),
   });
   const toggleMut = useMutation({
     mutationFn: () => (bot.enabled ? slackBotsApi.disconnect(bot.id) : slackBotsApi.connect(bot.id)),
@@ -136,6 +148,11 @@ function SettingsTab({ bot, onChange, onDeleted }: { bot: SlackBot; onChange: ()
   const deleteMut = useMutation({
     mutationFn: () => slackBotsApi.remove(bot.id),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['slack-bots'] }); onDeleted(); },
+  });
+  const [newApiKey, setNewApiKey] = useState<string | null>(null);
+  const keyMut = useMutation({
+    mutationFn: () => slackBotsApi.generateApiKey(bot.id),
+    onSuccess: (r) => { setNewApiKey((r.data as { apiKey: string }).apiKey); onChange(); },
   });
 
   return (
@@ -152,6 +169,27 @@ function SettingsTab({ bot, onChange, onDeleted }: { bot: SlackBot; onChange: ()
       <Field label="Description"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className="input resize-none" /></Field>
       <Field label={`Bot token (${bot.botTokenHint})`}><input value={botToken} onChange={(e) => setBotToken(e.target.value)} placeholder="Leave blank to keep current" className="input font-mono text-xs" /></Field>
       <Field label={`App token (${bot.appTokenSet ? 'set' : 'not set'})`}><input value={appToken} onChange={(e) => setAppToken(e.target.value)} placeholder="Leave blank to keep current" className="input font-mono text-xs" /></Field>
+      <Field label={`Incoming Webhook URL (${bot.webhookSet ? 'set' : 'not set'})`}>
+        <input value={webhookUrl} onChange={(e) => setWebhookUrl(e.target.value)} placeholder="https://hooks.slack.com/services/… — leave blank to keep current" className="input font-mono text-xs" />
+        <p className="text-xs text-slate-400 mt-1">New bot tickets are posted into this webhook&apos;s channel with the form details.</p>
+      </Field>
+
+      {/* AD-automation machine API key — delivers temp passwords into the app. */}
+      <div className="rounded-xl bg-slate-50 ring-1 ring-slate-200/70 p-3.5 space-y-2">
+        <p className="text-sm font-semibold text-slate-900">AD credential API key</p>
+        <p className="text-xs text-slate-500">The bot&apos;s AD automation uses this key to POST temporary passwords to <span className="font-mono">/api/ad-ingest/deliver</span>. Shown once — store it in the automation.</p>
+        {newApiKey ? (
+          <div className="rounded-lg bg-slate-900 text-slate-100 font-mono text-xs px-3 py-2 flex items-center gap-2 break-all">
+            <span className="flex-1">{newApiKey}</span>
+            <button type="button" onClick={() => navigator.clipboard?.writeText(newApiKey)} className="text-brand-200 hover:text-white cursor-pointer flex-shrink-0">Copy</button>
+          </div>
+        ) : (
+          <p className="text-xs text-slate-500">{bot.apiKeySet ? <>Key set · <span className="font-mono">{bot.apiKeyHint}</span></> : 'No key generated yet.'}</p>
+        )}
+        <GlowButton variant="secondary" className="py-1.5 px-4 text-sm" onClick={() => keyMut.mutate()} disabled={keyMut.isPending} loading={keyMut.isPending}>
+          {bot.apiKeySet ? 'Rotate API key' : 'Generate API key'}
+        </GlowButton>
+      </div>
 
       <div className="flex items-center gap-3 pt-1">
         <GlowButton onClick={() => saveMut.mutate()} disabled={saveMut.isPending} loading={saveMut.isPending}>Save Changes</GlowButton>

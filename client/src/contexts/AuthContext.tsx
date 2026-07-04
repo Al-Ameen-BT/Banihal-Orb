@@ -5,18 +5,21 @@ import api, { authApi } from '@/lib/api';
 // api used directly for the initial auth check (validateStatus suppresses 401 console errors)
 import type { User } from '@/lib/schemas';
 
-// Step 1 of login returns an MFA challenge — the session is only established
-// after the emailed code is verified.
+// Step 1 of login either returns an MFA challenge (code emailed) or — on a
+// trusted device ("remember this device") — completes the session immediately.
 export interface MfaChallenge {
   challengeId: string;
   email: string; // masked, for display (e.g. j***e@acme.com)
 }
+export type LoginResult =
+  | ({ mfaRequired: true } & MfaChallenge)
+  | { mfaRequired: false };
 
 interface AuthContextValue {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<MfaChallenge>;
-  verifyMfa: (challengeId: string, code: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<LoginResult>;
+  verifyMfa: (challengeId: string, code: string, rememberDevice?: boolean) => Promise<void>;
   resendMfa: (challengeId: string) => Promise<string>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
@@ -62,18 +65,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     void refresh();
   }, [refresh]);
 
-  // Step 1: exchange credentials for an MFA challenge (a code is emailed). No
-  // session yet — the caller must collect the code and call verifyMfa.
-  const login = async (email: string, password: string): Promise<MfaChallenge> => {
+  // Step 1: exchange credentials for an MFA challenge (a code is emailed) — or,
+  // on a trusted device, a completed session (cookies already set).
+  const login = async (email: string, password: string): Promise<LoginResult> => {
     const res = await authApi.login({ email, password });
-    const data = res.data as { challengeId: string; email: string };
-    return { challengeId: data.challengeId, email: data.email };
+    const data = res.data as { mfaRequired: boolean; challengeId?: string; email?: string };
+    if (data.mfaRequired === false) {
+      await refresh(); // session cookies are set — load the user
+      return { mfaRequired: false };
+    }
+    return { mfaRequired: true, challengeId: data.challengeId!, email: data.email! };
   };
 
   // Step 2: verify the emailed code; on success the session cookies are set and
-  // we load the user.
-  const verifyMfa = async (challengeId: string, code: string) => {
-    await authApi.verifyMfa({ challengeId, code });
+  // we load the user. rememberDevice sets the 7-day trusted-device cookie.
+  const verifyMfa = async (challengeId: string, code: string, rememberDevice = false) => {
+    await authApi.verifyMfa({ challengeId, code, rememberDevice });
     await refresh();
   };
 

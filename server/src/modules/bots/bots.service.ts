@@ -3,6 +3,7 @@ import { prisma } from '../../config/database';
 import { runWithTicketDb } from '../../config/ticketDatabase';
 import * as ticketService from '../ticketing/ticketing.service';
 import { resolveTicketActor } from '../ticketing/identity';
+import { notifyBotWebhook } from '../slack-bots/slackNotify';
 import type { CreateBotTicketSchema } from './bots.schema';
 
 const notFound = (w: string) => Object.assign(new Error(`${w} not found`), { status: 404, code: 'NOT_FOUND' });
@@ -53,6 +54,11 @@ function validateValues(fields: FieldRow[], raw: Record<string, unknown>): Recor
         if (!opts.includes(String(v))) throw badRequest(`"${f.label}" has an invalid selection`);
         out[f.key] = String(v); break;
       }
+      case 'USER_EMAIL': {
+        const email = String(v).trim().toLowerCase();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw badRequest(`"${f.label}" must be a valid email`);
+        out[f.key] = email; break;
+      }
       default: out[f.key] = String(v).slice(0, 5000);
     }
   }
@@ -91,5 +97,30 @@ export async function createBotTicket(
     data: { botId, customerId: user.customerId, ticketId: ticket.id, ticketNumber: ticket.ticketNumber, values, createdById: user.userId },
   });
 
-  return { ticket, botName: bot.name };
+  // Deliver the ticket into the bot's Slack channel (Incoming Webhook) so the bot
+  // can act on it. Best-effort: the ticket + submission are already saved.
+  let slackNotified = false;
+  if (bot.webhookUrlEnc) {
+    const [org, reporter] = await Promise.all([
+      prisma.customer.findUnique({ where: { id: user.customerId }, select: { name: true } }),
+      prisma.user.findUnique({ where: { id: user.userId }, select: { name: true } }),
+    ]);
+    const details = [...bot.formFields]
+      .sort((a, b) => a.order - b.order)
+      .filter((f) => values[f.key] !== undefined)
+      .map((f) => ({ label: f.label, value: String(values[f.key]) }));
+    slackNotified = await notifyBotWebhook(bot.webhookUrlEnc, {
+      ticketNumber: ticket.ticketNumber,
+      title: input.title,
+      description: input.description,
+      priority: input.priority,
+      type: input.type,
+      orgName: org?.name ?? 'Unknown organization',
+      reporterName: reporter?.name ?? 'Unknown',
+      botName: bot.name,
+      details,
+    });
+  }
+
+  return { ticket, botName: bot.name, slackNotified };
 }

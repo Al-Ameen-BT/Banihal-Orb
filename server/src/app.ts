@@ -24,6 +24,8 @@ import announcementsRoutes from './modules/announcements/announcements.routes';
 import ticketingRoutes from './modules/ticketing/ticketing.routes';
 import slackBotsRoutes from './modules/slack-bots/slackBots.routes';
 import botsRoutes from './modules/bots/bots.routes';
+import adIngestRoutes from './modules/ad-secrets/adIngest.routes';
+import adSecretsRoutes from './modules/ad-secrets/adSecrets.routes';
 
 const app = express();
 
@@ -48,6 +50,9 @@ app.use(express.json({ limit: '1mb' }));
 
 // ─── Public routes (no auth required) ───────────────────────────────────────
 app.use('/api/auth', authRoutes);
+// AD-automation machine ingest — authenticated by a per-bot API key (NOT a
+// session), so it is mounted before the cookie auth middleware.
+app.use('/api/ad-ingest', adIngestRoutes);
 
 // ─── Health check (verifies all three databases) ─────────────────────────────
 app.get('/health', async (_req, res) => {
@@ -80,6 +85,8 @@ app.use('/api/announcements', withTenant, announcementsRoutes);
 app.use('/api/ticketing', withTenant, ticketingRoutes);
 // Org-facing Slack bots — this org's assigned bots + create bot-assigned tickets.
 app.use('/api/bots', withTenant, botsRoutes);
+// Secure AD credential reveal — target user or requesting org-admin only.
+app.use('/api/ad-secrets', withTenant, adSecretsRoutes);
 
 // Sadmin / Administrator — platform-level access, no tenant scope
 app.use('/api/saas-admin', requireRole('ADMINISTRATOR'), saasAdminRoutes);

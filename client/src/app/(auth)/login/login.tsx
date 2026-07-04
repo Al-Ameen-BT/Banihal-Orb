@@ -39,6 +39,7 @@ export default function LoginPage() {
   const [challengeId, setChallengeId] = useState('');
   const [maskedEmail, setMaskedEmail] = useState('');
   const [code, setCode] = useState('');
+  const [rememberDevice, setRememberDevice] = useState(false);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState('');
@@ -70,11 +71,16 @@ export default function LoginPage() {
 
     setLoading(true);
     try {
-      const challenge = await login(result.data.email, result.data.password);
-      setChallengeId(challenge.challengeId);
-      setMaskedEmail(challenge.email);
+      const outcome = await login(result.data.email, result.data.password);
+      if (!outcome.mfaRequired) {
+        // Trusted device — the session is already established, no email code.
+        router.push('/dashboard');
+        return;
+      }
+      setChallengeId(outcome.challengeId);
+      setMaskedEmail(outcome.email);
       setCode('');
-      setInfo(`We sent a 6-digit verification code to ${challenge.email}.`);
+      setInfo(`We sent a 6-digit verification code to ${outcome.email}.`);
       setCooldown(RESEND_COOLDOWN);
       setPhase('code');
     } catch (err: unknown) {
@@ -94,7 +100,7 @@ export default function LoginPage() {
 
     setLoading(true);
     try {
-      await verifyMfa(challengeId, code);
+      await verifyMfa(challengeId, code, rememberDevice);
       router.push('/dashboard');
     } catch (err: unknown) {
       const resp = errData(err);
@@ -224,6 +230,14 @@ export default function LoginPage() {
                   placeholder="••••••"
                 />
               </div>
+
+              <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                <input
+                  type="checkbox" checked={rememberDevice} onChange={(e) => setRememberDevice(e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-300 text-brand focus:ring-2 focus:ring-brand/40 cursor-pointer"
+                />
+                <span className="text-sm text-slate-600">Remember this device for 7 days</span>
+              </label>
 
               <GlowButton type="submit" loading={loading} disabled={code.length !== 6} className="w-full">
                 {loading ? 'Verifying…' : 'Verify & sign in'}

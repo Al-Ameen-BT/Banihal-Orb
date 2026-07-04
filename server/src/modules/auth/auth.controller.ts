@@ -62,27 +62,42 @@ function parseCurrentSession(req: Request): authService.CurrentSession | null {
   }
 }
 
-// Step 1 of login: validate the password and email a one-time code. No session
-// cookies are set here — the client must complete /auth/mfa/verify.
+// Step 1 of login: validate the password. On a TRUSTED device (valid
+// `trustedDevice` cookie from a prior "remember this device" MFA verify) the
+// session cookies are issued immediately; otherwise a one-time code is emailed
+// and the client must complete /auth/mfa/verify.
 export async function login(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const input = LoginSchema.parse(req.body);
     // Refresh cookie (path /api/auth) is the durable same-browser proof — the
     // access cookie expires after 15 minutes and may be absent here.
     const rawRefresh = (req.cookies['refreshToken'] as string | undefined) ?? null;
-    const challenge = await authService.initiateLogin(input, parseCurrentSession(req), rawRefresh);
-    res.json({ mfaRequired: true, challengeId: challenge.challengeId, email: maskEmail(challenge.email) });
+    const trusted = (req.cookies['trustedDevice'] as string | undefined) ?? null;
+    const outcome = await authService.initiateLogin(input, parseCurrentSession(req), rawRefresh, trusted);
+    if (!outcome.mfaRequired) {
+      setTokenCookies(res, outcome.tokens);
+      res.json({ mfaRequired: false, message: 'Login successful' });
+      return;
+    }
+    res.json({ mfaRequired: true, challengeId: outcome.challenge.challengeId, email: maskEmail(outcome.challenge.email) });
   } catch (err) {
     next(err);
   }
 }
 
-// Step 2 of login: verify the emailed code and issue session cookies.
+// Step 2 of login: verify the emailed code and issue session cookies. With
+// rememberDevice, also set the trusted-device cookie so this browser skips the
+// code for the next TRUSTED_DEVICE_DAYS.
 export async function verifyMfa(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const input = VerifyMfaSchema.parse(req.body);
     const tokens = await authService.verifyMfa(input.challengeId, input.code);
     setTokenCookies(res, tokens);
+    if (input.rememberDevice) {
+      const device = await authService.createTrustedDevice(tokens.userId);
+      // Path /api/auth: the cookie only needs to reach the login endpoint.
+      res.cookie('trustedDevice', device.cookieValue, { ...COOKIE_OPTS, maxAge: device.maxAgeMs, path: '/api/auth' });
+    }
     res.json({ message: 'Login successful' });
   } catch (err) {
     next(err);

@@ -30,7 +30,7 @@ function buildPrisma() {
           // SlackBot / SlackBotFormField are platform-global (no customerId), managed by
           // administrators cross-tenant. SlackBotOrg / BotTicketSubmission keep customerId and
           // stay tenant-scoped so org reads auto-filter (admin routes carry no tenant context).
-          const globalModels = ['FeatureFlag', 'Customer', 'RefreshToken', 'Announcement', 'TicketNumberSetting', 'SlackBot', 'SlackBotFormField'];
+          const globalModels = ['FeatureFlag', 'Customer', 'RefreshToken', 'Announcement', 'TicketNumberSetting', 'SlackBot', 'SlackBotFormField', 'TrustedDevice'];
 
           if (store?.customerId && scopedOps.includes(operation) && !globalModels.includes(model)) {
             const existingWhere = (args['where'] as Record<string, unknown>) ?? {};

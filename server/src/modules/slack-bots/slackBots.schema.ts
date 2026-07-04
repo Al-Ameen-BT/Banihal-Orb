@@ -1,12 +1,19 @@
 import { z } from 'zod';
 
-export const BOT_FIELD_TYPES = ['TEXT', 'TEXTAREA', 'NUMBER', 'SELECT', 'CHECKBOX'] as const;
+export const BOT_FIELD_TYPES = ['TEXT', 'TEXTAREA', 'NUMBER', 'SELECT', 'CHECKBOX', 'USER_EMAIL'] as const;
+
+// Slack Incoming Webhook — posts ticket notifications into the bot's channel.
+const WebhookUrl = z.string().url().max(500).refine(
+  (u) => u.startsWith('https://hooks.slack.com/'),
+  'Must be a Slack incoming webhook URL (https://hooks.slack.com/…)',
+);
 
 export const CreateBotSchema = z.object({
   name: z.string().min(2).max(80),
   description: z.string().max(500).nullable().optional(),
   botToken: z.string().min(10).max(500),
   appToken: z.string().min(10).max(500).nullable().optional(),
+  webhookUrl: WebhookUrl.nullable().optional(),
 });
 
 export const UpdateBotSchema = z.object({
@@ -14,6 +21,7 @@ export const UpdateBotSchema = z.object({
   description: z.string().max(500).nullable().optional(),
   botToken: z.string().min(10).max(500).optional(),
   appToken: z.string().min(10).max(500).nullable().optional(), // null clears the app token
+  webhookUrl: WebhookUrl.nullable().optional(),                // null clears the webhook
   enabled: z.boolean().optional(),
 }).refine((d) => Object.keys(d).length > 0, { message: 'At least one field required' });
 

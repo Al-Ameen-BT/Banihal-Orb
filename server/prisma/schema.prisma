@@ -72,6 +72,7 @@ model User {
   refreshTokens       RefreshToken[]
   passwordResetTokens PasswordResetToken[]
   emailMfaChallenges  EmailMfaChallenge[]
+  trustedDevices      TrustedDevice[]
   requests            ServiceRequest[] @relation("UserRequests")
   announcements       Announcement[] @relation("UserAnnouncements")
   escalations         TicketEscalation[] @relation("UserEscalations")
@@ -123,6 +124,22 @@ model EmailMfaChallenge {
   consumedAt DateTime?
   createdAt  DateTime  @default(now())
   user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// "Remember this device" — set after a successful MFA verify; a valid device
+// cookie lets the SAME browser skip the email code on subsequent logins until
+// it expires. The random token is stored hashed (SHA-256); the cookie carries
+// `id.rawToken`. Revoked on password reset.
+model TrustedDevice {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
 }
@@ -350,6 +367,9 @@ model SlackBot {
   description   String?
   botTokenEnc   String
   appTokenEnc   String?
+  webhookUrlEnc String?
+  apiKeyHash    String?
+  apiKeyHint    String?
   botUserId     String?
   teamName      String?
   status        SlackBotStatus @default(DISCONNECTED)
@@ -425,4 +445,41 @@ enum BotFieldType {
   NUMBER
   SELECT
   CHECKBOX
+  USER_EMAIL
+}
+
+enum AdSecretStatus {
+  PENDING
+  DELIVERED
+  VIEWED
+  EXPIRED
+}
+
+// A temporary AD password delivered from a bot's AD automation for a specific
+// bot ticket. The secret is AES-256-GCM encrypted at rest and revealable ONCE by
+// each of the target user and the requesting org-admin; `secretEnc` is nulled the
+// moment it is fully consumed or expires (24h). Tenant-scoped via customerId.
+model AdCredentialDelivery {
+  id               String         @id @default(cuid())
+  botId            String
+  customerId       String
+  ticketId         String
+  ticketNumber     String
+  targetUserId     String?
+  targetEmail      String
+  requestedById    String
+  secretEnc        String?
+  status           AdSecretStatus @default(DELIVERED)
+  viewedByTarget   Boolean        @default(false)
+  viewedByRequester Boolean       @default(false)
+  expiresAt        DateTime
+  deliveredAt      DateTime       @default(now())
+  viewedAt         DateTime?
+  createdAt        DateTime       @default(now())
+
+  @@index([customerId])
+  @@index([targetUserId])
+  @@index([requestedById])
+  @@unique([botId, ticketNumber])
+  @@map("adCredentialDeliveries")
 }

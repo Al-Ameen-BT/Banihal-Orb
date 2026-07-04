@@ -20,6 +20,9 @@ export function BotFieldInput({ field, value, onChange, disabled }: {
     case 'NUMBER':
       control = <input type="number" value={value === undefined || value === null ? '' : String(value)} onChange={(e) => onChange(e.target.value)} className="input" {...common} />;
       break;
+    case 'USER_EMAIL':
+      control = <input type="email" value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} className="input" {...common} />;
+      break;
     case 'SELECT':
       control = (
         <select value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} className="input" disabled={disabled}>

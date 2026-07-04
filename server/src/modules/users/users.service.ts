@@ -35,8 +35,10 @@ export async function changeMyPassword(userId: string, input: ChangePasswordInpu
 
   const newHash = await bcrypt.hash(input.newPassword, 12);
   await prisma.user.update({ where: { id: userId }, data: { passwordHash: newHash } });
-  // Revoke all refresh tokens so other sessions are logged out
+  // Revoke all refresh tokens so other sessions are logged out, and drop trusted
+  // devices so every browser goes back through MFA on its next login.
   await prisma.refreshToken.deleteMany({ where: { userId } });
+  await prisma.trustedDevice.deleteMany({ where: { userId } }).catch(() => {});
 }
 
 export async function listUsers(input: PaginationInput) {

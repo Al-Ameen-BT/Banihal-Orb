@@ -78,7 +78,7 @@ export const authApi = {
   register: (data: unknown) => api.post('/auth/register', data),
   registerUser: (data: unknown) => api.post('/auth/register-user', data),
   login: (data: unknown) => api.post('/auth/login', data),
-  verifyMfa: (data: { challengeId: string; code: string }) => api.post('/auth/mfa/verify', data),
+  verifyMfa: (data: { challengeId: string; code: string; rememberDevice?: boolean }) => api.post('/auth/mfa/verify', data),
   resendMfa: (data: { challengeId: string }) => api.post('/auth/mfa/resend', data),
   logout: () => api.post('/auth/logout'),
   forgotPassword: (data: { email: string }) => api.post('/auth/forgot-password', data),
@@ -128,6 +128,7 @@ export const slackBotsApi = {
   remove: (id: string) => api.delete(`/slack-bots/${id}`),
   connect: (id: string) => api.post(`/slack-bots/${id}/connect`),
   disconnect: (id: string) => api.post(`/slack-bots/${id}/disconnect`),
+  generateApiKey: (id: string) => api.post(`/slack-bots/${id}/api-key`),
   customers: () => api.get('/slack-bots/customers'),
   // form fields
   addField: (id: string, data: unknown) => api.post(`/slack-bots/${id}/fields`, data),
@@ -142,6 +143,12 @@ export const slackBotsApi = {
 export const botsApi = {
   list: () => api.get('/bots'),
   createTicket: (id: string, data: unknown) => api.post(`/bots/${id}/tickets`, data),
+};
+
+// Secure AD credential deliveries — target user / requesting org-admin only.
+export const adSecretsApi = {
+  list: () => api.get('/ad-secrets'),
+  reveal: (id: string) => api.post(`/ad-secrets/${id}/reveal`),
 };
 
 // In-app Ticketing Tool — proxied through our server to the external ticketing

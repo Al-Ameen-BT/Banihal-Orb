@@ -372,6 +372,7 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
   const [botValues, setBotValues] = useState<Record<string, unknown>>({});
   const [submitting, setSubmitting] = useState(false);
   const [createdNo, setCreatedNo] = useState<string | null>(null);
+  const [sentToSlack, setSentToSlack] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const botMode = isOrgAdmin && assigneeMode === 'bot';
@@ -401,8 +402,11 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
         const { data } = await botsApi.createTicket(botId, {
           title: title.trim(), description: description.trim(), projectId, type, priority, values: botValues,
         });
-        ticketNumber = (data as { ticket: TicketDTO }).ticket.ticketNumber;
+        const res = data as { ticket: TicketDTO; slackNotified?: boolean };
+        ticketNumber = res.ticket.ticketNumber;
+        setSentToSlack(!!res.slackNotified);
       } else {
+        setSentToSlack(false);
         const { data } = await ticketingApi.createTicket({
           title: title.trim(),
           description: description.trim(),
@@ -420,7 +424,7 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
       resetForm();
       await queryClient.invalidateQueries({ queryKey: ['ticketing'] });
       onCreated?.();
-      setTimeout(() => setCreatedNo(null), 6000);
+      setTimeout(() => { setCreatedNo(null); setSentToSlack(false); }, 6000);
     } catch (err) {
       setError((err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Could not create the ticket. Please try again.');
     } finally { setSubmitting(false); }
@@ -502,6 +506,7 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
           </svg>
           Ticket created — <span className="font-mono font-bold">{createdNo}</span>
+          {sentToSlack && <span className="text-emerald-600">· sent to the bot&apos;s Slack channel</span>}
         </motion.div>
       )}
 

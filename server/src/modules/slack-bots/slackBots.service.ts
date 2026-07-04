@@ -1,6 +1,7 @@
 import type { z } from 'zod';
 import { prisma } from '../../config/database';
-import { encryptSecret, decryptSecret, maskToken } from '../../config/slackCrypto';
+import crypto from 'crypto';
+import { encryptSecret, decryptSecret, maskToken, hashApiKey } from '../../config/slackCrypto';
 import { runWithTicketDb } from '../../config/ticketDatabase';
 import { resolveBotTicketUser } from '../ticketing/ticketing.client';
 import { slackManager } from './slackManager';
@@ -19,6 +20,9 @@ function toBotDTO(b: BotRow & { formFields?: unknown[]; orgs?: unknown[] }) {
     teamName: b.teamName, botUserId: b.botUserId, enabled: b.enabled,
     botTokenHint: maskToken(safeDecrypt(b.botTokenEnc)),
     appTokenSet: !!b.appTokenEnc,
+    webhookSet: !!b.webhookUrlEnc,
+    apiKeySet: !!b.apiKeyHash,
+    apiKeyHint: b.apiKeyHint,
     fieldCount: b.formFields?.length ?? 0,
     orgCount: b.orgs?.length ?? 0,
     createdAt: b.createdAt.toISOString(),
@@ -59,6 +63,7 @@ export async function createBot(input: z.infer<typeof CreateBotSchema>) {
       name: input.name, slug, description: input.description ?? null,
       botTokenEnc: encryptSecret(input.botToken),
       appTokenEnc: input.appToken ? encryptSecret(input.appToken) : null,
+      webhookUrlEnc: input.webhookUrl ? encryptSecret(input.webhookUrl) : null,
       ticketUserId,
     },
     include: { formFields: true, orgs: true },
@@ -77,6 +82,7 @@ export async function updateBot(id: string, input: z.infer<typeof UpdateBotSchem
       ...(input.description !== undefined ? { description: input.description } : {}),
       ...(input.botToken !== undefined ? { botTokenEnc: encryptSecret(input.botToken) } : {}),
       ...(input.appToken !== undefined ? { appTokenEnc: input.appToken ? encryptSecret(input.appToken) : null } : {}),
+      ...(input.webhookUrl !== undefined ? { webhookUrlEnc: input.webhookUrl ? encryptSecret(input.webhookUrl) : null } : {}),
       ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
     },
   });
@@ -95,6 +101,18 @@ export async function setEnabled(id: string, enabled: boolean) {
   await prisma.slackBot.update({ where: { id }, data: { enabled } });
   await slackManager.reconcile(id);
   return getBot(id);
+}
+
+// Generate (or rotate) the per-bot machine API key used by the AD automation to
+// deliver temporary passwords. The raw key is returned ONCE; only its SHA-256 hash
+// and a masked hint are stored.
+export async function generateApiKey(id: string): Promise<{ apiKey: string; apiKeyHint: string }> {
+  const bot = await prisma.slackBot.findUnique({ where: { id }, select: { id: true } });
+  if (!bot) throw notFound('Bot');
+  const raw = `adk_${crypto.randomBytes(24).toString('hex')}`;
+  const apiKeyHint = maskToken(raw);
+  await prisma.slackBot.update({ where: { id }, data: { apiKeyHash: hashApiKey(raw), apiKeyHint } });
+  return { apiKey: raw, apiKeyHint };
 }
 
 // ─── Form fields ────────────────────────────────────────────────────────────

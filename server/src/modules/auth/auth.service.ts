@@ -262,13 +262,52 @@ export interface MfaChallenge {
   email: string;
 }
 
-// Step 1 of login: validate credentials, role, and the session lock, then email
-// a one-time code. Tokens are NOT issued here — verifyMfa does that.
+// ─── Trusted devices ("Remember this device") ───────────────────────────────
+// After a successful MFA verify with rememberDevice, the browser gets a
+// long-lived httpOnly cookie `id.rawToken`; a matching, unexpired row lets the
+// same browser skip the email code on later logins. Token stored SHA-256 hashed.
+export const TRUSTED_DEVICE_DAYS = 7;
+const sha256 = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
+
+export async function createTrustedDevice(userId: string): Promise<{ cookieValue: string; maxAgeMs: number }> {
+  // Housekeeping: drop this user's expired device rows.
+  await prisma.trustedDevice.deleteMany({ where: { userId, expiresAt: { lt: new Date() } } }).catch(() => {});
+  const raw = crypto.randomBytes(32).toString('hex');
+  const maxAgeMs = TRUSTED_DEVICE_DAYS * 24 * 60 * 60 * 1000;
+  const row = await prisma.trustedDevice.create({
+    data: { userId, tokenHash: sha256(raw), expiresAt: new Date(Date.now() + maxAgeMs) },
+    select: { id: true },
+  });
+  return { cookieValue: `${row.id}.${raw}`, maxAgeMs };
+}
+
+// True when the cookie identifies a live trusted device belonging to THIS user.
+async function isTrustedDevice(userId: string, cookieValue: string | null | undefined): Promise<boolean> {
+  if (!cookieValue) return false;
+  const dot = cookieValue.indexOf('.');
+  if (dot <= 0) return false;
+  const id = cookieValue.slice(0, dot);
+  const raw = cookieValue.slice(dot + 1);
+  const row = await prisma.trustedDevice.findUnique({ where: { id } });
+  if (!row || row.userId !== userId || row.expiresAt < new Date()) return false;
+  if (sha256(raw) !== row.tokenHash) return false;
+  await prisma.trustedDevice.update({ where: { id }, data: { lastUsedAt: new Date() } }).catch(() => {});
+  return true;
+}
+
+export type LoginOutcome =
+  | { mfaRequired: true; challenge: MfaChallenge }
+  | { mfaRequired: false; tokens: TokenPair };
+
+// Step 1 of login: validate credentials, role, and the session lock. On a
+// TRUSTED device the session is issued immediately (no email code); otherwise
+// a one-time code is emailed and verifyMfa issues the tokens.
 export async function initiateLogin(
   input: LoginInput,
   currentSession?: CurrentSession | null,
   rawRefreshToken?: string | null,
-): Promise<MfaChallenge> {
+  trustedDeviceCookie?: string | null,
+): Promise<LoginOutcome> {
   const user = await prisma.user.findUnique({
     where: { email: input.email },
     select: { id: true, email: true, customerId: true, role: true, passwordHash: true },
@@ -288,15 +327,24 @@ export async function initiateLogin(
 
   await assertNoActiveOtherSession(user, currentSession, rawRefreshToken);
 
+  // Trusted device → password alone completes the login (MFA was proven on this
+  // browser within the last TRUSTED_DEVICE_DAYS).
+  if (await isTrustedDevice(user.id, trustedDeviceCookie)) {
+    await prisma.auditLog.create({
+      data: { action: 'LOGIN_TRUSTED_DEVICE', performedById: user.id, customerId: user.customerId, metadata: { role: user.role } },
+    }).catch(() => {});
+    return { mfaRequired: false, tokens: await finalizeLogin(user) };
+  }
+
   const challengeId = await issueMfaChallenge(user.id, user.email);
   await prisma.auditLog.create({
     data: { action: 'MFA_CHALLENGE_SENT', performedById: user.id, customerId: user.customerId, metadata: { role: user.role } },
   }).catch(() => {});
-  return { challengeId, email: user.email };
+  return { mfaRequired: true, challenge: { challengeId, email: user.email } };
 }
 
 // Step 2 of login: validate the emailed code and issue session tokens.
-export async function verifyMfa(challengeId: string, code: string): Promise<TokenPair> {
+export async function verifyMfa(challengeId: string, code: string): Promise<TokenPair & { userId: string }> {
   const challenge = await prisma.emailMfaChallenge.findUnique({
     where: { id: challengeId },
     include: { user: { select: { id: true, customerId: true, role: true } } },
@@ -323,7 +371,8 @@ export async function verifyMfa(challengeId: string, code: string): Promise<Toke
 
   // Burn the challenge so the code can't be replayed.
   await prisma.emailMfaChallenge.delete({ where: { id: challenge.id } }).catch(() => {});
-  return finalizeLogin(challenge.user);
+  const tokens = await finalizeLogin(challenge.user);
+  return { ...tokens, userId: challenge.user.id };
 }
 
 // Re-send a fresh code for an in-flight challenge (subject to a short cooldown).
@@ -492,8 +541,10 @@ export async function resetPassword(input: ResetPasswordInput): Promise<void> {
   });
 
   // Revoke every active session — a password reset must log the user out
-  // everywhere (mirrors changeMyPassword).
+  // everywhere (mirrors changeMyPassword) — and drop all trusted devices so
+  // the next login on any browser goes through MFA again.
   await prisma.refreshToken.deleteMany({ where: { userId: matchedToken.userId } });
+  await prisma.trustedDevice.deleteMany({ where: { userId: matchedToken.userId } }).catch(() => {});
 
   await prisma.auditLog.create({
     data: { action: 'PASSWORD_RESET', performedById: matchedToken.userId, customerId: matchedToken.user.customerId, metadata: { role: matchedToken.user.role } },

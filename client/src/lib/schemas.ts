@@ -346,7 +346,7 @@ export interface TicketReport {
 }
 
 // ─── Slack bots ──────────────────────────────────────────────────────────────
-export type BotFieldType = 'TEXT' | 'TEXTAREA' | 'NUMBER' | 'SELECT' | 'CHECKBOX';
+export type BotFieldType = 'TEXT' | 'TEXTAREA' | 'NUMBER' | 'SELECT' | 'CHECKBOX' | 'USER_EMAIL';
 export type SlackBotStatus = 'CONNECTED' | 'DISCONNECTED' | 'ERROR';
 
 export interface SlackBotField {
@@ -375,12 +375,28 @@ export interface SlackBot {
   enabled: boolean;
   botTokenHint: string;
   appTokenSet: boolean;
+  webhookSet: boolean;
+  apiKeySet: boolean;
+  apiKeyHint: string | null;
   fieldCount: number;
   orgCount: number;
   createdAt: string;
   // present on the single-bot fetch
   formFields?: SlackBotField[];
   orgIds?: string[];
+}
+
+// A delivered temporary AD credential — status/flags only, never the secret.
+export interface AdCredentialDelivery {
+  id: string;
+  ticketNumber: string;
+  targetEmail: string;
+  status: 'PENDING' | 'DELIVERED' | 'VIEWED' | 'EXPIRED';
+  role: 'target' | 'requester' | 'both';
+  canReveal: boolean;
+  alreadyViewed: boolean;
+  expiresAt: string;
+  deliveredAt: string;
 }
 
 // Org-facing view — what an org-admin needs to assign a bot to a ticket.

@@ -27,3 +27,9 @@ export function maskToken(plain: string): string {
   if (plain.length <= 8) return '••••';
   return `${plain.slice(0, 5)}…${plain.slice(-4)}`;
 }
+
+// SHA-256 of an API key for constant-lookup, non-reversible storage. Used for the
+// per-bot machine API key (the AD automation presents the raw key; we match hashes).
+export function hashApiKey(raw: string): string {
+  return crypto.createHash('sha256').update(raw).digest('hex');
+}
