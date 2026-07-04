@@ -23,5 +23,8 @@ export const corsOptions: CorsOptions = {
 export const rateLimitConfig = {
   global: { windowMs: 15 * 60 * 1000, max: 100 },
   auth: { windowMs: 15 * 60 * 1000, max: 100 },
-  chat: { windowMs: 60 * 1000, max: 15 },
+  // Per authenticated user (see chatRateLimiter keyGenerator). Generous headroom
+  // so an interactive assistant session is never throttled in normal use; the cap
+  // only guards the LLM backend against a single runaway/abusive user.
+  chat: { windowMs: 60 * 1000, max: 60 },
 };

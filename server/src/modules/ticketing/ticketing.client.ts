@@ -305,7 +305,11 @@ export async function resolveBotTicketUser(bot: { name: string; slug: string }):
 // ─── Staff (assignee pool) ─────────────────────────────────────────────────────
 export async function listStaff(): Promise<Array<{ id: string; name: string; email: string; role: string }>> {
   const rows = await getTicketDb().users.findMany({
-    where: { isActive: true, NOT: { email: { endsWith: BOT_EMAIL_DOMAIN } } },
+    // Exclude platform administrators (role 'admin') from the org-facing assignee
+    // pool. They live in the isolated admin store and must not be assignable — or
+    // even enumerable/countable — from an org-level New Ticket form. Administrator
+    // callers get their own pool from listAdminAssignees() instead.
+    where: { isActive: true, role: { not: 'admin' }, NOT: { email: { endsWith: BOT_EMAIL_DOMAIN } } },
     select: { id: true, firstName: true, lastName: true, email: true, role: true },
     orderBy: [{ firstName: 'asc' }],
   });

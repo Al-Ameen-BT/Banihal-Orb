@@ -29,5 +29,11 @@ export const chatRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skip: () => isTestEnv,
+  // Key on the authenticated user, not the client IP. The chat route runs behind
+  // auth + a reverse proxy (trust proxy is not set), so req.ip resolves to the
+  // proxy's address — keying on it would collapse every user into ONE shared
+  // bucket and throttle the whole platform's assistant at once. userId keeps the
+  // limit strictly per-user; req.ip is only a fallback (never hit while authed).
+  keyGenerator: (req) => req.user?.userId ?? req.ip ?? 'anonymous',
   message: { error: 'Too many messages, please slow down', code: 'CHAT_RATE_LIMITED' },
 });
