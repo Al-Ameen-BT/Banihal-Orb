@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { saasAdminApi, ticketingApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import RoleGuard from '@/components/guards/RoleGuard';

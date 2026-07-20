@@ -102,10 +102,6 @@ export const orgsApi = {
   getServices: () => api.get('/organizations/me/services'),
 };
 
-export const dashboardApi = {
-  getKpis: () => api.get('/dashboard/kpis'),
-  getQueue: (params?: Record<string, unknown>) => api.get('/dashboard/queue', { params }),
-};
 
 export const requestsApi = {
   create: (data: unknown) => api.post('/requests', data),

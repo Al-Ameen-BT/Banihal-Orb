@@ -206,12 +206,6 @@ cookie (`authMiddleware`); tenant-scoped groups also run `tenantMiddleware`.
 | PATCH | `/me/security` | ORG_ADMIN+ | Toggle SSO / MFA requirements. |
 | GET | `/me/services` | any | The org's subscribed services + monthly total. |
 
-### Dashboard — `/api/dashboard` (auth + tenant)
-| Method | Path | Role | Purpose |
-|---|---|---|---|
-| GET | `/kpis` | ORG_ADMIN+ | Active users, plan, credit limit, revenue placeholders. |
-| GET | `/queue` | any | Action queue (e.g. users pending MFA setup). |
-
 ### Support Tickets — `/api/requests` (auth + tenant)
 | Method | Path | Role | Purpose |
 |---|---|---|---|
@@ -445,7 +439,6 @@ PUBLIC      POST   /api/auth/{register,register-user,login,refresh,logout}
 
 USER+       GET    /api/users/me              PATCH /api/users/me            PATCH /api/users/me/password
             GET    /api/organizations/me      GET   /api/organizations/me/services
-            GET    /api/dashboard/queue
             POST   /api/requests              GET   /api/requests            GET  /api/requests/:id
             PATCH  /api/requests/:id/close
             POST   /api/chat                  GET   /api/chat/sessions       GET  /api/chat/sessions/:id
@@ -454,7 +447,6 @@ USER+       GET    /api/users/me              PATCH /api/users/me            PAT
 ORG_ADMIN+  GET    /api/users                 POST  /api/users/invite        PATCH /api/users/:id/role
             DELETE /api/users/:id
             PATCH  /api/organizations/me       PATCH /api/organizations/me/security
-            GET    /api/dashboard/kpis
             GET    /api/requests/org
 
 ADMIN ONLY  /api/saas-admin/* (orgs, admins, impersonate, users, metrics,

@@ -1,15 +1,18 @@
 import { z } from 'zod';
 
+// Shared password policy: 12+ chars with upper, lower, number, and symbol.
+const PasswordSchema = z
+  .string()
+  .min(12)
+  .regex(
+    /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])/,
+    'Password must contain uppercase, lowercase, number, and special character',
+  );
+
 export const RegisterSchema = z.object({
   name: z.string().min(2).max(80),
   email: z.string().email(),
-  password: z
-    .string()
-    .min(12)
-    .regex(
-      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])/,
-      'Password must contain uppercase, lowercase, number, and special character',
-    ),
+  password: PasswordSchema,
   organizationName: z.string().min(2).max(100),
   contactNumber: z.string().min(7, 'Contact number is required').max(20),
 });
@@ -24,16 +27,8 @@ export const LoginSchema = z.object({
 export const RegisterUserSchema = z.object({
   name: z.string().min(2).max(80),
   email: z.string().email(),
-  password: z
-    .string()
-    .min(12)
-    .regex(
-      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])/,
-      'Password must contain uppercase, lowercase, number, and special character',
-    ),
+  password: PasswordSchema,
 });
-
-export const RefreshSchema = z.object({});
 
 export type RegisterInput = z.infer<typeof RegisterSchema>;
 export type RegisterUserInput = z.infer<typeof RegisterUserSchema>;
@@ -46,13 +41,7 @@ export type ForgotPasswordInput = z.infer<typeof ForgotPasswordSchema>;
 
 export const ResetPasswordSchema = z.object({
   token: z.string().min(1, 'Token is required'),
-  newPassword: z
-    .string()
-    .min(12)
-    .regex(
-      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])/,
-      'Password must contain uppercase, lowercase, number, and special character',
-    ),
+  newPassword: PasswordSchema,
 });
 export type ResetPasswordInput = z.infer<typeof ResetPasswordSchema>;
 
@@ -62,9 +51,7 @@ export const VerifyMfaSchema = z.object({
   code: z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code'),
   rememberDevice: z.boolean().optional(), // "Remember this device for 7 days"
 });
-export type VerifyMfaInput = z.infer<typeof VerifyMfaSchema>;
 
 export const ResendMfaSchema = z.object({
   challengeId: z.string().min(1, 'Challenge is required'),
 });
-export type ResendMfaInput = z.infer<typeof ResendMfaSchema>;

@@ -131,7 +131,6 @@ function ChatPageInner() {
                   key={`${resumeId ?? 'new'}-${chatEpoch}`}
                   userName={user?.name}
                   orgName={org?.name}
-                  userRole={user?.role}
                   onUserMessage={handleMessage}
                   initialMessages={initialMessages}
                   onNewChat={startNewChat}

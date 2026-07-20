@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useMemo, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ticketingApi } from '@/lib/api';
-import type { TicketProject, TicketType, TicketPriority, TicketDTO, Role } from '@/lib/schemas';
+import type { TicketProject, TicketType, TicketPriority, TicketDTO } from '@/lib/schemas';
 
 interface TicketMeta {
   ticketNumber: string;
@@ -43,8 +43,6 @@ interface ChatbotProps {
   onNewChat?: () => void;
   userName?: string;
   orgName?: string;
-  /** User role — drives which ticket form fields are shown. */
-  userRole?: Role;
   className?: string;
 }
 
@@ -307,7 +305,7 @@ function TicketCreatedCard({ meta }: { meta: TicketMeta }) {
   );
 }
 
-export default function Chatbot({ onUserMessage, initialMessages, onNewChat, userName, orgName, userRole, className }: ChatbotProps) {
+export default function Chatbot({ onUserMessage, initialMessages, onNewChat, userName, orgName, className }: ChatbotProps) {
   const queryClient = useQueryClient();
 
   const greeting = useMemo(() => {

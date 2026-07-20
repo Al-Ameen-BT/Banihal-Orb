@@ -159,33 +159,6 @@ function TicketNumberingCard() {
   );
 }
 
-// ─── Platform Activity types / config (Administrator dashboard) ──────────────
-interface SystemLogEntry {
-  id: string; action: string; createdAt: string;
-  metadata: Record<string, unknown> | null;
-  performedBy: { id: string; name: string; email: string; role: string };
-  organization: { id: string; name: string; slug: string } | null;
-}
-interface SystemActivityResp { items: SystemLogEntry[]; total: number; page: number; limit: number; }
-const ACTIVITY_LABEL: Record<string, { label: string; cls: string; icon: string }> = {
-  LOGIN:            { label: 'Logged in',       cls: 'text-emerald-700 bg-emerald-50', icon: '→' },
-  LOGOUT:           { label: 'Signed out',       cls: 'text-slate-600 bg-slate-100',   icon: '←' },
-  CUSTOMER_CREATED: { label: 'Org created',      cls: 'text-indigo-700 bg-indigo-50',  icon: '+' },
-  USER_REGISTERED:  { label: 'User registered',  cls: 'text-cyan-700 bg-cyan-50',      icon: '★' },
-};
-const roleBadgeCls: Record<string, string> = {
-  USER:          'text-slate-600 bg-slate-100',
-  ORG_ADMIN:     'text-violet-700 bg-violet-50',
-  ADMINISTRATOR: 'text-rose-700 bg-rose-50',
-};
-const PLATFORM_ACT_TABS = [
-  { key: 'all-logins',   label: 'All Logins',       action: 'LOGIN',            role: '' },
-  { key: 'user-logins',  label: 'User Logins',       action: 'LOGIN',            role: 'USER' },
-  { key: 'admin-logins', label: 'Org Admin Logins',  action: 'LOGIN',            role: 'ORG_ADMIN' },
-  { key: 'org-created',  label: 'Org Creations',     action: 'CUSTOMER_CREATED', role: '' },
-] as const;
-type PlatformActTab = typeof PLATFORM_ACT_TABS[number]['key'];
-
 // ─── Helpers / atoms ─────────────────────────────────────────────────────────
 function Badge({ text, cls }: { text: string; cls: string }) {
   return <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold ${cls}`}>{text}</span>;

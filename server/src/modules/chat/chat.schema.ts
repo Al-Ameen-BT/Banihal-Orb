@@ -14,4 +14,3 @@ export const ChatRequestSchema = z.object({
 });
 
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;
-export type ChatRequest = z.infer<typeof ChatRequestSchema>;

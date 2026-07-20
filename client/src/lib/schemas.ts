@@ -1,15 +1,18 @@
 import { z } from 'zod';
 
+// Mirrors the server's password policy (12+ chars, mixed case, number, symbol).
+const PasswordSchema = z
+  .string()
+  .min(12)
+  .regex(
+    /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])/,
+    'Password must contain uppercase, lowercase, number, and special character',
+  );
+
 export const RegisterSchema = z.object({
   name: z.string().min(2).max(80),
   email: z.string().email(),
-  password: z
-    .string()
-    .min(12)
-    .regex(
-      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])/,
-      'Password must contain uppercase, lowercase, number, and special character',
-    ),
+  password: PasswordSchema,
   organizationName: z.string().min(2).max(100),
   contactNumber: z.string().min(7, 'Contact number is required').max(20),
 });
@@ -19,36 +22,13 @@ export const RegisterSchema = z.object({
 export const RegisterUserSchema = z.object({
   name: z.string().min(2).max(80),
   email: z.string().email(),
-  password: z
-    .string()
-    .min(12)
-    .regex(
-      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])/,
-      'Password must contain uppercase, lowercase, number, and special character',
-    ),
+  password: PasswordSchema,
 });
 
 export const LoginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
 });
-
-export const UpdateMeSchema = z.object({
-  name: z.string().min(2).max(80).optional(),
-  mfaEnabled: z.boolean().optional(),
-});
-
-export const InviteUserSchema = z.object({
-  email: z.string().email(),
-  name: z.string().min(2).max(80),
-  role: z.enum(['USER', 'ORG_ADMIN']),
-});
-
-export type RegisterInput = z.infer<typeof RegisterSchema>;
-export type RegisterUserInput = z.infer<typeof RegisterUserSchema>;
-export type LoginInput = z.infer<typeof LoginSchema>;
-export type UpdateMeInput = z.infer<typeof UpdateMeSchema>;
-export type InviteUserInput = z.infer<typeof InviteUserSchema>;
 
 // ─── 3-tier RBAC: USER → ORG_ADMIN → ADMINISTRATOR ──────────────────────────
 export type Role = 'USER' | 'ORG_ADMIN' | 'ADMINISTRATOR';
@@ -233,24 +213,6 @@ export interface TicketDTO {
   counts: { comments: number; attachments: number; watchers: number };
   createdAt: string;
   updatedAt: string;
-}
-
-// ─── Ticket escalations (org admin → platform Administrators) ───────────────
-export type EscalationStatus = 'OPEN' | 'ACKNOWLEDGED' | 'RESOLVED';
-
-export interface TicketEscalation {
-  id: string;
-  customerId: string;
-  ticketId: string;
-  subject: string;
-  issueType: string;
-  priority: Priority;
-  note: string | null;
-  status: EscalationStatus;
-  createdAt: string;
-  updatedAt: string;
-  customer?: { id: string; name: string; plan?: Plan };
-  escalatedBy?: { id: string; name: string; email: string } | null;
 }
 
 export interface TicketAttachment {

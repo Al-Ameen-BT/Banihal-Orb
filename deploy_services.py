@@ -13,7 +13,6 @@ import sys
 import shutil
 import subprocess
 import argparse
-import getpass
 import signal
 import threading
 import time
@@ -432,7 +431,7 @@ WantedBy=multi-user.target
 
     print("\n🎉 Deployment Successful!")
     print("----------------------------------------------------------------------")
-    print(f"The unified platform is now active and running under systemd!")
+    print("The unified platform is now active and running under systemd!")
     print("\nUseful monitoring commands:")
     print("  * Monitor logs:           journalctl -u b2bweb.service -f -n 100")
     print("  * Check service status:   systemctl status b2bweb.service")

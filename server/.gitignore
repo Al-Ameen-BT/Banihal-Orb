@@ -40,3 +40,6 @@ pnpm-debug.log*
 .DS_Store
 Thumbs.db
 
+__pycache__/
+pycache/*
+

@@ -69,4 +69,3 @@ if (!result.success) {
 }
 
 export const env = result.data;
-export type Env = typeof env;

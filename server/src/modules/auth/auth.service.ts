@@ -2,7 +2,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { Role } from '@prisma/client';
-import { prisma, customerContext } from '../../config/database';
+import { prisma } from '../../config/database';
 import { env } from '../../config/env';
 import { uniqueOrgCode } from '../../utils/orgCode';
 import * as mailService from '../mail/mail.service';
@@ -472,11 +472,6 @@ export function signImpersonationToken(userId: string, customerId: string, role:
   return jwt.sign({ userId, customerId, role, type: 'impersonation' }, env.IMPERSONATION_SECRET, {
     expiresIn: '5m',
   });
-}
-
-// Run a callback outside tenant scope (for SADMIN / ADMINISTRATOR global queries)
-export async function withoutTenantScope<T>(fn: () => Promise<T>): Promise<T> {
-  return customerContext.run({} as { customerId: string }, fn);
 }
 
 export async function forgotPassword(input: ForgotPasswordInput): Promise<void> {
