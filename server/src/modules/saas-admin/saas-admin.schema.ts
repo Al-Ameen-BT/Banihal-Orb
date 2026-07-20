@@ -132,6 +132,15 @@ export const SystemActivitySchema = z.object({
   to: z.coerce.date().optional(),
 });
 
+// ─── Logins-by-organization summary (ADMINISTRATOR login monitoring) ────────
+// Groups successful LOGIN events per org over an optional date window. `role`
+// narrows to a single actor role (e.g. only ORG_ADMIN logins).
+export const LoginsByOrgSchema = z.object({
+  role: z.enum(['USER', 'ORG_ADMIN', 'ADMINISTRATOR']).optional(),
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+});
+
 // ─── Users (ADMINISTRATOR edits org users / admins) ─────────────────────────
 export const UpdateUserSchema = z.object({
   name: z.string().min(2).max(80).optional(),
@@ -153,6 +162,7 @@ export type CreateCatalogServiceInput = z.infer<typeof CreateCatalogServiceSchem
 export type UpdateCatalogServiceInput = z.infer<typeof UpdateCatalogServiceSchema>;
 export type UpdateUserInput = z.infer<typeof UpdateUserSchema>;
 export type SystemActivityInput = z.infer<typeof SystemActivitySchema>;
+export type LoginsByOrgInput = z.infer<typeof LoginsByOrgSchema>;
 export type CreateAnnouncementInput = z.infer<typeof CreateAnnouncementSchema>;
 export type UpdateAnnouncementInput = z.infer<typeof UpdateAnnouncementSchema>;
 export type ListEscalationsInput = z.infer<typeof ListEscalationsSchema>;

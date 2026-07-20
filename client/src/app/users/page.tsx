@@ -105,6 +105,9 @@ interface SystemLogEntry {
   organization: { id: string; name: string; slug: string } | null;
 }
 interface SystemActivityResp { items: SystemLogEntry[]; total: number; page: number; limit: number }
+// Logins classified by organization (compliance / log-analysis summary)
+interface OrgLoginStat { id: string; name: string; slug: string | null; logins: number; users: number; lastLogin: string | null }
+interface LoginsByOrgResp { items: OrgLoginStat[]; totalLogins: number; orgCount: number }
 const ACTION_LABEL: Record<string, { label: string; cls: string; icon: string }> = {
   LOGIN:                               { label: 'Logged in',        cls: 'text-emerald-700 bg-emerald-50', icon: '→' },
   LOGOUT:                              { label: 'Signed out',       cls: 'text-slate-600 bg-slate-100',    icon: '←' },
@@ -220,6 +223,22 @@ export default function UsersPage() {
     staleTime: 10_000,
     refetchInterval: 20_000,
   });
+  // Logins-by-org summary — shares the role + date filters so the classification
+  // matches the detailed log below. Not affected by the org filter (it IS the
+  // per-org breakdown) or the event filter (it always counts LOGINs).
+  const loginStatParams: Record<string, unknown> = {
+    ...(logRole ? { role: logRole } : {}),
+    ...(logFrom ? { from: logFrom } : {}),
+    ...(logTo ? { to: logTo } : {}),
+  };
+  const { data: loginsByOrg, isLoading: loginsByOrgLoading } = useQuery<LoginsByOrgResp>({
+    queryKey: ['logins-by-org', loginStatParams],
+    queryFn: () => saasAdminApi.getLoginsByOrg(loginStatParams).then((r) => r.data as LoginsByOrgResp),
+    enabled: isPlatformAdmin,
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+  });
+
   // Any filter change resets to the first page.
   const onFilter = <T,>(setter: (v: T) => void) => (v: T) => { setter(v); setLogPage(1); };
   const logTotal = syslog?.total ?? 0;
@@ -527,6 +546,46 @@ export default function UsersPage() {
                 <div className="flex items-baseline justify-between mb-4">
                   <h2 className="text-base font-semibold text-slate-900">System Activity Log</h2>
                   <span className="text-xs text-slate-400">{logTotal} {logTotal === 1 ? 'event' : 'events'}</span>
+                </div>
+
+                {/* Logins classified by organization — click an org to drill the log below into it */}
+                <div className="card p-4 mb-4">
+                  <div className="flex items-baseline justify-between mb-3">
+                    <h3 className="text-sm font-semibold text-slate-900">Logins by Organization</h3>
+                    <span className="text-xs text-slate-400">
+                      {loginsByOrg ? `${loginsByOrg.totalLogins} logins · ${loginsByOrg.orgCount} orgs` : ''}
+                      {(logRole || logFrom || logTo) ? ' · filtered' : ''}
+                    </span>
+                  </div>
+                  {loginsByOrgLoading ? (
+                    <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <ShimmerRow key={i} />)}</div>
+                  ) : !loginsByOrg?.items.length ? (
+                    <p className="py-6 text-center text-sm text-slate-400">No logins in this window.</p>
+                  ) : (
+                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                      {loginsByOrg.items.map((o) => {
+                        const active = logOrg === o.id;
+                        return (
+                          <button
+                            key={o.id}
+                            type="button"
+                            onClick={() => onFilter(setLogOrg)(active ? '' : o.id)}
+                            aria-pressed={active}
+                            title={active ? 'Clear org filter' : `Filter the log to ${o.name}`}
+                            className={`text-left rounded-lg border px-3 py-2.5 transition-colors ${active ? 'border-brand-400 bg-brand-50' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'}`}
+                          >
+                            <div className="flex items-baseline justify-between gap-2">
+                              <span className="truncate text-sm font-semibold text-slate-900">{o.name}</span>
+                              <span className="shrink-0 text-sm font-mono font-semibold tabular-nums text-brand-700">{o.logins}</span>
+                            </div>
+                            <div className="mt-0.5 text-[11px] text-slate-500">
+                              {o.users} {o.users === 1 ? 'user' : 'users'} · {o.lastLogin ? `last ${timeAgo(o.lastLogin)}` : 'no logins'}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 {/* Filters */}

@@ -5,7 +5,7 @@ import {
   ListServicesSchema, UpdateServiceSchema, RenewServiceSchema,
   AssignServiceSchema,
   CreateCatalogServiceSchema, UpdateCatalogServiceSchema,
-  UpdateUserSchema, SystemActivitySchema,
+  UpdateUserSchema, SystemActivitySchema, LoginsByOrgSchema,
   CreateAnnouncementSchema, UpdateAnnouncementSchema,
   ListEscalationsSchema, UpdateEscalationSchema,
   TicketNumberFormatSchema,
@@ -250,6 +250,14 @@ export async function getSystemActivity(req: Request, res: Response, next: NextF
   try {
     const input = SystemActivitySchema.parse(req.query);
     const result = await saasAdminService.getSystemActivity(input);
+    res.json(result);
+  } catch (err) { next(err); }
+}
+
+export async function getLoginsByOrg(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = LoginsByOrgSchema.parse(req.query);
+    const result = await saasAdminService.getLoginsByOrg(input);
     res.json(result);
   } catch (err) { next(err); }
 }

@@ -63,6 +63,7 @@ router.put('/ticket-number-format', saasAdminController.updateTicketNumberFormat
 // Administrator-only: SADMIN activity feed + Sadmin management
 router.get('/activity', onlyAdministrator, saasAdminController.getSadminActivity);
 router.get('/system-activity', onlyAdministrator, saasAdminController.getSystemActivity);
+router.get('/logins-by-org', onlyAdministrator, saasAdminController.getLoginsByOrg);
 router.get('/sadmins', onlyAdministrator, saasAdminController.listSadmins);
 router.patch('/sadmins/:id', onlyAdministrator, saasAdminController.updateSadmin);
 router.delete('/sadmins/:id', onlyAdministrator, saasAdminController.removeSadmin);

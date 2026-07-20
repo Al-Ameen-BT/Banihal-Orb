@@ -233,7 +233,7 @@ cookie (`authMiddleware`); tenant-scoped groups also run `tenantMiddleware`.
 | **Services** | `GET /services`, `POST /customers/:customerId/services`, `PATCH /services/:id`, `POST /services/:id/renew`, `DELETE /services/:id` |
 | **Catalog** | `GET /catalog`, `POST /catalog`, `PATCH /catalog/:id`, `DELETE /catalog/:id` |
 | **Flags** | `GET /flags`, `PATCH /flags/:key` |
-| **Activity / Sadmins** (`ADMINISTRATOR`) | `GET /activity`, `GET /system-activity`, `GET /sadmins`, `PATCH /sadmins/:id`, `DELETE /sadmins/:id`, `POST /sadmins/:id/reset-password` |
+| **Activity / Sadmins** (`ADMINISTRATOR`) | `GET /activity`, `GET /system-activity`, `GET /logins-by-org` (per-org login classification: count, unique users, last login; filters `role`/`from`/`to`), `GET /sadmins`, `PATCH /sadmins/:id`, `DELETE /sadmins/:id`, `POST /sadmins/:id/reset-password` |
 
 Errors are returned as `{ error, code, details? }`; Zod failures use code `VALIDATION_ERROR` with `fieldErrors`.
 

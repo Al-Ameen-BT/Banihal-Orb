@@ -1,37 +1,48 @@
-# 🛡️ Tech — Managed Cybersecurity Platform
+# 🛡️ Tech — Managed Cybersecurity SaaS Platform
 
-Tech is a premium, multi-tenant B2B SaaS cybersecurity operations and client management platform designed for Managed Security Service Providers (MSSPs). It empowers platform administrators and client organization admins to manage active threat intelligence feeds, incident response tickets, endpoint protection subscriptions, compliance metrics, and tenant-level system configurations.
+Tech is a production-style, multi-tenant **B2B SaaS** platform for selling and managing **managed cybersecurity services** (SIEM, SOC, EDR, Zero Trust, DLP, and more). It pairs a hardened **Express + Prisma** API with a **Next.js 14** console, serving three audiences from one codebase: end users at client organizations, their organization admins, and the platform provider's administrators (a separate Control Plane).
 
 ---
 
 ## 🚀 Key Features
 
-*   **👥 Multi-Tenant Architecture & Isolation**: Strict workspace boundary isolation using custom Prisma request contexts, ensuring tenants can never access or query each other's data.
+*   **👥 Multi-Tenant Isolation**: Every Prisma query is transparently hard-scoped to the caller's organization via a Node `AsyncLocalStorage` context (a custom Prisma client extension), so tenants can never read or mutate each other's data. `create`/`groupBy` are scoped explicitly where the extension can't inject a filter.
 *   **🔐 3-Tier Role-Based Access Control (RBAC)**:
-    *   `SAAS_ADMIN` (Super Admin): Full Control Plane visibility, cross-tenant impersonation, global system configuration, and audit logs.
-    *   `ORG_ADMIN` (Tenant Admin): Control over organization settings, active cybersecurity subscriptions, billing history, and team invites.
-    *   `USER` (Standard Analyst): Access to the security dashboard, AI threat assistant, and incident support ticket filing.
-*   **📊 Cybersecurity Subscriptions Catalog**: Real-time tracking of premium security products including **SIEM**, **SOC-as-a-Service**, **Endpoint Detection & Response (EDR)**, **Threat Intel**, **Zero Trust Access**, and **Compliance Monitoring** with automated renewal alerts.
-*   **📝 Audit Trail Logging & Compliance**: Automatic, transaction-scoped compliance recording of platform events (such as logins, tenant suspensions, cross-tenant impersonation, and plan changes).
-*   **⌨️ Command Menu (`Cmd+K` / `Ctrl+K`)**: Power-user keyboard-navigable command center for ultra-fast navigation across the dashboard, support portals, and administrative views.
-*   **🤖 AI Threat Assistant**: Custom integrated virtual assistant to guide security analysts and respond to threat vectors.
+    *   `ADMINISTRATOR` — the software provider's super-admin: cross-tenant Control Plane, impersonation, global config, audit feeds. Gated to work-email domains listed in `ADMIN_DOMAINS`.
+    *   `ORG_ADMIN` — tenant admin: org-wide ticket overview, user management, org settings, subscribed services.
+    *   `USER` — standard member: dashboard, AI assistant, and raising/tracking their own tickets.
+*   **✉️ Email MFA on Every Login**: Two-step auth — password first, then a 6-digit code emailed via SMTP. Includes "remember this device" trusted-device cookies (7 days) and strict **single-active-session** enforcement with an idle-takeover window.
+*   **🎫 In-App Ticketing Tool**: A full ticketing workflow backed by a dedicated 14-table schema — projects, SLAs (response/resolution clocks), comments, file attachments, watchers, and activity history. Org admins can **escalate** an open ticket to the platform administrators, who work it in an **isolated admin ticket store**.
+*   **📨 Support Requests**: Lightweight service-request intake (`/api/requests`) with per-org and per-user views, priorities, and status tracking.
+*   **🤖 AI Assistant (persisted)**: A chat assistant proxied over SSE to an external "Analytics Agent"; conversations are persisted in a dedicated chat database. Degrades gracefully (503) when the agent is offline.
+*   **📊 Service Catalog & Subscriptions**: A platform master catalog plus per-org subscribed services with monthly pricing, expiry, and automated renewal/expiry states (`ACTIVE` / `EXPIRING` / `EXPIRED`).
+*   **💬 Slack Bots**: Administrator-managed Slack bot registry (tokens encrypted at rest, AES-256-GCM), assignable to organizations, with configurable intake forms that create tickets from Slack.
+*   **🔑 AD Credential Delivery**: Secure, one-time delivery of encrypted temporary Active Directory credentials tied to a ticket, with view-once semantics.
+*   **📣 Announcements**: Platform-wide or per-org broadcasts surfaced in the console.
+*   **📝 Audit Trail**: Transaction-scoped recording of platform events (logins, MFA challenges, suspensions, impersonation, plan/role changes) feeding the admin activity console.
+*   **⌨️ Command Menu (`Cmd+K` / `Ctrl+K`)**: Keyboard-navigable command center for fast navigation across the console.
 
 ---
 
 ## 🛠️ Technology Stack
 
 ### Client (Frontend)
-*   **Framework**: Next.js 14 (App Router & Server-Side Middleware security)
-*   **Data Fetching**: `@tanstack/react-query` & `Axios`
-*   **Styling**: Tailwind CSS & custom Vanilla CSS tokens (harmonious dark/light slate palette)
-*   **Animations**: `framer-motion` (premium glassmorphism, glowing custom micro-animations, and animated numeric dashboards)
-*   **Charts**: `recharts` for visual contract value and incident metrics
+*   **Framework**: Next.js 14 (App Router + Edge middleware auth gate)
+*   **Data Fetching**: TanStack React Query v5 & Axios
+*   **Styling**: Tailwind CSS 3 with custom CSS tokens (dark/light slate palette)
+*   **Animations**: Framer Motion (glassmorphism, glow micro-animations, animated numeric counters)
+*   **Charts / PDF**: Recharts & jsPDF for metrics and exports
 
 ### Server (Backend)
-*   **Runtime**: Node.js, Express, and TypeScript
-*   **ORM**: Prisma ORM
-*   **Database**: PostgreSQL
-*   **Security**: `helmet` header protection, cookies-based JWT authentication, CORS limits, and `express-rate-limit`
+*   **Runtime**: Node.js, Express 4, TypeScript (strict)
+*   **ORM**: Prisma 5
+*   **Databases**: PostgreSQL — separate databases for the core app, chat history, and the ticketing tool (with an optional isolated admin ticket store)
+*   **Validation**: Zod (request bodies, query params, and startup env validation)
+*   **Auth**: JWT access + refresh tokens in HttpOnly cookies, bcryptjs hashing, email MFA
+*   **Security**: helmet, CORS allow-list, express-rate-limit
+*   **Email**: Nodemailer / SMTP (MFA codes + password-reset links)
+*   **Logging**: winston
+*   **Tests**: Vitest + Supertest
 
 ---
 
@@ -39,26 +50,32 @@ Tech is a premium, multi-tenant B2B SaaS cybersecurity operations and client man
 
 ```
 B2B-Site/
-├── client/                 # Next.js 14 Web Application
-│   ├── public/             # Serves branding logo assets (/Alert.png, /banihal-logo.png)
+├── client/                 # Next.js 14 Web Console
+│   ├── public/             # Branding + logo assets
 │   ├── src/
-│   │   ├── app/            # Next.js App Router (Globals, Layouts, Providers, Routes)
-│   │   │   ├── (auth)/     # Auth Route Groups (tab-driven /login and /register)
-│   │   │   ├── dashboard/  # B2B Analyst & Executive Dashboard
-│   │   │   ├── saas-admin/ # Control Plane for Platform Super Admins
-│   │   │   └── ...         # Service Catalogs, Support Incidents, Users
-│   │   ├── components/     # UI Kit (GlowButton, GlassCard, CommandMenu, Chatbot, Sidebar)
-│   │   ├── contexts/       # React Contexts (AuthProvider & silent refresh)
-│   │   └── lib/            # Axios API wrappers and front-end Zod schemas
+│   │   ├── app/            # App Router (layouts, providers, routes)
+│   │   │   ├── (auth)/     # Login, register, forgot/reset-password, MFA
+│   │   │   ├── dashboard/  # Combined user + org-admin dashboard
+│   │   │   ├── ticketing/  # In-app ticketing tool (user + admin views)
+│   │   │   ├── chat/       # AI assistant with persisted history
+│   │   │   ├── saas-admin/ # Control Plane for platform administrators
+│   │   │   └── ...         # services, users, profile, credentials, legal
+│   │   ├── components/     # UI kit (GlowButton, CommandMenu, Chatbot, Sidebar, …)
+│   │   ├── contexts/       # AuthProvider + silent token refresh
+│   │   └── lib/            # Axios API wrappers + front-end Zod schemas
 │   └── package.json
 │
-├── server/                 # Express.js API Gateway
+├── server/                 # Express + Prisma API
 │   ├── src/
-│   │   ├── config/         # Database pooling & CORS configurations
-│   │   ├── middleware/     # Tenant scoping, auth middleware, RBAC checks, rate limiters
-│   │   ├── modules/        # Domain Services (Auth, Users, Orgs, Dashboard, SaaS Admin)
-│   │   └── server.ts       # Express entry point
-│   ├── prisma/             # Prisma Schema definitions & sandbox Seed scripts
+│   │   ├── config/         # DB clients (core/chat/ticketing), env, security, crypto
+│   │   ├── middleware/     # Auth, tenant scoping, RBAC, rate limiting, error handler
+│   │   ├── modules/        # Domain services:
+│   │   │                   #   auth, users, organizations, requests, ticketing,
+│   │   │                   #   chat, announcements, bots, slack-bots, ad-secrets,
+│   │   │                   #   saas-admin, mail
+│   │   ├── app.ts          # Express app: middleware + route mounting
+│   │   └── server.ts       # Bootstrap / listen
+│   ├── prisma/             # Schema definitions + seed script
 │   └── package.json
 ```
 
@@ -67,34 +84,33 @@ B2B-Site/
 ## ⚙️ Getting Started
 
 ### 1. Prerequisites
-Ensure you have **Node.js (v18+)** and **npm** installed locally. A running **PostgreSQL** instance is required for the database layer.
+Ensure you have **Node.js (v18+)** and **npm** installed, plus a running **PostgreSQL** instance. Email MFA requires reachable **SMTP** credentials (see below) — without them, no one can complete login.
 
 ---
 
 ### 2. Database & Server Setup
-1. Open a terminal and navigate to the server folder:
+1. Navigate to the server folder:
    ```bash
    cd server
    ```
-2. Install server dependencies:
+2. Install dependencies:
    ```bash
    npm install
    ```
-3. Configure your environmental values:
-   Copy `.env.example` to `.env` and fill in your database connection string and JWT keys:
+3. Configure environment values — copy `.env.example` to `.env` and fill in your database URLs, the three JWT/impersonation secrets, `ADMIN_DOMAINS`, and SMTP settings:
    ```bash
    cp .env.example .env
    ```
-4. Generate the database client:
+4. Generate the Prisma clients (core + chat + ticketing schemas):
    ```bash
    npm run db:generate
    ```
-5. Apply migrations and seed the database sandbox with premium client records:
+5. Apply the schemas and seed demo orgs, users, services, and tickets:
    ```bash
    npm run db:push
    npm run db:seed
    ```
-6. Spin up the Express watcher in development mode:
+6. Start the API in watch mode (`http://localhost:3001`):
    ```bash
    npm run dev
    ```
@@ -102,43 +118,42 @@ Ensure you have **Node.js (v18+)** and **npm** installed locally. A running **Po
 ---
 
 ### 3. Client Setup
-1. Open a new terminal and navigate to the client folder:
+1. In a new terminal, navigate to the client folder:
    ```bash
    cd client
    ```
-2. Install client dependencies:
+2. Install dependencies:
    ```bash
    npm install
    ```
-3. Configure your environmental values:
-   Copy `.env.example` to `.env`:
+3. Configure environment values — copy `.env.example` to `.env` (`NEXT_PUBLIC_API_URL` defaults to `http://localhost:3001`):
    ```bash
    cp .env.example .env
    ```
-4. Start the local Next.js development server:
+4. Start the Next.js dev server and open `http://localhost:3000`:
    ```bash
    npm run dev
    ```
-   Open your browser and navigate to `http://localhost:3000`.
 
 ---
 
-## 🧪 Seeding & Test Credentials
+## 🧪 Seeding & Demo Credentials
 
-The database seed script configures several realistic client sandbox companies:
-*   **Tech Platform Administration** (Internal SaaS Org):
-    *   *Super Admin*: `admin@platform.com` (Password: `SaasAdmin1!`)
-*   **Enterprise Clients** (All Org Admins use password: `Admin1234!`):
-    *   `jwhitfield@datavault.com` — **DataVault Banking** (Enterprise plan, $210K ARR, SIEM active, critical lateral threat incident in progress)
-    *   `rtorres@orbital.aero` — **Orbital Aerospace** (Enterprise plan, $180K ARR, Zero Trust v2.0 Beta active)
-    *   `skim@medcure.health` — **MedCure Health Systems** (Enterprise plan, $95K ARR, HIPAA compliance active, expired EDR subscription)
-*   **Analyst Accounts** (All standard users use password: `User1234!`):
-    *   `kokafor@datavault.com`
-    *   `ot1@citygrid.io`
+`npm run db:seed` **wipes and rebuilds** the demo data: an internal provider org plus several client organizations with services and tickets.
+
+| Role | Example accounts | Password |
+|---|---|---|
+| `ADMINISTRATOR` | `superadmin@platform.com`, `admin@platform.com` | `SuperAdmin1!` / `SaasAdmin1!` |
+| `ORG_ADMIN` | `jwhitfield@datavault.com`, `dfoster@pinnaclelaw.com` | `Admin1234!` |
+| `USER` | `it1@pinnaclelaw.com`, `kokafor@datavault.com`, `ot1@citygrid.io` | `User1234!` |
+
+> **Admin login note:** the `ADMINISTRATOR` role can only log in from a domain listed in `ADMIN_DOMAINS` (`.env.example` ships `platform.com`); otherwise these accounts get `403 ADMIN_DOMAIN_FORBIDDEN`. Because **every** login sends an emailed MFA code, admin/demo accounts must use an inbox you can actually receive mail at (the seed points the primary admin at a real address for this reason).
 
 ---
 
 ## 🔒 Security & Exclusions
 
-*   **Tenant Scope Middleware**: Every database query is dynamically intercepted on the server by the `tenantMiddleware` which wraps Prisma in a Node `AsyncLocalStorage` context. A user belongs to *exactly one* organization, and database operations are automatically hard-scoped to `organizationId`.
-*   **Robust Gitignores**: Environment configurations (`.env.*.local`, `.env*.local`), TLS private key files (`*.pem`, `*.key`), and local test databases are explicitly blacklisted in both `.gitignore` configurations to prevent credential exposure.
+*   **Tenant Scope Middleware**: `tenantMiddleware` wraps each request in an `AsyncLocalStorage` context that a Prisma client extension reads to auto-inject the `customerId` filter on every scoped query — a user belongs to exactly one organization and cannot reach another's data.
+*   **Fail-Closed Admin Gate**: The `ADMINISTRATOR` role is enforced at login and token refresh against `ADMIN_DOMAINS`; an empty list disables admin login entirely.
+*   **Secrets at Rest**: Slack bot tokens/webhooks and delivered AD credentials are encrypted with AES-256-GCM (`SLACK_TOKEN_SECRET`); JWT and impersonation secrets are validated (≥32 chars) at startup.
+*   **Robust Gitignores**: Environment files (`.env`, `.env*.local`), TLS keys (`*.pem`, `*.key`), Slack token files (`xapp-*`, `xoxb-*`), and local databases are excluded to prevent credential exposure.

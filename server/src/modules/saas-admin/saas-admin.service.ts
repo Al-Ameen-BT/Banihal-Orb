@@ -11,7 +11,7 @@ import type {
   ListServicesInput, UpdateServiceInput, RenewServiceInput,
   AssignServiceInput,
   CreateCatalogServiceInput, UpdateCatalogServiceInput,
-  UpdateUserInput, SystemActivityInput,
+  UpdateUserInput, SystemActivityInput, LoginsByOrgInput,
   CreateAnnouncementInput, UpdateAnnouncementInput,
   ListEscalationsInput, UpdateEscalationInput,
   TicketNumberFormatInput,
@@ -619,6 +619,58 @@ export async function getSystemActivity(input: SystemActivityInput) {
   const items = logs.map((l) => ({ ...l, organization: orgMap.get(l.customerId) ?? null }));
 
   return { items, total, page: input.page, limit: input.limit };
+}
+
+// ─── Administrator-only: logins classified by organization ──────────────────
+// Compliance / log-analysis view: successful LOGIN events grouped per org over
+// an optional date window — total logins, distinct users, and last login. Rows
+// come back sorted by login volume (busiest tenant first).
+export async function getLoginsByOrg(input: LoginsByOrgInput) {
+  const where = {
+    action: 'LOGIN',
+    ...(input.role ? { performedBy: { role: input.role } } : {}),
+    ...(input.from || input.to
+      ? { createdAt: { ...(input.from ? { gte: input.from } : {}), ...(input.to ? { lte: input.to } : {}) } }
+      : {}),
+  };
+
+  // One group per org (login count + last login), and one group per
+  // (org, user) so distinct users per org is just the row count.
+  const [byOrg, byOrgUser] = await Promise.all([
+    prisma.auditLog.groupBy({
+      by: ['customerId'],
+      where,
+      _count: { _all: true },
+      _max: { createdAt: true },
+    }),
+    prisma.auditLog.groupBy({ by: ['customerId', 'performedById'], where }),
+  ]);
+
+  const userCounts = new Map<string, number>();
+  for (const row of byOrgUser) {
+    userCounts.set(row.customerId, (userCounts.get(row.customerId) ?? 0) + 1);
+  }
+
+  // Resolve org names in one round-trip (customerId is a scalar here, not a relation).
+  const orgIds = byOrg.map((g) => g.customerId);
+  const orgs = orgIds.length
+    ? await prisma.customer.findMany({ where: { id: { in: orgIds } }, select: { id: true, name: true, slug: true } })
+    : [];
+  const orgMap = new Map(orgs.map((o) => [o.id, o] as const));
+
+  const items = byOrg
+    .map((g) => ({
+      id: g.customerId,
+      name: orgMap.get(g.customerId)?.name ?? 'Unknown organization',
+      slug: orgMap.get(g.customerId)?.slug ?? null,
+      logins: g._count._all,
+      users: userCounts.get(g.customerId) ?? 0,
+      lastLogin: g._max.createdAt,
+    }))
+    .sort((a, b) => b.logins - a.logins);
+
+  const totalLogins = items.reduce((sum, i) => sum + i.logins, 0);
+  return { items, totalLogins, orgCount: items.length };
 }
 
 // ─── Administrator-only: Sadmin management ───────────────────────────────────

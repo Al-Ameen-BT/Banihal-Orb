@@ -312,6 +312,7 @@ export const saasAdminApi = {
   // Administrator-only: activity feed + Sadmin management
   getSadminActivity: (limit?: number) => api.get('/saas-admin/activity', { params: limit ? { limit } : undefined }),
   getSystemActivity: (params?: Record<string, unknown>) => api.get('/saas-admin/system-activity', { params }),
+  getLoginsByOrg: (params?: Record<string, unknown>) => api.get('/saas-admin/logins-by-org', { params }),
   listSadmins: () => api.get('/saas-admin/sadmins'),
   updateSadmin: (id: string, data: unknown) => api.patch(`/saas-admin/sadmins/${id}`, data),
   removeSadmin: (id: string) => api.delete(`/saas-admin/sadmins/${id}`),
