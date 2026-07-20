@@ -18,6 +18,21 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
       res.status(404).json({ error: 'Record not found', code: 'NOT_FOUND' });
       return;
     }
+    // P2021: table missing, P2010/P2022: raw query / column errors that usually
+    // mean the schema hasn't been applied to this datasource. Report as an
+    // upstream/service problem rather than an opaque 500.
+    if (err.code === 'P2021' || err.code === 'P2010' || err.code === 'P2022') {
+      res.status(503).json({ error: 'A required data store is unavailable', code: 'DATABASE_UNAVAILABLE' });
+      return;
+    }
+  }
+
+  // Can't reach a database server (e.g. an unreachable ticketing store). This is
+  // a transient infrastructure outage, not a bug in the request — a 503 lets
+  // clients back off instead of surfacing a generic 500 error page.
+  if (err instanceof Prisma.PrismaClientInitializationError) {
+    res.status(503).json({ error: 'A required data store is unavailable', code: 'DATABASE_UNAVAILABLE' });
+    return;
   }
 
   if (err instanceof Error) {

@@ -95,8 +95,12 @@ export async function verifyMfa(req: Request, res: Response, next: NextFunction)
     setTokenCookies(res, tokens);
     if (input.rememberDevice) {
       const device = await authService.createTrustedDevice(tokens.userId);
-      // Path /api/auth: the cookie only needs to reach the login endpoint.
-      res.cookie('trustedDevice', device.cookieValue, { ...COOKIE_OPTS, maxAge: device.maxAgeMs, path: '/api/auth' });
+      // device is null when the trusted-device store is unavailable; the user is
+      // still logged in, they just won't skip MFA next time. Path /api/auth: the
+      // cookie only needs to reach the login endpoint.
+      if (device) {
+        res.cookie('trustedDevice', device.cookieValue, { ...COOKIE_OPTS, maxAge: device.maxAgeMs, path: '/api/auth' });
+      }
     }
     res.json({ message: 'Login successful' });
   } catch (err) {

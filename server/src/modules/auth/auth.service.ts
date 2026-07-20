@@ -269,16 +269,24 @@ export interface MfaChallenge {
 export const TRUSTED_DEVICE_DAYS = 7;
 const sha256 = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
 
-export async function createTrustedDevice(userId: string): Promise<{ cookieValue: string; maxAgeMs: number }> {
+export async function createTrustedDevice(userId: string): Promise<{ cookieValue: string; maxAgeMs: number } | null> {
   // Housekeeping: drop this user's expired device rows.
   await prisma.trustedDevice.deleteMany({ where: { userId, expiresAt: { lt: new Date() } } }).catch(() => {});
   const raw = crypto.randomBytes(32).toString('hex');
   const maxAgeMs = TRUSTED_DEVICE_DAYS * 24 * 60 * 60 * 1000;
-  const row = await prisma.trustedDevice.create({
-    data: { userId, tokenHash: sha256(raw), expiresAt: new Date(Date.now() + maxAgeMs) },
-    select: { id: true },
-  });
-  return { cookieValue: `${row.id}.${raw}`, maxAgeMs };
+  try {
+    const row = await prisma.trustedDevice.create({
+      data: { userId, tokenHash: sha256(raw), expiresAt: new Date(Date.now() + maxAgeMs) },
+      select: { id: true },
+    });
+    return { cookieValue: `${row.id}.${raw}`, maxAgeMs };
+  } catch (err) {
+    // "Remember this device" is a convenience, not a requirement. If the
+    // TrustedDevice store is unavailable (missing table / unreachable DB), the
+    // MFA verify still succeeded — just skip the cookie instead of 500-ing login.
+    console.error('[auth] createTrustedDevice failed; skipping trusted-device cookie:', err);
+    return null;
+  }
 }
 
 // True when the cookie identifies a live trusted device belonging to THIS user.
@@ -288,7 +296,9 @@ async function isTrustedDevice(userId: string, cookieValue: string | null | unde
   if (dot <= 0) return false;
   const id = cookieValue.slice(0, dot);
   const raw = cookieValue.slice(dot + 1);
-  const row = await prisma.trustedDevice.findUnique({ where: { id } });
+  // A lookup failure (missing table / unreachable DB) must not break login —
+  // treat this browser as untrusted and fall through to the normal MFA code.
+  const row = await prisma.trustedDevice.findUnique({ where: { id } }).catch(() => null);
   if (!row || row.userId !== userId || row.expiresAt < new Date()) return false;
   if (sha256(raw) !== row.tokenHash) return false;
   await prisma.trustedDevice.update({ where: { id }, data: { lastUsedAt: new Date() } }).catch(() => {});
