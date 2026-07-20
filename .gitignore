@@ -1,0 +1,9 @@
+# Slack credentials — app-level (xapp-) and bot (xoxb-) tokens must never be
+# committed; paste them into the saas-admin bots UI / env config instead.
+xapp-*
+xoxb-*
+*.token
+
+# System files
+.DS_Store
+Thumbs.db
