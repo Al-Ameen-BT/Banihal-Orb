@@ -5,7 +5,10 @@ Documentation=https://github.com/Al-Ameen-BT/B2B-Site
 
 [Service]
 Type=simple
-User=root
+# Run under a dedicated unprivileged account — NEVER root in production. Create it once:
+#   useradd --system --no-create-home --shell /usr/sbin/nologin b2bapp
+#   chown -R b2bapp:b2bapp /opt/B2B-Site
+User=b2bapp
 WorkingDirectory=/opt/B2B-Site
 ExecStart=/usr/bin/python3 /opt/B2B-Site/deploy_services.py --run
 Restart=always
@@ -14,6 +17,18 @@ Environment=NODE_ENV=production
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=b2bweb
+
+# ─── Hardening (least-privilege sandbox) ─────────────────────────────────────
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
 
 [Install]
 WantedBy=multi-user.target

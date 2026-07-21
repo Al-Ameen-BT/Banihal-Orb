@@ -380,6 +380,21 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=b2bweb
 
+# ─── Hardening ───────────────────────────────────────────────────────────────
+# Least-privilege sandbox: a compromise of the Node process cannot escalate to
+# root or tamper with the rest of the system. ProtectSystem=full keeps the app's
+# own tree (uploads/build output) writable while making /usr, /boot, /etc read-only.
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+
 [Install]
 WantedBy=multi-user.target
 """
@@ -399,6 +414,24 @@ WantedBy=multi-user.target
         sys.exit(1)
 
     print(f"🚀 Deploying Tech SaaS platform as {SERVICE_NAME}...")
+
+    # Run the service under a dedicated unprivileged account (not root). Create it
+    # if missing and hand it ownership of the app tree so it can build + write uploads.
+    if user != "root" and os.name != "nt":
+        try:
+            import pwd
+            try:
+                pwd.getpwnam(user)
+                print(f"👤 Service user '{user}' already exists.")
+            except KeyError:
+                print(f"👤 Creating system service user '{user}'...")
+                subprocess.run(["useradd", "--system", "--no-create-home", "--shell", "/usr/sbin/nologin", user], check=True)
+            print(f"🔑 Granting '{user}' ownership of {project_dir} ...")
+            subprocess.run(["chown", "-R", f"{user}:{user}", project_dir], check=True)
+        except Exception as e:
+            print(f"⚠️  Could not provision service user '{user}': {e}")
+            print(f"    Create it manually, or re-run with --user root (NOT recommended for production).")
+            sys.exit(1)
 
     # Write service file to /etc/systemd/system/
     dest_path = os.path.join(SYSTEMD_PATH, SERVICE_NAME)
@@ -477,8 +510,8 @@ def main():
         help="Configure services/subprocesses to run in development mode (npm run dev) instead of production."
     )
     parser.add_argument(
-        "--user", default="root",
-        help="Installer Mode: User account that systemd should use to run the applications (defaults to: root)."
+        "--user", default="b2bapp",
+        help="Installer Mode: dedicated unprivileged account systemd runs the apps as (default: b2bapp; auto-created). Pass --user root only for throwaway/dev boxes."
     )
     parser.add_argument(
         "--dry-run", action="store_true",

@@ -9,6 +9,28 @@ This guide deploys the B2B SaaS platform: an **Express + TypeScript** API (`/ser
 
 ---
 
+## What changed recently
+
+Deploying an existing install? These landed in the latest updates — review before upgrading:
+
+- **Web Push notifications** (new). Adds a `PushSubscription` table to the **main** DB (applied by
+  `npm run db:push`) and requires `VAPID_*` on the server + `NEXT_PUBLIC_VAPID_PUBLIC_KEY` on the
+  client. Files: `server/src/lib/webpush.ts`, `server/src/modules/push/*`, `client/public/sw.js`,
+  `client/src/lib/push-client.ts`, `client/src/components/EnablePushButton.tsx`.
+- **Login cookie fix.** The browser now calls the API **same-origin** via the relative `/api` path,
+  so the auth cookie is first-party and login works from any host. The Next `middleware.ts` also
+  exempts `/sw.js` (the service worker must be publicly served).
+- **Ticketing tenant isolation.** Ticket reads/attachments/comments are now scoped to the caller's
+  org (closed a cross-org IDOR). No config change.
+- **Rate limiting behind Nginx.** The API sets `trust proxy` so limits key on the real client IP.
+- **Non-root deploy.** The systemd unit / `deploy_services.py` now run as a dedicated `b2bapp` user
+  with a hardened sandbox (was root).
+- **`SINGLE_SESSION_ENFORCED`** env toggle (default `true`) — set `false` only for multi-device testing.
+- **Admin-domain hardening.** `ADMIN_DOMAINS` must be private work domains; public mailbox domains
+  are a privilege-escalation risk (any signup → `ADMINISTRATOR`).
+
+---
+
 ## 1. Architecture & ports
 
 ```
@@ -92,9 +114,11 @@ Copy `server/.env.example` → `server/.env` and fill in. **Generate every secre
 | `COOKIE_SECURE` | ✅ | `true` under HTTPS (else the browser drops the auth cookie) |
 | `ALLOWED_ORIGINS` | ✅ | Exact public origin(s) of the frontend, comma-separated (e.g. `https://app.example.com`) |
 | `FRONTEND_URL` | ✅ | Public app URL — used to build password-reset links in emails |
-| `ADMIN_DOMAINS` | ✅ | Comma-separated email domains allowed to hold `ADMINISTRATOR`. **Empty = admin login disabled.** |
-| `SMTP_HOST/PORT/USER/PASS`, `MAIL_FROM` | ✅ | MFA + password-reset + Slack-nothing email |
+| `ADMIN_DOMAINS` | ✅ | Comma-separated email domains allowed to hold `ADMINISTRATOR`. **Empty = admin login disabled.** ⚠ **Use only PRIVATE work domains you control** — registration grants `ADMINISTRATOR` from the email domain, so listing a public mailbox domain (`gmail.com`, `outlook.com`, …) lets ANY signup on that domain become a platform super-admin. |
+| `SMTP_HOST/PORT/USER/PASS`, `MAIL_FROM` | ✅ | MFA + password-reset email. **`MAIL_FROM` must be an address the SMTP account is authorized to send as** (e.g. Outlook/Gmail reject a mismatched From), or MFA codes silently fail to send. |
 | `SESSION_INACTIVITY_MINUTES` | optional | Idle window before a new login can take over a session (default 30) |
+| `SINGLE_SESSION_ENFORCED` | optional | One active session per account (default `true`). Set `false` to allow the same account on multiple devices at once — for LAN/dev testing only; keep `true` in production. |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | optional | **Web Push notifications.** Generate with `npx web-push generate-vapid-keys`. `VAPID_PRIVATE_KEY` is a **secret** — never expose/log it. `VAPID_SUBJECT` is a `mailto:`/`https:` contact URI. When unset, push sending is disabled (503). |
 | `MFA_CODE_TTL_MINUTES`, `MFA_MAX_ATTEMPTS`, `MFA_RESEND_COOLDOWN_SECONDS` | optional | MFA tuning (defaults 10 / 5 / 30) |
 | `AGENT_URL`, `OLLAMA_URL`, `OLLAMA_MODEL` | optional | Assistant backend; chat degrades gracefully (503) if absent |
 | `UPLOAD_DIR` | optional | Ticket/comment attachment dir (default `uploads`) — **must be on a persistent volume** |
@@ -106,7 +130,14 @@ build time**, so it must be present *before* `next build`:
 ```bash
 # client/.env
 NEXT_PUBLIC_API_URL="https://app.example.com"   # same origin as the app when proxied under /api
+NEXT_PUBLIC_VAPID_PUBLIC_KEY="<same value as server VAPID_PUBLIC_KEY>"  # Web Push; safe to expose
 ```
+
+> **API base URL / auth cookies:** the browser calls the API **same-origin** via the relative
+> `/api` path (proxied by `next.config.js` `rewrites()` to `NEXT_PUBLIC_API_URL`), so the httpOnly
+> auth cookie stays **first-party** to the page and the login flow works regardless of host. Keep
+> `NEXT_PUBLIC_API_URL` pointed at an address the **Next.js server process** can reach the API at.
+> Behind Nginx (everything under one origin) this is automatic.
 
 ---
 
@@ -244,12 +275,20 @@ the rest of the platform is unaffected.
 - [ ] `NODE_ENV=production`, `COOKIE_SECURE=true`, served only over **HTTPS** (HSTS at Nginx).
 - [ ] All secrets are unique 32+ char random values; **`SLACK_TOKEN_SECRET` and the JWT secrets are
       backed up** in a secrets manager (losing them logs everyone out / bricks encrypted bot & AD data).
-- [ ] `ADMIN_DOMAINS` lists only the provider's real admin domain(s).
+- [ ] `ADMIN_DOMAINS` lists only the provider's real **private** admin domain(s) — **never** a public
+      mailbox domain (`gmail.com`, etc.), which would let any signup self-grant `ADMINISTRATOR`.
+- [ ] `SINGLE_SESSION_ENFORCED` is `true` (or unset) in production.
 - [ ] `ALLOWED_ORIGINS` is the exact public origin — **not** `*`.
+- [ ] Services run under a **dedicated non-root user** (the systemd units default to `b2bapp` with a
+      hardened sandbox). Do **not** deploy as root.
+- [ ] `VAPID_PRIVATE_KEY` is set as a secret and never exposed client-side or logged (only the public
+      key reaches the browser).
 - [ ] PostgreSQL is **not** exposed publicly; strong DB passwords; least-privilege DB roles.
-- [ ] SMTP verified end-to-end (do a real login — you must receive the MFA code).
+- [ ] SMTP verified end-to-end (do a real login — you must receive the MFA code); `MAIL_FROM` matches
+      an address the SMTP account may send as.
 - [ ] `UPLOAD_DIR` on a persistent, backed-up volume; Nginx `client_max_body_size` set.
-- [ ] Rate limiting is on by default (global + AD-ingest); front with a WAF if internet-facing.
+- [ ] Rate limiting is on (global + AD-ingest). **The API sets `trust proxy` so limits key on the real
+      client IP behind Nginx** — front with a WAF if internet-facing.
 - [ ] Review `prisma/seed.ts` before seeding in production — remove/replace demo accounts.
 
 ---
@@ -286,9 +325,12 @@ CI (`.github/workflows/ci-cd.yml`) runs **checks only** (typecheck/lint) — it 
 
 | Symptom | Likely cause |
 |---|---|
-| Login "fails" / cookie never sticks | `COOKIE_SECURE=true` on plain HTTP, or `ALLOWED_ORIGINS`/`NEXT_PUBLIC_API_URL` origin mismatch |
-| No MFA email arrives → can't log in | SMTP misconfigured; check `SMTP_*`, `MAIL_FROM`, provider logs |
-| Admin can't log in | admin's email domain not in `ADMIN_DOMAINS` |
+| Login "fails" / cookie never sticks | `COOKIE_SECURE=true` on plain HTTP; or the Next `/api` rewrite target (`NEXT_PUBLIC_API_URL`) unreachable from the Next server |
+| Login OK but every page bounces to `/login` | old symptom of a cross-origin auth cookie — fixed by same-origin `/api` calls; ensure `next.config.js` `rewrites()` is present and `/sw.js` is exempt in `middleware.ts` |
+| "You're already signed in on another device" blocks login | single-session lock; sign out the other device, wait `SESSION_INACTIVITY_MINUTES`, or set `SINGLE_SESSION_ENFORCED=false` for testing |
+| No MFA email arrives → can't log in | SMTP misconfigured, or `MAIL_FROM` not authorized by the SMTP account (send silently fails); check `SMTP_*`, `MAIL_FROM`, provider logs |
+| Push notifications never arrive | `VAPID_*` unset (send returns 503); `NEXT_PUBLIC_VAPID_PUBLIC_KEY` missing/mismatched; not served over HTTPS (push needs a secure context — `localhost` is exempt); browser blocked notifications |
+| Admin can't log in | admin's email domain not in `ADMIN_DOMAINS` (public domains excluded by design) |
 | `/health` shows a DB `down` | that database's URL is wrong or the DB isn't created/loaded |
 | Slack bot won't connect | bad `xoxb-` token (status shows **Error**), or missing Socket Mode/`xapp-` for the chat bridge |
 | Bot tokens/AD secrets won't decrypt after a redeploy | `SLACK_TOKEN_SECRET` changed or was missing (it fell back to `JWT_ACCESS_SECRET`, which then changed) |

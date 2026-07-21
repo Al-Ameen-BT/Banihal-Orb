@@ -1,9 +1,18 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 
-const BASE = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001';
+// In the BROWSER, always call the API same-origin via the relative `/api` path
+// (the Next.js rewrites() in next.config.js proxies /api/* to NEXT_PUBLIC_API_URL).
+// This keeps the httpOnly auth cookie FIRST-PARTY to the page origin, so it is
+// visible to the Next.js auth middleware and sent on every request — regardless of
+// whether the app is opened from localhost, a LAN IP, or a domain. Using the
+// absolute NEXT_PUBLIC_API_URL instead scoped the cookie to the API host, so
+// opening the app from any other host redirected every page back to /login.
+// During SSR there is no page origin, so fall back to the absolute API origin.
+const API_ORIGIN = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001';
+const BASE = typeof window === 'undefined' ? `${API_ORIGIN}/api` : '/api';
 
 const api = axios.create({
-  baseURL: `${BASE}/api`,
+  baseURL: BASE,
   withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
 });
