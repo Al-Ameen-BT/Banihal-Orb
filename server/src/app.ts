@@ -25,8 +25,15 @@ import slackBotsRoutes from './modules/slack-bots/slackBots.routes';
 import botsRoutes from './modules/bots/bots.routes';
 import adIngestRoutes from './modules/ad-secrets/adIngest.routes';
 import adSecretsRoutes from './modules/ad-secrets/adSecrets.routes';
+import pushRoutes from './modules/push/push.routes';
 
 const app = express();
+
+// Trust the local reverse proxy (Nginx) so req.ip reflects the real client via
+// X-Forwarded-For — otherwise every request appears to come from the proxy and
+// the IP-keyed rate limiters collapse into a single shared bucket. 'loopback'
+// trusts only 127.0.0.1/::1, so clients cannot spoof X-Forwarded-For.
+app.set('trust proxy', 'loopback');
 
 // ─── Global security middleware ──────────────────────────────────────────────
 app.use(helmet({
@@ -85,6 +92,9 @@ app.use('/api/ticketing', withTenant, ticketingRoutes);
 app.use('/api/bots', withTenant, botsRoutes);
 // Secure AD credential reveal — target user or requesting org-admin only.
 app.use('/api/ad-secrets', withTenant, adSecretsRoutes);
+// Web Push subscriptions — auth only (scoped explicitly by userId/tenantId, so no
+// tenant middleware; PushSubscription is excluded from the tenant Prisma extension).
+app.use('/api/push', pushRoutes);
 
 // Sadmin / Administrator — platform-level access, no tenant scope
 app.use('/api/saas-admin', requireRole('ADMINISTRATOR'), saasAdminRoutes);

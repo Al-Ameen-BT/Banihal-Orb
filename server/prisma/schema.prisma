@@ -76,10 +76,31 @@ model User {
   requests            ServiceRequest[] @relation("UserRequests")
   announcements       Announcement[] @relation("UserAnnouncements")
   escalations         TicketEscalation[] @relation("UserEscalations")
+  pushSubscriptions   PushSubscription[]
   customer            Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
   @@index([customerId])
   @@index([email])
+}
+
+// Web Push (RFC 8030 / VAPID) subscription endpoints, one row per browser/device.
+// tenantId mirrors the owner's customerId (multi-tenant scoping). Excluded from the
+// tenant Prisma extension in config/database.ts because that extension injects a
+// `customerId` filter this model does not have.
+model PushSubscription {
+  id         String   @id @default(cuid())
+  endpoint   String   @unique
+  p256dh     String
+  auth       String
+  userId     String
+  tenantId   String
+  userAgent  String?
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tenantId])
 }
 
 model RefreshToken {

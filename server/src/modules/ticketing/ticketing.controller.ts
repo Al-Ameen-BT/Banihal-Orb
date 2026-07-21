@@ -16,6 +16,8 @@ export async function listTickets(req: Request, res: Response, next: NextFunctio
   try {
     const input = ListTicketsSchema.parse(req.query);
     const me = input.mine ? await actor(req) : null;
+    // Tenant scope: non-admins only ever see their own / their org's tickets.
+    const scope = await service.ticketAccessScope(req.user);
     const tickets = await service.listTickets({
       ...(input.status ? { status: input.status } : {}),
       ...(input.priority ? { priority: input.priority } : {}),
@@ -25,6 +27,7 @@ export async function listTickets(req: Request, res: Response, next: NextFunctio
       ...(input.escalatedOnly ? { escalatedOnly: true } : {}),
       ...(input.search ? { search: input.search } : {}),
       ...(me ? { mineUserId: me.id } : {}),
+      ...(scope ? { reporterOrAssigneeIn: scope } : {}),
     });
     res.json({ tickets });
   } catch (err) { next(err); }
@@ -32,6 +35,8 @@ export async function listTickets(req: Request, res: Response, next: NextFunctio
 
 export async function getTicket(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
+    const scope = await service.ticketAccessScope(req.user);
+    await service.assertTicketAccess(scope, req.params['id']!);
     const ticket = await service.getTicket(req.params['id']!);
     if (!ticket) { res.status(404).json({ error: 'Ticket not found', code: 'NOT_FOUND' }); return; }
     res.json(ticket);
@@ -50,6 +55,8 @@ export async function createTicket(req: Request, res: Response, next: NextFuncti
 export async function updateTicket(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const input = UpdateTicketSchema.parse(req.body);
+    const scope = await service.ticketAccessScope(req.user);
+    await service.assertTicketAccess(scope, req.params['id']!);
     const me = await actor(req);
     const ticket = await service.updateTicket(me.id, req.params['id']!, input);
     res.json(ticket);
@@ -130,26 +137,39 @@ export async function getAlerts(req: Request, res: Response, next: NextFunction)
 }
 
 // ─── Collaboration ───────────────────────────────────────────────────────────
+// Every ticket-scoped surface first verifies the caller may access the ticket
+// (tenant-scoped by the bridged reporter/assignee) — otherwise 404.
 export async function getComments(req: Request, res: Response, next: NextFunction): Promise<void> {
-  try { res.json({ comments: await service.listComments(req.params['id']!) }); } catch (err) { next(err); }
+  try {
+    await service.assertTicketAccess(await service.ticketAccessScope(req.user), req.params['id']!);
+    res.json({ comments: await service.listComments(req.params['id']!) });
+  } catch (err) { next(err); }
 }
 export async function addComment(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const content = String(req.body?.content ?? '').trim();
     if (!content) { res.status(400).json({ error: 'content is required', code: 'BAD_REQUEST' }); return; }
+    await service.assertTicketAccess(await service.ticketAccessScope(req.user), req.params['id']!);
     const me = await actor(req);
     const files = (req.files as Express.Multer.File[] | undefined) ?? [];
     res.status(201).json({ comments: await service.addComment(me.id, req.params['id']!, content, files) });
   } catch (err) { next(err); }
 }
 export async function getActivity(req: Request, res: Response, next: NextFunction): Promise<void> {
-  try { res.json({ activity: await service.listActivities(req.params['id']!) }); } catch (err) { next(err); }
+  try {
+    await service.assertTicketAccess(await service.ticketAccessScope(req.user), req.params['id']!);
+    res.json({ activity: await service.listActivities(req.params['id']!) });
+  } catch (err) { next(err); }
 }
 export async function getTicketAttachments(req: Request, res: Response, next: NextFunction): Promise<void> {
-  try { res.json({ attachments: await service.listTicketAttachments(req.params['id']!) }); } catch (err) { next(err); }
+  try {
+    await service.assertTicketAccess(await service.ticketAccessScope(req.user), req.params['id']!);
+    res.json({ attachments: await service.listTicketAttachments(req.params['id']!) });
+  } catch (err) { next(err); }
 }
 export async function uploadTicketAttachments(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
+    await service.assertTicketAccess(await service.ticketAccessScope(req.user), req.params['id']!);
     const me = await actor(req);
     const files = (req.files as Express.Multer.File[] | undefined) ?? [];
     if (files.length === 0) { res.status(400).json({ error: 'No files uploaded', code: 'BAD_REQUEST' }); return; }
@@ -158,25 +178,37 @@ export async function uploadTicketAttachments(req: Request, res: Response, next:
 }
 export async function downloadAttachment(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
+    await service.assertAttachmentAccess(await service.ticketAccessScope(req.user), req.params['id']!);
     const file = await service.getAttachmentFile(req.params['id']!);
     if (!file?.path) { res.status(404).json({ error: 'Attachment not found', code: 'NOT_FOUND' }); return; }
     res.download(file.path, file.originalName ?? 'attachment');
   } catch (err) { next(err); }
 }
 export async function getWatchers(req: Request, res: Response, next: NextFunction): Promise<void> {
-  try { res.json({ watchers: await service.listWatchers(req.params['id']!) }); } catch (err) { next(err); }
+  try {
+    await service.assertTicketAccess(await service.ticketAccessScope(req.user), req.params['id']!);
+    res.json({ watchers: await service.listWatchers(req.params['id']!) });
+  } catch (err) { next(err); }
 }
 export async function watchTicket(req: Request, res: Response, next: NextFunction): Promise<void> {
-  try { const me = await actor(req); await service.watch(req.params['id']!, me.id); res.status(204).end(); } catch (err) { next(err); }
+  try {
+    await service.assertTicketAccess(await service.ticketAccessScope(req.user), req.params['id']!);
+    const me = await actor(req); await service.watch(req.params['id']!, me.id); res.status(204).end();
+  } catch (err) { next(err); }
 }
 export async function unwatchTicket(req: Request, res: Response, next: NextFunction): Promise<void> {
-  try { const me = await actor(req); await service.unwatch(req.params['id']!, me.id); res.status(204).end(); } catch (err) { next(err); }
+  try {
+    await service.assertTicketAccess(await service.ticketAccessScope(req.user), req.params['id']!);
+    const me = await actor(req); await service.unwatch(req.params['id']!, me.id); res.status(204).end();
+  } catch (err) { next(err); }
 }
 
 // ─── Escalation: ORG_ADMIN/ADMINISTRATOR copies a b2b_ticket ticket into the
 //     administrators' store (b2b_ticketing_admin, same 14-table schema). ───────
 export async function escalateTicket(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
+    // The source lives in the caller's (default) store — verify org access first.
+    await service.assertTicketAccess(await service.ticketAccessScope(req.user), req.params['id']!);
     res.status(201).json(await escalation.escalateTicket(req.user.userId, req.user.role, req.params['id']!));
   } catch (err) { next(err); }
 }

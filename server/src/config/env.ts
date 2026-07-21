@@ -59,6 +59,13 @@ const EnvSchema = z.object({
   MFA_CODE_TTL_MINUTES: z.coerce.number().min(1).default(10),
   MFA_MAX_ATTEMPTS: z.coerce.number().min(1).default(5),
   MFA_RESEND_COOLDOWN_SECONDS: z.coerce.number().min(0).default(30),
+  // Web Push (VAPID, RFC 8292). Optional: when unset, push sending is disabled and
+  // the API responds 503 PUSH_NOT_CONFIGURED. Generate with:
+  //   npx web-push generate-vapid-keys
+  // VAPID_PRIVATE_KEY is a SECRET — it is never sent to the client or logged.
+  VAPID_PUBLIC_KEY: z.string().optional(),
+  VAPID_PRIVATE_KEY: z.string().optional(),
+  VAPID_SUBJECT: z.string().default('mailto:admin@banihal.in'),
 });
 
 const result = EnvSchema.safeParse(process.env);

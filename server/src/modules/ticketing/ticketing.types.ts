@@ -112,6 +112,7 @@ export interface TicketFilters {
   projectId?: string;
   assigneeId?: string;
   mineUserId?: string; // reporter OR assignee = this ticketing user id
+  reporterOrAssigneeIn?: string[]; // tenant scope: reporter OR assignee ∈ these ids
   since?: string;
   search?: string;
   escalatedOnly?: boolean; // admin "Escalated" category → labels has 'escalated'

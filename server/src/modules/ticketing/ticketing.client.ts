@@ -85,6 +85,22 @@ function toTicketDTO(row: TicketRow, project: { id: string; name: string } | nul
 
 // ─── Tickets ─────────────────────────────────────────────────────────────────
 export async function listTickets(filters: TicketFilters = {}): Promise<TicketDTO[]> {
+  // Each reporter/assignee OR-group goes in a separate AND clause — combining them
+  // as sibling `OR` keys would silently overwrite one another (a single object can
+  // hold only one `OR`), so the tenant scope must not share a key with `mine`/search.
+  const and: Record<string, unknown>[] = [];
+  if (filters.reporterOrAssigneeIn) {
+    and.push({ OR: [{ reporterId: { in: filters.reporterOrAssigneeIn } }, { assigneeId: { in: filters.reporterOrAssigneeIn } }] });
+  }
+  if (filters.mineUserId) {
+    and.push({ OR: [{ reporterId: filters.mineUserId }, { assigneeId: filters.mineUserId }] });
+  }
+  if (filters.search) {
+    and.push({ OR: [
+      { title: { contains: filters.search, mode: 'insensitive' as const } },
+      { ticketNumber: { contains: filters.search, mode: 'insensitive' as const } },
+    ] });
+  }
   const rows = await getTicketDb().tickets.findMany({
     where: {
       ...(filters.status ? { status: filters.status } : {}),
@@ -94,13 +110,7 @@ export async function listTickets(filters: TicketFilters = {}): Promise<TicketDT
       ...(filters.assigneeId ? { assigneeId: filters.assigneeId } : {}),
       ...(filters.escalatedOnly ? { labels: { has: 'escalated' } } : {}),
       ...(filters.since ? { createdAt: { gt: new Date(filters.since) } } : {}),
-      ...(filters.mineUserId ? { OR: [{ reporterId: filters.mineUserId }, { assigneeId: filters.mineUserId }] } : {}),
-      ...(filters.search ? {
-        OR: [
-          { title: { contains: filters.search, mode: 'insensitive' as const } },
-          { ticketNumber: { contains: filters.search, mode: 'insensitive' as const } },
-        ],
-      } : {}),
+      ...(and.length ? { AND: and } : {}),
     },
     include: ticketInclude,
     orderBy: { createdAt: 'desc' },

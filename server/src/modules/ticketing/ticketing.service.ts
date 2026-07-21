@@ -7,6 +7,9 @@ import type { z } from 'zod';
 import type { CreateTicketSchema, UpdateTicketSchema, CreateProjectSchema, UpdateProjectSchema, CreateSlaSchema } from './ticketing.schema';
 import type { TicketDTO, ProjectDTO, SlaDTO, TicketFilters, TicketPriority } from './ticketing.types';
 
+// Tenant-scoping guards for the ticket store (close the cross-org IDOR).
+export { ticketAccessScope, assertTicketAccess, assertAttachmentAccess } from './access';
+
 type CreateTicketInput = z.infer<typeof CreateTicketSchema>;
 type UpdateTicketInput = z.infer<typeof UpdateTicketSchema>;
 
