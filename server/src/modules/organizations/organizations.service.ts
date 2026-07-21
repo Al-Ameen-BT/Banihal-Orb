@@ -1,35 +1,55 @@
-import { prisma } from '../../config/database';
+import { query, queryOne, buildSet } from '../../config/db';
 import type { UpdateOrgInput, SecuritySettingsInput } from './organizations.schema';
 
-const customerSelect = {
-  id: true,
-  name: true,
-  slug: true,
-  plan: true,
-  suspended: true,
-  ssoEnabled: true,
-  mfaRequired: true,
-  creditLimit: true,
-  mailId: true,
-  contactPerson: true,
-  contactNumber: true,
-  domain: true,
-  createdAt: true,
-  updatedAt: true,
-} as const;
+// Columns returned to org-facing callers (matches the former Prisma customerSelect).
+// `customers` is the mapped table name for the Customer model.
+const CUSTOMER_COLS =
+  '"id","name","slug","plan","suspended","ssoEnabled","mfaRequired","creditLimit","mailId","contactPerson","contactNumber","domain","createdAt","updatedAt"';
 
-export async function getMyOrg(customerId: string) {
-  const customer = await prisma.customer.findUnique({ where: { id: customerId }, select: customerSelect });
-  if (!customer) throw Object.assign(new Error('Customer not found'), { status: 404, code: 'NOT_FOUND' });
+export interface OrgRow {
+  id: string;
+  name: string;
+  slug: string;
+  plan: string;
+  suspended: boolean;
+  ssoEnabled: boolean;
+  mfaRequired: boolean;
+  creditLimit: number;
+  mailId: string;
+  contactPerson: string;
+  contactNumber: string;
+  domain: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const notFound = () => Object.assign(new Error('Customer not found'), { status: 404, code: 'NOT_FOUND' });
+
+export async function getMyOrg(customerId: string): Promise<OrgRow> {
+  const customer = await queryOne<OrgRow>(`SELECT ${CUSTOMER_COLS} FROM "customers" WHERE "id" = $1`, [customerId]);
+  if (!customer) throw notFound();
   return customer;
 }
 
-export async function updateMyOrg(customerId: string, input: UpdateOrgInput) {
-  return prisma.customer.update({ where: { id: customerId }, data: input, select: customerSelect });
+export async function updateMyOrg(customerId: string, input: UpdateOrgInput): Promise<OrgRow> {
+  // buildSet appends "updatedAt" = now() (Prisma's @updatedAt was client-side).
+  const { sql, params, nextIndex } = buildSet(input as Record<string, unknown>);
+  const customer = await queryOne<OrgRow>(
+    `UPDATE "customers" SET ${sql} WHERE "id" = $${nextIndex} RETURNING ${CUSTOMER_COLS}`,
+    [...params, customerId],
+  );
+  if (!customer) throw notFound();
+  return customer;
 }
 
-export async function updateSecuritySettings(customerId: string, input: SecuritySettingsInput) {
-  return prisma.customer.update({ where: { id: customerId }, data: input, select: customerSelect });
+export async function updateSecuritySettings(customerId: string, input: SecuritySettingsInput): Promise<OrgRow> {
+  const { sql, params, nextIndex } = buildSet(input as Record<string, unknown>);
+  const customer = await queryOne<OrgRow>(
+    `UPDATE "customers" SET ${sql} WHERE "id" = $${nextIndex} RETURNING ${CUSTOMER_COLS}`,
+    [...params, customerId],
+  );
+  if (!customer) throw notFound();
+  return customer;
 }
 
 // Derive a service's status from its end date (no stored status column).
@@ -40,11 +60,22 @@ function deriveStatus(endDate: Date): 'ACTIVE' | 'EXPIRING' | 'EXPIRED' {
   return 'ACTIVE';
 }
 
+interface ServiceRow {
+  id: string;
+  name: string;
+  description: string | null;
+  monthlyPrice: number;
+  purchaseDate: Date;
+  endDate: Date;
+}
+
 export async function getMyServices(customerId: string) {
-  const purchases = await prisma.customerService.findMany({
-    where: { customerId },
-    orderBy: { endDate: 'asc' },
-  });
+  // `customerServices` is the mapped table; customerId is the caller's own org.
+  const purchases = await query<ServiceRow>(
+    `SELECT "id","name","description","monthlyPrice","purchaseDate","endDate"
+       FROM "customerServices" WHERE "customerId" = $1 ORDER BY "endDate" ASC`,
+    [customerId],
+  );
 
   const services = purchases.map((p) => ({
     id: p.id,
@@ -64,4 +95,3 @@ export async function getMyServices(customerId: string) {
 
   return { services, monthlyTotal };
 }
-

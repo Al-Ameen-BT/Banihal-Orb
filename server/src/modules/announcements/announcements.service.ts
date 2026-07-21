@@ -1,17 +1,24 @@
-import { prisma } from '../../config/database';
+import { query } from '../../config/db';
 
-// Announcement is in the tenant extension's globalModels (customerId: null means
-// "all orgs"), so the auto-injected tenant filter does NOT apply here — this
-// manual where clause is the visibility boundary.
-export async function listForCustomer(customerId: string) {
-  const now = new Date();
-  return prisma.announcement.findMany({
-    where: {
-      active: true,
-      OR: [{ customerId: null }, { customerId }],
-      AND: [{ OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] }],
-    },
-    select: { id: true, title: true, message: true, level: true, createdAt: true },
-    orderBy: { createdAt: 'desc' },
-  });
+export interface AnnouncementRow {
+  id: string;
+  title: string;
+  message: string;
+  level: string;
+  createdAt: Date;
+}
+
+// Announcements are global-with-scope: customerId IS NULL means "all orgs", so the
+// visibility boundary is this explicit filter (customerId null OR the caller's org),
+// plus active and not-yet-expired.
+export async function listForCustomer(customerId: string): Promise<AnnouncementRow[]> {
+  return query<AnnouncementRow>(
+    `SELECT "id","title","message","level","createdAt"
+       FROM "Announcement"
+      WHERE "active" = true
+        AND ("customerId" IS NULL OR "customerId" = $1)
+        AND ("expiresAt" IS NULL OR "expiresAt" > $2)
+      ORDER BY "createdAt" DESC`,
+    [customerId, new Date()],
+  );
 }
