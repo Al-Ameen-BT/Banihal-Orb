@@ -97,9 +97,13 @@ echo "📦 Preparing backend application..."
 run_as_owner "npm ci || npm install" "$SERVER_DIR"
 run_as_owner "npm run db:generate" "$SERVER_DIR"
 
-echo "🗄️ Running database schema updates & seeding..."
-run_as_owner "npm run db:push" "$SERVER_DIR" || echo "⚠️ Warning: Prisma db:push failed. Check DB connection settings."
-run_as_owner "npm run db:seed" "$SERVER_DIR" || echo "⚠️ Warning: Seeding failed (data may already exist)."
+echo "🗄️ Provisioning databases (idempotent SQL DDL)..."
+run_as_owner "npm run db:provision" "$SERVER_DIR" || echo "⚠️ Warning: DB provisioning failed. Check DB connection settings & superuser access."
+
+echo "🔎 Verifying required databases are available (fail-fast preflight)..."
+# Hard gate: abort the deploy before touching systemd if any required database
+# (b2b / b2b_chat / b2b_ticketing / b2b_ticket) is unreachable or unprovisioned.
+run_as_owner "npm run db:verify" "$SERVER_DIR"
 
 if [ "$IS_DEV" = false ]; then
     echo "🏗️ Building server production bundle..."

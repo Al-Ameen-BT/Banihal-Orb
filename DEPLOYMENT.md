@@ -67,33 +67,45 @@ makes requests same-origin, so the `SameSite=Lax` auth cookies "just work" and C
 
 ---
 
-## 3. Databases (five)
+## 3. Databases (four + optional admin store)
+
+The schema is provisioned by **idempotent SQL DDL** in `server/db/` — this
+replaces `prisma db push` as the schema source of truth (safe to re-run; never
+wipes data). Prisma _clients_ are still generated with `npm run db:generate`.
 
 | Database | Env var | Created / schema | Notes |
 |---|---|---|---|
-| `b2b` (main) | `DATABASE_URL` | `prisma db push` (schema.prisma) | Users, tenants, bots, MFA, audit, AD secrets |
-| `b2b_chat` | `CHAT_DATABASE_URL` | `prisma db push --schema prisma/chat.prisma` | Assistant chat history |
-| `b2b_ticketing` | `TICKETING_DATABASE_URL` | `prisma db push --schema prisma/ticketing.prisma` | Legacy 2-table store |
-| `b2b_ticketing_admin` | `ADMIN_TICKETING_DATABASE_URL` | manual push (see below); optional | Administrators' isolated ticket store |
-| `b2b_ticket` | `TICKET_DATABASE_URL` | load `prisma/ticketing-full-schema.sql`, then `prisma db pull` | 14-table external ticket platform |
+| `b2b` (main) | `DATABASE_URL` | `db/b2b.sql` | Users, tenants, bots, MFA, audit, AD secrets |
+| `b2b_chat` | `CHAT_DATABASE_URL` | `db/b2b_chat.sql` | Assistant chat history |
+| `b2b_ticketing` | `TICKETING_DATABASE_URL` | `db/b2b_ticketing.sql` | Internal 2-table fallback store |
+| `b2b_ticket` | `TICKET_DATABASE_URL` | `db/b2b_ticket.sql` | 14-table external ticket platform |
+| `b2b_ticketing_admin` | `ADMIN_TICKETING_DATABASE_URL` | **not provisioned** (optional) | Administrators' isolated store; falls back to `b2b_ticket` when unset |
+
+Provision all four in one step (reads the DB URLs from `server/.env`):
 
 ```bash
-sudo -u postgres psql -c "CREATE DATABASE b2b;"
-sudo -u postgres psql -c "CREATE DATABASE b2b_chat;"
-sudo -u postgres psql -c "CREATE DATABASE b2b_ticketing;"
-sudo -u postgres psql -c "CREATE DATABASE b2b_ticketing_admin;"
-sudo -u postgres psql -c "CREATE DATABASE b2b_ticket;"
-
-# 14-table ticket DB is loaded from SQL (it is NOT managed by prisma db push):
-sudo -u postgres psql -d b2b_ticket -f server/prisma/ticketing-full-schema.sql
+cd server && npm run db:provision      # = bash db/provision.sh
 ```
 
-> ⚠️ `npm run db:push` pushes **main + chat + ticketing** and **can wipe/recreate** the 2-table
-> `b2b_ticketing`. It does **not** touch `b2b_ticket` (external) or `b2b_ticketing_admin`. Push the
-> admin store separately after pointing the URL at it:
+Or manually:
+
+```bash
+sudo -u postgres psql -f server/db/00_databases.sql        # create the 4 databases
+psql "$DATABASE_URL"           -f server/db/b2b.sql
+psql "$CHAT_DATABASE_URL"      -f server/db/b2b_chat.sql
+psql "$TICKETING_DATABASE_URL" -f server/db/b2b_ticketing.sql
+psql "$TICKET_DATABASE_URL"    -f server/db/b2b_ticket.sql
+```
+
+> ℹ️ `npm run db:push` is **deprecated** and now just forwards to `db:provision`
+> (the old Prisma push could wipe/recreate `b2b_ticketing`). See
+> `server/db/README.md` for details.
+>
+> To run a **separate** Administrators' store (optional), create its database and
+> apply the same 14-table schema, then point `ADMIN_TICKETING_DATABASE_URL` at it:
 > ```bash
-> cd server && DATABASE_URL="$ADMIN_TICKETING_DATABASE_URL" \
->   npx prisma db push --schema prisma/ticketing.prisma
+> sudo -u postgres psql -c "CREATE DATABASE b2b_ticketing_admin;"
+> psql "$ADMIN_TICKETING_DATABASE_URL" -f server/db/b2b_ticket.sql
 > ```
 
 ---
@@ -150,9 +162,9 @@ cd server
 npm ci
 npm run db:generate          # generate all 4 Prisma clients (REQUIRED before build)
 npm run build                # tsc → dist/
-# First deploy only — apply schema + seed the first administrator:
-npm run db:push              # main + chat + ticketing (back up first!)
-npm run db:seed              # optional; creates seed accounts — review prisma/seed.ts
+npm run db:provision         # create + apply schema for the 4 DBs (idempotent SQL DDL)
+npm run db:verify            # fail-fast: confirm all 4 required DBs are reachable + provisioned
+npm run db:seed              # first deploy only — creates the initial administrator; review prisma/seed.ts
 node dist/server.js          # or run under systemd (below)
 ```
 
@@ -309,8 +321,8 @@ tar czf /backups/uploads-$(date +%F).tgz /opt/b2b/server/uploads
 git pull
 # API
 cd server && npm ci && npm run db:generate && npm run build
-#   BACK UP DBs, then apply any schema change:
-npm run db:push
+#   BACK UP DBs, then apply any schema change (idempotent — safe to re-run):
+npm run db:provision && npm run db:verify
 # Frontend
 cd ../client && npm ci && npm run build
 # restart
