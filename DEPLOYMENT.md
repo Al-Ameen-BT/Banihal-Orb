@@ -33,7 +33,9 @@ Deploying an existing install? These landed in the latest updates — review bef
   (closed a cross-org IDOR). No config change.
 - **Rate limiting behind Nginx.** The API sets `trust proxy = loopback`, so limits key on the real
   client IP behind Nginx.
-- **Non-root deploy.** The systemd units run as a dedicated non-root user with a hardened sandbox.
+- **Single systemd unit.** `deploy.sh` now installs one `b2b.service` (API + Web supervised in one
+  unit) instead of separate `b2b-api`/`b2b-web` units, and removes the old pair on upgrade.
+- **Non-root deploy.** The systemd unit runs as a dedicated non-root user with a hardened sandbox.
 - **Admin-domain hardening.** `ADMIN_DOMAINS` must be private work domains; public mailbox domains
   are a privilege-escalation risk (any signup → `ADMINISTRATOR`).
 
@@ -191,54 +193,31 @@ npm run build                # next build (reads NEXT_PUBLIC_API_URL)
 npm run start                # next start → 127.0.0.1:3000
 ```
 
-### systemd units
+### systemd (single `b2b.service`)
 
-`/etc/systemd/system/b2b-api.service`:
-```ini
-[Unit]
-Description=B2B SaaS API
-After=network.target postgresql.service
+The app runs under **one** systemd unit — `b2b.service` (repo root). It supervises **both**
+node processes (API on `:3001`, Next.js on `:3000`) from one wrapper: each runs in its own
+subshell with its own `PORT`, and if **either** exits, the unit restarts the pair. It loads
+both `server/.env` and `client/.env`, sets `NODE_ENV=production`, and runs under the
+unprivileged `b2bapp` user with a hardened sandbox.
 
-[Service]
-Type=simple
-WorkingDirectory=/opt/b2b/server
-EnvironmentFile=/opt/b2b/server/.env
-ExecStart=/usr/bin/node dist/server.js
-Restart=always
-RestartSec=5
-User=b2b
-Environment=NODE_ENV=production
-
-[Install]
-WantedBy=multi-user.target
-```
-
-`/etc/systemd/system/b2b-web.service`:
-```ini
-[Unit]
-Description=B2B SaaS Web (Next.js)
-After=network.target
-
-[Service]
-Type=simple
-WorkingDirectory=/opt/b2b/client
-ExecStart=/usr/bin/npm run start
-Restart=always
-RestartSec=5
-User=b2b
-Environment=NODE_ENV=production
-Environment=PORT=3000
-
-[Install]
-WantedBy=multi-user.target
-```
+`sudo ./deploy.sh` installs and starts it automatically (and removes any legacy
+`b2b-api`/`b2b-web` units from a previous release). To install it **manually**:
 
 ```bash
+# from the repo root — if your path/user differ from /opt/B2B-Site and b2bapp, edit
+# b2b.service first (or let deploy.sh substitute them for you)
+sudo cp b2b.service /etc/systemd/system/b2b.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now b2b-api b2b-web
-sudo systemctl status b2b-api
-curl -s http://127.0.0.1:3001/health   # {"status":"ok","databases":{...}}
+sudo systemctl enable --now b2b
+sudo systemctl status b2b
+journalctl -u b2b -f                     # combined API + Web logs
+curl -s http://127.0.0.1:3001/health     # {"status":"ok","databases":{...}}
 ```
+
+> One unit means `systemctl restart b2b` restarts **both** processes — you can't bounce the
+> API or the web independently. If you need that, run them as two units instead and group
+> them with a `b2b.target`.
 
 ---
 
@@ -305,8 +284,8 @@ the rest of the platform is unaffected.
       mailbox domain (`gmail.com`, etc.), which would let any signup self-grant `ADMINISTRATOR`.
 - [ ] One-session-per-account is always enforced; `SESSION_INACTIVITY_MINUTES` is set to a sane idle window (default 30).
 - [ ] `ALLOWED_ORIGINS` is the exact public origin — **not** `*`.
-- [ ] Services run under a **dedicated non-root user** (the systemd units default to `b2bapp` with a
-      hardened sandbox). Do **not** deploy as root.
+- [ ] The service runs under a **dedicated non-root user** (the `b2b.service` unit defaults to `b2bapp`
+      with a hardened sandbox). Do **not** deploy as root.
 - [ ] `VAPID_PRIVATE_KEY` is set as a secret and never exposed client-side or logged (only the public
       key reaches the browser).
 - [ ] PostgreSQL is **not** exposed publicly; strong DB passwords; least-privilege DB roles.
@@ -339,8 +318,8 @@ cd server && npm ci && npm run db:generate && npm run build
 npm run db:provision && npm run db:verify
 # Frontend
 cd ../client && npm ci && npm run build
-# restart
-sudo systemctl restart b2b-api b2b-web
+# restart (single unit runs both API + Web)
+sudo systemctl restart b2b
 curl -s https://app.example.com/health
 ```
 CI (`.github/workflows/ci-cd.yml`) runs **checks only** (typecheck/lint) — it does not deploy.

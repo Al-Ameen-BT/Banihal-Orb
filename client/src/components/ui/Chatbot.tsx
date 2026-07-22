@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useMemo, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ticketingApi } from '@/lib/api';
@@ -468,7 +469,26 @@ export default function Chatbot({ onUserMessage, initialMessages, onNewChat, use
     setShowTicketForm(true);
   }
 
-  async function handleCreateTicket(e: React.FormEvent) {
+  function closeTicketForm() {
+    setShowTicketForm(false);
+    setTkError(null);
+  }
+
+  // The ticket form is a modal: lock body scroll while open and close on Escape.
+  useEffect(() => {
+    if (!showTicketForm) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeTicketForm(); };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showTicketForm]);
+
+  async function handleCreateTicket(e: React.FormEvent | React.MouseEvent) {
     e.preventDefault();
     if (!tkTitle.trim() || !tkDesc.trim() || !tkProjectId || tkSubmitting) return;
     setTkSubmitting(true);
@@ -622,116 +642,152 @@ export default function Chatbot({ onUserMessage, initialMessages, onNewChat, use
         </AnimatePresence>
       </div>
 
-      {/* ── Inline ticket creation form (slides up between messages and input) ─── */}
-      <AnimatePresence>
-        {showTicketForm && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.25 }}
-            className="overflow-hidden border-t border-slate-100 bg-white flex-shrink-0"
-          >
-            <form onSubmit={handleCreateTicket} className="p-4 space-y-3">
-              {/* Form header */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-brand-50 to-brand-100 ring-1 ring-brand-200/60 flex items-center justify-center flex-shrink-0">
-                    <svg className="w-3.5 h-3.5 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6} d="M16.5 6v.75m0 3v.75m0 3v.75m0 3V18m-9-5.25h5.25M7.5 15h3M3.375 5.25c-.621 0-1.125.504-1.125 1.125v3.026a2.999 2.999 0 0 1 0 5.198v3.026c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-3.026a2.999 2.999 0 0 1 0-5.198V6.375c0-.621-.504-1.125-1.125-1.125H3.375Z" />
-                    </svg>
-                  </div>
-                  <h4 className="text-sm font-bold text-slate-900">Create Ticket</h4>
-                  <span className="text-[10px] text-slate-400 font-medium">from this conversation</span>
-                </div>
-                <button type="button" onClick={() => { setShowTicketForm(false); setTkError(null); }}
-                  className="text-slate-400 hover:text-slate-600 cursor-pointer p-1 rounded-md hover:bg-slate-100 transition-colors" aria-label="Close ticket form">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18 18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-
-              {/* Title */}
-              <input
-                id="chat-tk-title"
-                value={tkTitle}
-                onChange={(e) => setTkTitle(e.target.value)}
-                maxLength={255}
-                placeholder="Brief summary of the issue"
-                className="w-full px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:border-brand focus:outline-none transition-colors"
-                autoFocus
-              />
-
-              {/* Project / Type / Priority row */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                <select
-                  id="chat-tk-project"
-                  value={tkProjectId}
-                  onChange={(e) => setTkProjectId(e.target.value)}
-                  className="px-2.5 py-1.5 text-xs text-slate-700 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:border-brand focus:outline-none transition-colors cursor-pointer"
-                >
-                  <option value="">— Project * —</option>
-                  {(tkProjects ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
-                <select
-                  id="chat-tk-type"
-                  value={tkType}
-                  onChange={(e) => setTkType(e.target.value as TicketType)}
-                  className="px-2.5 py-1.5 text-xs text-slate-700 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:border-brand focus:outline-none transition-colors cursor-pointer"
-                >
-                  {TK_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                </select>
-                <select
-                  id="chat-tk-priority"
-                  value={tkPriority}
-                  onChange={(e) => setTkPriority(e.target.value as TicketPriority)}
-                  className="px-2.5 py-1.5 text-xs text-slate-700 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:border-brand focus:outline-none transition-colors cursor-pointer"
-                >
-                  {TK_PRIORITIES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-                </select>
-              </div>
-
-              {/* Description */}
-              <textarea
-                id="chat-tk-desc"
-                value={tkDesc}
-                onChange={(e) => setTkDesc(e.target.value)}
-                rows={3}
-                maxLength={10_000}
-                placeholder="Describe the issue, error messages, affected systems…"
-                className="w-full px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:border-brand focus:outline-none transition-colors resize-none"
-              />
-
-              {/* Actions */}
-              <div className="flex items-center justify-end gap-2 pt-1">
-                {tkError && <span className="mr-auto text-xs text-red-600">{tkError}</span>}
-                {!tkError && (!tkTitle.trim() || !tkDesc.trim() || !tkProjectId) && (
-                  <span className="mr-auto text-[11px] text-slate-400">Title, project &amp; description required</span>
-                )}
-                <button type="button" onClick={() => { setShowTicketForm(false); setTkError(null); }}
-                  className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors cursor-pointer"
-                  disabled={tkSubmitting}>
-                  Cancel
-                </button>
-                <button type="submit"
-                  disabled={!tkTitle.trim() || !tkDesc.trim() || !tkProjectId || tkSubmitting}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-brand rounded-lg hover:bg-brand-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer">
-                  {tkSubmitting ? (
-                    <>
-                      <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+      {/* ── Ticket creation modal (pops over the app) ─────────────────────────── */}
+      {typeof document !== 'undefined' && createPortal(
+        <AnimatePresence>
+          {showTicketForm && (
+            <motion.div
+              className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+            >
+              <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={closeTicketForm} aria-hidden="true" />
+              <motion.div
+                role="dialog" aria-modal="true" aria-labelledby="chat-tk-heading"
+                initial={{ opacity: 0, scale: 0.97, y: 12 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.98, y: 8 }}
+                transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+                className="relative w-full max-w-lg max-h-[92vh] overflow-y-auto bg-white shadow-2xl ring-1 ring-slate-900/5 rounded-t-2xl sm:rounded-2xl"
+              >
+                {/* Header */}
+                <div className="flex items-center justify-between gap-3 px-5 pt-5 pb-4 border-b border-slate-100">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-brand-50 to-brand-100 ring-1 ring-brand-200/60 flex items-center justify-center flex-shrink-0">
+                      <svg className="w-5 h-5 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6} d="M16.5 6v.75m0 3v.75m0 3v.75m0 3V18m-9-5.25h5.25M7.5 15h3M3.375 5.25c-.621 0-1.125.504-1.125 1.125v3.026a2.999 2.999 0 0 1 0 5.198v3.026c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-3.026a2.999 2.999 0 0 1 0-5.198V6.375c0-.621-.504-1.125-1.125-1.125H3.375Z" />
                       </svg>
-                      Creating…
-                    </>
-                  ) : 'Create Ticket'}
-                </button>
-              </div>
-            </form>
-          </motion.div>
-        )}
-      </AnimatePresence>
+                    </div>
+                    <div>
+                      <h4 id="chat-tk-heading" className="text-base font-bold text-slate-900 leading-tight">Create Ticket</h4>
+                      <span className="text-[11px] text-slate-400 font-medium">from this conversation</span>
+                    </div>
+                  </div>
+                  <button type="button" onClick={closeTicketForm}
+                    className="text-slate-400 hover:text-slate-600 cursor-pointer p-1.5 rounded-lg hover:bg-slate-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/40" aria-label="Close ticket form">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18 18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+
+                <form onSubmit={handleCreateTicket} className="px-5 py-4 space-y-4">
+                  {/* Title */}
+                  <div>
+                    <label htmlFor="chat-tk-title" className="block text-xs font-medium text-slate-600 mb-1.5">Title <span className="text-red-500">*</span></label>
+                    <input
+                      id="chat-tk-title"
+                      value={tkTitle}
+                      onChange={(e) => setTkTitle(e.target.value)}
+                      maxLength={255}
+                      placeholder="Brief summary of the issue"
+                      className="w-full px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:border-brand focus:ring-2 focus:ring-brand/20 focus:outline-none transition-colors"
+                      autoFocus
+                    />
+                  </div>
+
+                  {/* Project / Type / Priority row */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label htmlFor="chat-tk-project" className="block text-xs font-medium text-slate-600 mb-1.5">Project <span className="text-red-500">*</span></label>
+                      <select
+                        id="chat-tk-project"
+                        value={tkProjectId}
+                        onChange={(e) => setTkProjectId(e.target.value)}
+                        className="w-full px-3 py-2 text-sm text-slate-700 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:border-brand focus:ring-2 focus:ring-brand/20 focus:outline-none transition-colors cursor-pointer"
+                      >
+                        <option value="">Select…</option>
+                        {(tkProjects ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label htmlFor="chat-tk-type" className="block text-xs font-medium text-slate-600 mb-1.5">Type</label>
+                      <select
+                        id="chat-tk-type"
+                        value={tkType}
+                        onChange={(e) => setTkType(e.target.value as TicketType)}
+                        className="w-full px-3 py-2 text-sm text-slate-700 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:border-brand focus:ring-2 focus:ring-brand/20 focus:outline-none transition-colors cursor-pointer"
+                      >
+                        {TK_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label htmlFor="chat-tk-priority" className="block text-xs font-medium text-slate-600 mb-1.5">Priority</label>
+                      <select
+                        id="chat-tk-priority"
+                        value={tkPriority}
+                        onChange={(e) => setTkPriority(e.target.value as TicketPriority)}
+                        className="w-full px-3 py-2 text-sm text-slate-700 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:border-brand focus:ring-2 focus:ring-brand/20 focus:outline-none transition-colors cursor-pointer"
+                      >
+                        {TK_PRIORITIES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Description */}
+                  <div>
+                    <label htmlFor="chat-tk-desc" className="block text-xs font-medium text-slate-600 mb-1.5">Description <span className="text-red-500">*</span></label>
+                    <textarea
+                      id="chat-tk-desc"
+                      value={tkDesc}
+                      onChange={(e) => setTkDesc(e.target.value)}
+                      rows={5}
+                      maxLength={10_000}
+                      placeholder="Describe the issue, error messages, affected systems…"
+                      className="w-full px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:border-brand focus:ring-2 focus:ring-brand/20 focus:outline-none transition-colors resize-none"
+                    />
+                  </div>
+
+                  {tkError && (
+                    <p className="flex items-center gap-1.5 text-xs text-red-600">
+                      <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                      </svg>
+                      {tkError}
+                    </p>
+                  )}
+                </form>
+
+                {/* Actions (sticky footer) */}
+                <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-slate-100 bg-slate-50/60 sticky bottom-0">
+                  {!tkError && (!tkTitle.trim() || !tkDesc.trim() || !tkProjectId) && (
+                    <span className="mr-auto text-[11px] text-slate-400">Title, project &amp; description required</span>
+                  )}
+                  <button type="button" onClick={closeTicketForm}
+                    className="px-4 py-2 text-sm font-semibold text-slate-600 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/40"
+                    disabled={tkSubmitting}>
+                    Cancel
+                  </button>
+                  <button type="button" onClick={handleCreateTicket}
+                    disabled={!tkTitle.trim() || !tkDesc.trim() || !tkProjectId || tkSubmitting}
+                    className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-brand rounded-lg hover:bg-brand-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:ring-offset-2">
+                    {tkSubmitting ? (
+                      <>
+                        <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        Creating…
+                      </>
+                    ) : 'Create Ticket'}
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body,
+      )}
 
       {/* Input bar */}
       <form

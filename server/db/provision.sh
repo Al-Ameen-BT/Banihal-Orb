@@ -7,9 +7,8 @@
 #   Step 1  create databases (needs a superuser)  → 00_databases.sql
 #   Step 2  apply each schema to its own database → b2b*.sql
 #
-# The Administrators' isolated ticket store (b2b_ticketing_admin) is NOT
-# provisioned — it falls back to b2b_ticket when ADMIN_TICKETING_DATABASE_URL
-# is unset (see src/config/ticketDatabase.ts).
+# 00_databases.sql also creates b2b_ticketing_admin, but its SCHEMA is loaded
+# separately from the `ticketingDB` pg dump (pg_restore) — NOT by this script.
 #
 # Env / config:
 #   Reads DATABASE_URL, CHAT_DATABASE_URL, TICKETING_DATABASE_URL,
@@ -47,13 +46,18 @@ done
 
 SUPERUSER_PSQL="${SUPERUSER_PSQL:-sudo -u postgres psql}"
 
-echo "🗄️  Step 1/2 — creating databases (skipping b2b_ticketing_admin)…"
+# psql/libpq rejects Prisma's `?schema=...` URL parameter — strip just that one,
+# keeping any other query params (sslmode, connect_timeout, …). node-postgres
+# (used by the app + db:verify) tolerates it, so only psql needs this.
+psql_url() { echo "$1" | sed -E 's/([?&])schema=[^&]*//g; s/\?&/?/g; s/[?&]$//; s/^([^?]*)&/\1?/'; }
+
+echo "🗄️  Step 1/2 — creating databases…"
 $SUPERUSER_PSQL -v ON_ERROR_STOP=1 -f "$DB_DIR/00_databases.sql"
 
 echo "📐 Step 2/2 — applying schemas…"
-psql "$DATABASE_URL"           -v ON_ERROR_STOP=1 -f "$DB_DIR/b2b.sql"
-psql "$CHAT_DATABASE_URL"      -v ON_ERROR_STOP=1 -f "$DB_DIR/b2b_chat.sql"
-psql "$TICKETING_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$DB_DIR/b2b_ticketing.sql"
-psql "$TICKET_DATABASE_URL"    -v ON_ERROR_STOP=1 -f "$DB_DIR/b2b_ticket.sql"
+psql "$(psql_url "$DATABASE_URL")"           -v ON_ERROR_STOP=1 -f "$DB_DIR/b2b.sql"
+psql "$(psql_url "$CHAT_DATABASE_URL")"      -v ON_ERROR_STOP=1 -f "$DB_DIR/b2b_chat.sql"
+psql "$(psql_url "$TICKETING_DATABASE_URL")" -v ON_ERROR_STOP=1 -f "$DB_DIR/b2b_ticketing.sql"
+psql "$(psql_url "$TICKET_DATABASE_URL")"    -v ON_ERROR_STOP=1 -f "$DB_DIR/b2b_ticket.sql"
 
 echo "✅ Provisioning complete."

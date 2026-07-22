@@ -14,7 +14,14 @@
 -- non-destructive (no DROP SCHEMA) and re-runnable.
 -- ============================================================================
 
-CREATE EXTENSION IF NOT EXISTS pgcrypto;   -- gen_random_uuid()
+-- gen_random_uuid() is built into PostgreSQL core since v13, so pgcrypto is optional.
+-- Try to enable it (for older servers) but DON'T fail the script if the contrib
+-- package isn't installed — the UUID defaults work from core regardless.
+DO $$ BEGIN
+  EXECUTE 'CREATE EXTENSION IF NOT EXISTS pgcrypto';
+EXCEPTION WHEN OTHERS THEN
+  RAISE NOTICE 'pgcrypto unavailable; using built-in gen_random_uuid() (PostgreSQL 13+)';
+END $$;
 
 -- ─── ENUM types ─────────────────────────────────────────────────────────────
 DO $$ BEGIN CREATE TYPE "enum_Users_role"          AS ENUM ('admin','manager','developer','tester');                                        EXCEPTION WHEN duplicate_object THEN NULL; END $$;

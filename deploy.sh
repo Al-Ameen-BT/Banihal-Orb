@@ -138,53 +138,43 @@ if [[ "$PROJECT_DIR" =~ ^/home/ ]] || [[ "$PROJECT_DIR" =~ ^/root/ ]]; then
     PROTECT_HOME="no"
 fi
 
-echo "⚙️ Configuring systemd service files..."
+echo "⚙️ Configuring systemd service (single unit: API + Web)..."
 echo "  Service user: $SERVICE_USER"
 echo "  ProtectHome: $PROTECT_HOME"
 
-# Clean legacy service file copies
+# Migrate off the legacy split units (b2b-api / b2b-web) if they exist.
+if systemctl list-unit-files 2>/dev/null | grep -qE '^b2b-(api|web)\.service'; then
+    echo "  Removing legacy b2b-api / b2b-web units..."
+    systemctl disable --now b2b-api.service b2b-web.service 2>/dev/null || true
+fi
 rm -f /etc/systemd/system/b2b-api.service /etc/systemd/system/b2b-web.service
 
-# Generate b2b-api.service
+# Generate the combined b2b.service (runs both node processes under one unit)
 sed -e "s|\[Service\]|\[Service\]\nEnvironment=\"PATH=$CLEAN_PATH\"|g" \
     -e "s|/opt/B2B-Site|$PROJECT_DIR|g" \
     -e "s|User=b2bapp|User=$SERVICE_USER|g" \
     -e "s|ProtectHome=yes|ProtectHome=$PROTECT_HOME|g" \
-    "$PROJECT_DIR/b2b-api.service" > /etc/systemd/system/b2b-api.service
+    "$PROJECT_DIR/b2b.service" > /etc/systemd/system/b2b.service
 
-# Generate b2b-web.service
-sed -e "s|\[Service\]|\[Service\]\nEnvironment=\"PATH=$CLEAN_PATH\"|g" \
-    -e "s|/opt/B2B-Site|$PROJECT_DIR|g" \
-    -e "s|User=b2bapp|User=$SERVICE_USER|g" \
-    -e "s|ProtectHome=yes|ProtectHome=$PROTECT_HOME|g" \
-    "$PROJECT_DIR/b2b-web.service" > /etc/systemd/system/b2b-web.service
+chmod 644 /etc/systemd/system/b2b.service
 
-chmod 644 /etc/systemd/system/b2b-api.service
-chmod 644 /etc/systemd/system/b2b-web.service
-
-# --- 9. Enable and Start Services ---
+# --- 9. Enable and Start Service ---
 echo "🔄 Reloading systemd configurations..."
 systemctl daemon-reload
 
-echo "🔌 Enabling services to start on boot..."
-systemctl enable b2b-api.service b2b-web.service
+echo "🔌 Enabling service to start on boot..."
+systemctl enable b2b.service
 
-echo "🟢 Restarting services..."
-systemctl restart b2b-api.service b2b-web.service
+echo "🟢 Restarting service..."
+systemctl restart b2b.service
 
 # --- 10. Health Verification ---
-sleep 2
+sleep 3
 echo "📊 Deployment Status Summary:"
-if systemctl is-active --quiet b2b-api.service; then
-    echo "  b2b-api: ACTIVE ✨"
+if systemctl is-active --quiet b2b.service; then
+    echo "  b2b (API + Web): ACTIVE ✨"
 else
-    echo "  b2b-api: FAILED ❌ (Check logs with: journalctl -u b2b-api -n 50)"
-fi
-
-if systemctl is-active --quiet b2b-web.service; then
-    echo "  b2b-web: ACTIVE ✨"
-else
-    echo "  b2b-web: FAILED ❌ (Check logs with: journalctl -u b2b-web -n 50)"
+    echo "  b2b (API + Web): FAILED ❌ (Check logs with: journalctl -u b2b -n 50)"
 fi
 
 echo "🎉 Native systemd deployment process completed successfully!"
