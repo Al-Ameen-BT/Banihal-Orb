@@ -4,8 +4,9 @@ This guide deploys the B2B SaaS platform: an **Express + TypeScript** API (`/ser
 **Next.js 14** frontend (`/client`), backed by **PostgreSQL** (five databases), with an optional
 **Ollama assistant** and **Slack bot** integrations.
 
-> The app uses `prisma db push` (not migrations). Schema changes are applied by re-pushing.
-> **Always back up before deploying a schema change** — a push can drop columns.
+> Database schemas are provisioned by **idempotent SQL DDL** in `server/db/` (see §3) — this
+> replaced `prisma db push`. Re-running is safe and never drops data. Prisma _clients_ are still
+> generated (`npm run db:generate`). **Always back up before a schema change** regardless.
 
 ---
 
@@ -13,19 +14,26 @@ This guide deploys the B2B SaaS platform: an **Express + TypeScript** API (`/ser
 
 Deploying an existing install? These landed in the latest updates — review before upgrading:
 
-- **Web Push notifications** (new). Adds a `PushSubscription` table to the **main** DB (applied by
-  `npm run db:push`) and requires `VAPID_*` on the server + `NEXT_PUBLIC_VAPID_PUBLIC_KEY` on the
-  client. Files: `server/src/lib/webpush.ts`, `server/src/modules/push/*`, `client/public/sw.js`,
-  `client/src/lib/push-client.ts`, `client/src/components/EnablePushButton.tsx`.
-- **Login cookie fix.** The browser now calls the API **same-origin** via the relative `/api` path,
-  so the auth cookie is first-party and login works from any host. The Next `middleware.ts` also
-  exempts `/sw.js` (the service worker must be publicly served).
-- **Ticketing tenant isolation.** Ticket reads/attachments/comments are now scoped to the caller's
-  org (closed a cross-org IDOR). No config change.
-- **Rate limiting behind Nginx.** The API sets `trust proxy` so limits key on the real client IP.
-- **Non-root deploy.** The systemd unit / `deploy_services.py` now run as a dedicated `b2bapp` user
-  with a hardened sandbox (was root).
-- **`SINGLE_SESSION_ENFORCED`** env toggle (default `true`) — set `false` only for multi-device testing.
+- **SQL-first DB provisioning** (replaces `prisma db push`). Schemas live as idempotent SQL DDL in
+  `server/db/`; provision with `npm run db:provision` and gate the deploy with `npm run db:verify`.
+  `db:push` is deprecated (now forwards to `db:provision`). See §3.
+- **MFA is now opt-in (default off).** Email MFA is a per-user profile toggle — or org-enforced via
+  `Customer.mfaRequired` — so a normal login no longer sends a code. SMTP is only needed for users
+  who enable 2FA and for password resets.
+- **Admin ticket store is required, no fallback.** `ADMIN_TICKETING_DATABASE_URL` must be set and
+  reachable (`b2b_ticketing_admin`); the API fails loudly instead of using the shared store.
+- **SSO toggle removed** from the UI — it was a non-functional stub (no real SSO auth exists).
+- **Login routing fixes.** The Next `middleware.ts` matcher now excludes `/api` (page-auth no longer
+  redirects API calls) and exempts `/sw.js`; the browser calls the API same-origin via `/api`, so
+  `NEXT_PUBLIC_API_URL` must point at an API address the **Next.js server** can reach.
+- **Web Push notifications.** Adds a `PushSubscription` table to the **main** DB and requires `VAPID_*`
+  on the server + `NEXT_PUBLIC_VAPID_PUBLIC_KEY` on the client. Files: `server/src/lib/webpush.ts`,
+  `server/src/modules/push/*`, `client/public/sw.js`, `client/src/lib/push-client.ts`.
+- **Ticketing tenant isolation.** Ticket reads/attachments/comments are scoped to the caller's org
+  (closed a cross-org IDOR). No config change.
+- **Rate limiting behind Nginx.** The API sets `trust proxy = loopback`, so limits key on the real
+  client IP behind Nginx.
+- **Non-root deploy.** The systemd units run as a dedicated non-root user with a hardened sandbox.
 - **Admin-domain hardening.** `ADMIN_DOMAINS` must be private work domains; public mailbox domains
   are a privilege-escalation risk (any signup → `ADMINISTRATOR`).
 
@@ -61,8 +69,9 @@ makes requests same-origin, so the `SameSite=Lax` auth cookies "just work" and C
 - **Node.js 20 LTS** and npm (both apps target Node 20).
 - **PostgreSQL 14+** with the `pgcrypto`/`gen_random_uuid()` function available (default in 14+).
 - **Nginx** (reverse proxy + TLS termination) and **certbot** (Let's Encrypt), or your own certs.
-- A working **SMTP account** — **mandatory**: every login requires an emailed MFA code, so if
-  mail can't send, **no one can log in**.
+- A working **SMTP account** — needed for **email MFA** (opt-in per user, default off) and
+  **password resets**. MFA is off by default, so mail isn't required just to log in — but any user
+  who enables 2FA (or an org that sets `mfaRequired`) can't complete login without working mail.
 - (Optional) **Ollama** + the Analytics Agent for the in-app assistant / Slack chat bridge.
 
 ---
@@ -112,13 +121,6 @@ pg_restore -d "$ADMIN_TICKETING_DATABASE_URL" ticketingDB
 > ℹ️ `npm run db:push` is **deprecated** and now just forwards to `db:provision`
 > (the old Prisma push could wipe/recreate `b2b_ticketing`). See
 > `server/db/README.md` for details.
->
-> To run a **separate** Administrators' store (optional), create its database and
-> apply the same 14-table schema, then point `ADMIN_TICKETING_DATABASE_URL` at it:
-> ```bash
-> sudo -u postgres psql -c "CREATE DATABASE b2b_ticketing_admin;"
-> psql "$ADMIN_TICKETING_DATABASE_URL" -f server/db/b2b_ticket.sql
-> ```
 
 ---
 
@@ -130,7 +132,7 @@ Copy `server/.env.example` → `server/.env` and fill in. **Generate every secre
 | Var | Required | Purpose |
 |---|---|---|
 | `DATABASE_URL`, `CHAT_DATABASE_URL`, `TICKETING_DATABASE_URL`, `TICKET_DATABASE_URL` | ✅ | The four core DBs |
-| `ADMIN_TICKETING_DATABASE_URL` | optional | Admin ticket store (falls back to `TICKETING_DATABASE_URL`) |
+| `ADMIN_TICKETING_DATABASE_URL` | ✅ | Administrators' isolated ticket store (`b2b_ticketing_admin`) — **required, no fallback**; the API won't start without it |
 | `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `IMPERSONATION_SECRET` | ✅ (≥32 chars) | Token signing |
 | `SLACK_TOKEN_SECRET` | ✅ if using bots | **Encrypts Slack bot tokens, webhook URLs, and AD temp-passwords at rest.** Falls back to `JWT_ACCESS_SECRET`. **Back it up — if lost, all encrypted secrets become unrecoverable; if changed, existing ones stop decrypting.** |
 | `NODE_ENV` | ✅ | Set to `production` |
@@ -140,8 +142,7 @@ Copy `server/.env.example` → `server/.env` and fill in. **Generate every secre
 | `FRONTEND_URL` | ✅ | Public app URL — used to build password-reset links in emails |
 | `ADMIN_DOMAINS` | ✅ | Comma-separated email domains allowed to hold `ADMINISTRATOR`. **Empty = admin login disabled.** ⚠ **Use only PRIVATE work domains you control** — registration grants `ADMINISTRATOR` from the email domain, so listing a public mailbox domain (`gmail.com`, `outlook.com`, …) lets ANY signup on that domain become a platform super-admin. |
 | `SMTP_HOST/PORT/USER/PASS`, `MAIL_FROM` | ✅ | MFA + password-reset email. **`MAIL_FROM` must be an address the SMTP account is authorized to send as** (e.g. Outlook/Gmail reject a mismatched From), or MFA codes silently fail to send. |
-| `SESSION_INACTIVITY_MINUTES` | optional | Idle window before a new login can take over a session (default 30) |
-| `SINGLE_SESSION_ENFORCED` | optional | One active session per account (default `true`). Set `false` to allow the same account on multiple devices at once — for LAN/dev testing only; keep `true` in production. |
+| `SESSION_INACTIVITY_MINUTES` | optional | One active session per account is **always enforced**; this is the idle window (default 30 min) after which a stale session can be taken over by a new login. |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | optional | **Web Push notifications.** Generate with `npx web-push generate-vapid-keys`. `VAPID_PRIVATE_KEY` is a **secret** — never expose/log it. `VAPID_SUBJECT` is a `mailto:`/`https:` contact URI. When unset, push sending is disabled (503). |
 | `MFA_CODE_TTL_MINUTES`, `MFA_MAX_ATTEMPTS`, `MFA_RESEND_COOLDOWN_SECONDS` | optional | MFA tuning (defaults 10 / 5 / 30) |
 | `AGENT_URL`, `OLLAMA_URL`, `OLLAMA_MODEL` | optional | Assistant backend; chat degrades gracefully (503) if absent |
@@ -174,8 +175,9 @@ cd server
 npm ci
 npm run db:generate          # generate all 4 Prisma clients (REQUIRED before build)
 npm run build                # tsc → dist/
-npm run db:provision         # create + apply schema for the 4 DBs (idempotent SQL DDL)
-npm run db:verify            # fail-fast: confirm all 4 required DBs are reachable + provisioned
+npm run db:provision         # create + apply schema for the 4 SQL DBs (idempotent DDL)
+pg_restore -d "$ADMIN_TICKETING_DATABASE_URL" ../ticketingDB   # admin store — FRESH/empty DB only (see §3)
+npm run db:verify            # fail-fast: confirm all 5 required DBs are reachable + provisioned
 npm run db:seed              # first deploy only — creates the initial administrator; review prisma/seed.ts
 node dist/server.js          # or run under systemd (below)
 ```
@@ -301,7 +303,7 @@ the rest of the platform is unaffected.
       backed up** in a secrets manager (losing them logs everyone out / bricks encrypted bot & AD data).
 - [ ] `ADMIN_DOMAINS` lists only the provider's real **private** admin domain(s) — **never** a public
       mailbox domain (`gmail.com`, etc.), which would let any signup self-grant `ADMINISTRATOR`.
-- [ ] `SINGLE_SESSION_ENFORCED` is `true` (or unset) in production.
+- [ ] One-session-per-account is always enforced; `SESSION_INACTIVITY_MINUTES` is set to a sane idle window (default 30).
 - [ ] `ALLOWED_ORIGINS` is the exact public origin — **not** `*`.
 - [ ] Services run under a **dedicated non-root user** (the systemd units default to `b2bapp` with a
       hardened sandbox). Do **not** deploy as root.
@@ -350,9 +352,10 @@ CI (`.github/workflows/ci-cd.yml`) runs **checks only** (typecheck/lint) — it 
 | Symptom | Likely cause |
 |---|---|
 | Login "fails" / cookie never sticks | `COOKIE_SECURE=true` on plain HTTP; or the Next `/api` rewrite target (`NEXT_PUBLIC_API_URL`) unreachable from the Next server |
-| Login OK but every page bounces to `/login` | old symptom of a cross-origin auth cookie — fixed by same-origin `/api` calls; ensure `next.config.js` `rewrites()` is present and `/sw.js` is exempt in `middleware.ts` |
-| "You're already signed in on another device" blocks login | single-session lock; sign out the other device, wait `SESSION_INACTIVITY_MINUTES`, or set `SINGLE_SESSION_ENFORCED=false` for testing |
-| No MFA email arrives → can't log in | SMTP misconfigured, or `MAIL_FROM` not authorized by the SMTP account (send silently fails); check `SMTP_*`, `MAIL_FROM`, provider logs |
+| Login OK but every page bounces to `/login` | ensure `next.config.js` `rewrites()` is present and the `middleware.ts` matcher **excludes `/api`** (and exempts `/sw.js`) — otherwise page-auth redirects the login API call itself; also confirm `NEXT_PUBLIC_API_URL` is reachable from the Next server |
+| Verify screen shows "sent to **undefined**" / login can't complete | the `/api` proxy target is unreachable (wrong/stale `NEXT_PUBLIC_API_URL`) or the API is down — the client renders a broken code screen when it can't get a `mfaRequired:false` response |
+| "You're already signed in on another device" blocks login | single-session lock (always on); sign out the other device or wait `SESSION_INACTIVITY_MINUTES` for the stale session to expire |
+| MFA code never arrives (2FA-enabled users only) | SMTP misconfigured, or `MAIL_FROM` not authorized by the SMTP account (send silently fails); check `SMTP_*`, `MAIL_FROM`, provider logs. MFA is opt-in, so this only blocks accounts that enabled 2FA |
 | Push notifications never arrive | `VAPID_*` unset (send returns 503); `NEXT_PUBLIC_VAPID_PUBLIC_KEY` missing/mismatched; not served over HTTPS (push needs a secure context — `localhost` is exempt); browser blocked notifications |
 | Admin can't log in | admin's email domain not in `ADMIN_DOMAINS` (public domains excluded by design) |
 | `/health` shows a DB `down` | that database's URL is wrong or the DB isn't created/loaded |
