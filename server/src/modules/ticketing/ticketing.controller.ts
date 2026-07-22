@@ -12,6 +12,12 @@ import { resolveTicketActor } from './identity';
 // Bridge the B2B-Site user to a ticketing staff Users row (id + mapped role).
 const actor = (req: Request) => resolveTicketActor(req.user.userId, req.user.role);
 
+// Synthetic assignee that routes a new ticket to the platform administrators
+// (auto-escalation) instead of a person. Offered to ORG_ADMIN only; the client
+// translates it into { escalateToAdministrators: true } on submit. Kept in sync
+// with the same id in client/src/app/ticketing/shared.tsx.
+export const ESCALATE_ADMINS_ID = '__escalate_admins__';
+
 export async function listTickets(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const input = ListTicketsSchema.parse(req.query);
@@ -47,6 +53,24 @@ export async function createTicket(req: Request, res: Response, next: NextFuncti
   try {
     const input = CreateTicketSchema.parse(req.body);
     const me = await actor(req);
+
+    // Org admin picked "Escalate to Administrators" as the assignee: create the
+    // ticket in the org store UNASSIGNED, then auto-escalate it to the platform
+    // administrators' store. Restricted to ORG_ADMIN (regular users never get the
+    // option, and this is the server-side guard).
+    if (input.escalateToAdministrators) {
+      if (req.user.role !== 'ORG_ADMIN') {
+        throw Object.assign(
+          new Error('Only organization admins can escalate a ticket to administrators.'),
+          { status: 403, code: 'FORBIDDEN' },
+        );
+      }
+      const ticket = await service.createTicket(me.id, { ...input, assigneeId: null }, req.user.customerId);
+      await escalation.escalateTicket(req.user.userId, req.user.role, ticket.id);
+      res.status(201).json(ticket);
+      return;
+    }
+
     const ticket = await service.createTicket(me.id, input, req.user.customerId);
     res.status(201).json(ticket);
   } catch (err) { next(err); }
@@ -104,9 +128,18 @@ export async function deleteSla(req: Request, res: Response, next: NextFunction)
 
 export async function listAssignees(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    // Admin store's assignee pool is the platform administrators (bridged);
-    // the client store's pool is its own staff.
-    const assignees = req.user.role === 'ADMINISTRATOR' ? await listAdminAssignees() : await db.listStaff();
+    // Admin store's assignee pool is the platform administrators (bridged).
+    if (req.user.role === 'ADMINISTRATOR') {
+      res.json({ assignees: await listAdminAssignees() });
+      return;
+    }
+    // Org store's pool is its own staff (platform admins are excluded by listStaff).
+    // ORG_ADMINs additionally get a synthetic "Escalate to Administrators" option at
+    // the top; regular users never see it.
+    const staff = await db.listStaff();
+    const assignees = req.user.role === 'ORG_ADMIN'
+      ? [{ id: ESCALATE_ADMINS_ID, name: 'Escalate to Administrators', email: '', role: 'ADMINISTRATOR' }, ...staff]
+      : staff;
     res.json({ assignees });
   } catch (err) { next(err); }
 }

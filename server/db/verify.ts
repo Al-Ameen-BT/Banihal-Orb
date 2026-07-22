@@ -4,8 +4,9 @@ import { Pool } from 'pg';
 // Fail-fast preflight: confirms every REQUIRED database is reachable and carries
 // its schema. Used by deploy.sh before it touches systemd, and runnable on its
 // own via `npm run db:verify`. Uses the app's own `pg` dependency (no psql
-// client needed). The Administrators' isolated store (ADMIN_TICKETING_DATABASE_URL)
-// is intentionally NOT checked — it is optional and falls back to b2b_ticket.
+// client needed). The Administrators' isolated store (ADMIN_TICKETING_DATABASE_URL
+// → b2b_ticketing_admin, schema from the `ticketingDB` dump) IS checked — it is a
+// required store with no fallback, so a broken admin DB must fail the deploy.
 
 interface Target {
   name: string;
@@ -18,6 +19,7 @@ const targets: Target[] = [
   { name: 'b2b_chat',      url: process.env['CHAT_DATABASE_URL'],      table: 'ChatSession' },
   { name: 'b2b_ticketing', url: process.env['TICKETING_DATABASE_URL'], table: 'Ticket' },
   { name: 'b2b_ticket',    url: process.env['TICKET_DATABASE_URL'],    table: 'Tickets' },
+  { name: 'b2b_ticketing_admin', url: process.env['ADMIN_TICKETING_DATABASE_URL'], table: 'Tickets' },
 ];
 
 async function checkOne(t: Target): Promise<string> {
@@ -36,7 +38,7 @@ async function checkOne(t: Target): Promise<string> {
 }
 
 async function main(): Promise<void> {
-  console.log('🔎 Verifying required databases (admin store excluded)…');
+  console.log('🔎 Verifying required databases (incl. admin ticket store)…');
   const results = await Promise.all(targets.map(checkOne));
   for (const r of results) console.log('  ' + r);
 

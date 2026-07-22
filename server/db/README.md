@@ -15,16 +15,25 @@ still generated with `npm run db:generate` while the code migration to raw
 | `b2b_ticketing.sql` | `b2b_ticketing` | `TICKETING_DATABASE_URL` | Internal ticketing fallback store (2 tables) |
 | `b2b_ticket.sql` | `b2b_ticket` | `TICKET_DATABASE_URL` | Full 14-table external ticketing platform schema |
 
-`00_databases.sql` creates the four databases themselves (cluster-level).
+`00_databases.sql` creates all five databases (cluster-level), including
+`b2b_ticketing_admin`.
 
-### Not provisioned: `b2b_ticketing_admin`
+### `b2b_ticketing_admin` — required, schema from the `ticketingDB` dump
 
 The platform-Administrators' **isolated** ticket store
-(`ADMIN_TICKETING_DATABASE_URL`) is intentionally **not** built here. When that
-URL is unset the app falls back to `b2b_ticket`, so Administrator ticketing
-keeps working on the shared store (see `src/config/ticketDatabase.ts`). To add a
-separate admin store later, create the database and apply `b2b_ticket.sql` to
-it (it uses the same 14-table schema).
+(`ADMIN_TICKETING_DATABASE_URL` → `b2b_ticketing_admin`) is **required** and has
+**no fallback** — the admin ticketing client always uses this database, so a
+missing/unreachable admin DB fails loudly instead of silently reading/writing the
+shared `b2b_ticket` store (see `src/config/ticketDatabase.ts`, `config/env.ts`).
+
+Its schema is **not** a `.sql` file here — it is loaded from the custom-format pg
+dump `ticketingDB` at the repo root (it carries the same 14-table `ticket-client`
+schema plus the external app's agent-integration columns):
+
+```bash
+# fresh, empty DB only — the dump is schema-only, so a --clean restore drops data:
+pg_restore -d "$ADMIN_TICKETING_DATABASE_URL" ticketingDB
+```
 
 ## Usage
 
@@ -33,8 +42,9 @@ it (it uses the same 14-table schema).
 bash db/provision.sh
 # or:  npm run db:provision
 
-# Confirm all four required DBs are reachable + provisioned (fail-fast, exits 1
-# on any failure). deploy.sh runs this as a hard gate before starting systemd:
+# Confirm all required DBs (the 4 SQL DBs + b2b_ticketing_admin) are reachable +
+# provisioned (fail-fast, exits 1 on any failure). deploy.sh runs this as a hard
+# gate before starting systemd:
 npm run db:verify
 ```
 

@@ -245,7 +245,7 @@ export default function UsersPage() {
   const logPages = Math.max(1, Math.ceil(logTotal / LOG_LIMIT));
 
   const secMutation = useMutation({
-    mutationFn: (d: { ssoEnabled?: boolean; mfaRequired?: boolean }) => orgsApi.updateSecurity(d),
+    mutationFn: (d: { mfaRequired?: boolean }) => orgsApi.updateSecurity(d),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['org'] }),
   });
 
@@ -357,7 +357,6 @@ export default function UsersPage() {
                 <h2 className="text-base font-semibold text-slate-900 mb-4">Security Settings</h2>
                 <div className="card px-5">
                   <div className="divide-y divide-slate-100">
-                    <Toggle label="SSO Enabled"  description="Allow sign-in via Single Sign-On"  enabled={org.ssoEnabled}  onChange={(v) => secMutation.mutate({ ssoEnabled: v })}  disabled={secMutation.isPending} />
                     <Toggle label="MFA Required" description="Require MFA for all team members" enabled={org.mfaRequired} onChange={(v) => secMutation.mutate({ mfaRequired: v })} disabled={secMutation.isPending} />
                   </div>
                 </div>

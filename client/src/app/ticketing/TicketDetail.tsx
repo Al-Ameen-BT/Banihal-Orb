@@ -5,6 +5,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ticketingApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import GlowButton from '@/components/ui/GlowButton';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
+import { useToast } from '@/components/ui/Toast';
 import {
   StatusBadge, PriorityBadge, SlaBadge, TypeBadge, Avatar, Drawer, Icons,
   STATUS_OPTIONS, PRIORITY_OPTIONS, fmtDate, timeAgo,
@@ -112,6 +114,8 @@ function QuickEdit({ ticket }: { ticket: TicketDTO }) {
 
 export default function TicketDetail({ ticketId, onClose }: { ticketId: string; onClose: () => void }) {
   const qc = useQueryClient();
+  const confirm = useConfirm();
+  const toast = useToast();
   const { user } = useAuth();
   const isStaff = user?.role === 'ORG_ADMIN' || user?.role === 'ADMINISTRATOR';
   const [comment, setComment] = useState('');
@@ -156,7 +160,7 @@ export default function TicketDetail({ ticketId, onClose }: { ticketId: string; 
   const escalateMut = useMutation({
     mutationFn: () => ticketingApi.escalate(ticketId),
     onSuccess: () => { setEscalateTo(''); void invalidate(); },
-    onError: (e: unknown) => alert((e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Could not escalate the ticket.'),
+    onError: (e: unknown) => toast((e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Could not escalate the ticket.', 'error'),
   });
 
   return (
@@ -255,7 +259,7 @@ export default function TicketDetail({ ticketId, onClose }: { ticketId: string; 
                       </select>
                     </label>
                     <GlowButton variant="secondary" className="w-full py-2 text-xs" loading={escalateMut.isPending} disabled={escalateTo !== 'ADMINISTRATOR' || escalateMut.isPending}
-                      onClick={() => { if (escalateTo === 'ADMINISTRATOR' && confirm('Escalate this ticket to the platform administrators?')) escalateMut.mutate(); }}>
+                      onClick={async () => { if (escalateTo === 'ADMINISTRATOR' && await confirm({ title: 'Escalate ticket', message: 'This copies the ticket into the platform administrators’ queue, pre-assigned to the selected administrator.', confirmText: 'Escalate' })) escalateMut.mutate(); }}>
                       Escalate to administrators
                     </GlowButton>
                   </div>

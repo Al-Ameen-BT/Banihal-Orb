@@ -12,6 +12,7 @@ import KpiCard from '@/components/ui/KpiCard';
 import Toggle from '@/components/ui/Toggle';
 import GlowButton from '@/components/ui/GlowButton';
 import { ShimmerCard, ShimmerRow } from '@/components/ui/Shimmer';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface PlatformMetrics {
@@ -520,6 +521,7 @@ export default function SaasAdminPage() {
 
 function SadminPage() {
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const [impersonateResult, setImpersonateResult] = useState<string | null>(null);
   const [orgFilter, setOrgFilter] = useState<OrgFilter>('ALL');
   const [orgSearch, setOrgSearch] = useState('');
@@ -718,10 +720,11 @@ function SadminPage() {
                           <OrgRow
                             key={org.id}
                             org={org}
-                            onSuspendToggle={() => {
-                              if (confirm(org.suspended ? `Restore ${org.name}?` : `Suspend ${org.name}? All members will lose access.`)) {
-                                suspendMutation.mutate({ id: org.id, suspended: !org.suspended });
-                              }
+                            onSuspendToggle={async () => {
+                              const ok = await confirm(org.suspended
+                                ? { title: 'Restore organization', message: <>Restore access for <b>{org.name}</b>?</>, confirmText: 'Restore' }
+                                : { title: 'Suspend organization', message: <><b>{org.name}</b> will be suspended and all members will lose access.</>, confirmText: 'Suspend', variant: 'danger' });
+                              if (ok) suspendMutation.mutate({ id: org.id, suspended: !org.suspended });
                             }}
                             suspendPending={suspendMutation.isPending}
                             onImpersonate={() => { if (org.admin) impersonateMutation.mutate(org.admin.id); }}

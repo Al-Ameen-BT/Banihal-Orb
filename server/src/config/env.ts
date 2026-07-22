@@ -6,9 +6,11 @@ const EnvSchema = z.object({
   // PostgreSQL database, linked to the main DB via customerId/userId keys.
   CHAT_DATABASE_URL: z.string().url(),
   TICKETING_DATABASE_URL: z.string().url(),
-  // Platform ADMINISTRATOR ticketing uses its own database (same schema).
-  // Optional: when unset, administrators fall back to TICKETING_DATABASE_URL.
-  ADMIN_TICKETING_DATABASE_URL: z.string().url().optional(),
+  // Platform ADMINISTRATOR ticketing uses its OWN database (b2b_ticketing_admin;
+  // schema loaded from the `ticketingDB` pg dump). REQUIRED — there is NO fallback:
+  // if this DB is unset or unreachable, admin ticketing fails loudly rather than
+  // silently reading/writing the shared b2b_ticket store.
+  ADMIN_TICKETING_DATABASE_URL: z.string().url(),
   // Full Ticketing Platform schema (14-table b2b_ticket) backing the rebuilt module.
   TICKET_DATABASE_URL: z.string().url(),
   // Directory for ticket/comment attachment uploads (local disk). Relative to cwd.

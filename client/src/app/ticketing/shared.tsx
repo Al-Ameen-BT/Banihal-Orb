@@ -336,6 +336,12 @@ const ROLE_FIELDS: Record<Role, FormField[]> = {
   ADMINISTRATOR: ['project', 'type', 'priority', 'status', 'assignee', 'branch', 'onSite'],
 };
 
+// Synthetic assignee (org-admin only) that auto-escalates the new ticket to the
+// platform administrators. Must match ESCALATE_ADMINS_ID in the server's
+// ticketing.controller.ts — the server emits this option and interprets the
+// resulting { escalateToAdministrators: true } payload.
+const ESCALATE_ADMINS_ID = '__escalate_admins__';
+
 export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: {
   projects: TicketProject[]; onCreated?: () => void; onCancel?: () => void; role?: Role;
 }) {
@@ -414,7 +420,11 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
           type,
           priority,
           ...(has('status') ? { status } : {}),
-          ...(has('assignee') ? { assigneeId: assigneeId || null } : {}),
+          ...(has('assignee')
+            ? (assigneeId === ESCALATE_ADMINS_ID
+                ? { escalateToAdministrators: true }
+                : { assigneeId: assigneeId || null })
+            : {}),
           ...(has('branch') ? { branch: branch.trim() || null } : {}),
           ...(has('onSite') ? { onSiteSupportRequired: onSite } : {}),
         });
@@ -472,7 +482,9 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
             <FieldLabel htmlFor="tk-assignee">Assignee</FieldLabel>
             <select id="tk-assignee" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} className="input">
               <option value="">— Unassigned (round-robin) —</option>
-              {(assignees ?? []).map((a) => <option key={a.id} value={a.id}>{a.name} · {a.role}</option>)}
+              {(Array.isArray(assignees) ? assignees : []).map((a) => (
+                <option key={a.id} value={a.id}>{a.id === ESCALATE_ADMINS_ID ? `⤴ ${a.name}` : `${a.name} · ${a.role}`}</option>
+              ))}
             </select>
           </div>
         );
@@ -530,7 +542,7 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
                 <FieldLabel required>Bot</FieldLabel>
                 <select value={botId} onChange={(e) => { setBotId(e.target.value); setBotValues({}); }} className="input">
                   <option value="">— Select a bot —</option>
-                  {(orgBots ?? []).map((b) => <option key={b.id} value={b.id}>{b.name}{b.status !== 'CONNECTED' ? ` (${b.status.toLowerCase()})` : ''}</option>)}
+                  {(Array.isArray(orgBots) ? orgBots : []).map((b) => <option key={b.id} value={b.id}>{b.name}{b.status !== 'CONNECTED' ? ` (${b.status.toLowerCase()})` : ''}</option>)}
                 </select>
                 {(orgBots ?? []).length === 0 && <p className="text-xs text-slate-400 mt-1">No bots have been assigned to your organization yet.</p>}
               </div>

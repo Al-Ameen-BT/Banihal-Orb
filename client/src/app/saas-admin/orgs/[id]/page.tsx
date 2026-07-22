@@ -9,6 +9,7 @@ import { saasAdminApi } from '@/lib/api';
 import RoleGuard from '@/components/guards/RoleGuard';
 import Sidebar from '@/components/ui/Sidebar';
 import GlowButton from '@/components/ui/GlowButton';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
 import { Shimmer } from '@/components/ui/Shimmer';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -505,6 +506,7 @@ export default function OrgDetailPage() {
   const params = useParams();
   const router = useRouter();
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const orgId = params?.['id'] as string;
 
   const { data, isLoading, error } = useQuery<OrgDetail>({
@@ -615,7 +617,12 @@ export default function OrgDetailPage() {
                   </div>
                 </div>
                 <GlowButton variant={org.suspended ? 'primary' : 'danger'}
-                  onClick={() => { if (confirm(org.suspended ? `Restore ${org.name}?` : `Suspend ${org.name}? Members will lose access.`)) suspendMutation.mutate(); }}
+                  onClick={async () => {
+                    const ok = await confirm(org.suspended
+                      ? { title: 'Restore organization', message: <>Restore access for <b>{org.name}</b>?</>, confirmText: 'Restore' }
+                      : { title: 'Suspend organization', message: <><b>{org.name}</b> will be suspended and members will lose access.</>, confirmText: 'Suspend', variant: 'danger' });
+                    if (ok) suspendMutation.mutate();
+                  }}
                   disabled={suspendMutation.isPending} loading={suspendMutation.isPending}>
                   {org.suspended ? 'Restore Access' : 'Suspend Org'}
                 </GlowButton>
@@ -643,7 +650,6 @@ export default function OrgDetailPage() {
               <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.1 }}>
                 <h2 className="text-base font-semibold text-slate-900 mb-4">Security Posture</h2>
                 <div className="card p-5 space-y-4">
-                  <SecurityRow label="SSO Sign-In" enabled={org.ssoEnabled} />
                   <SecurityRow label="MFA Enforced" enabled={org.mfaRequired} />
                   <SecurityRow label="Admin has MFA" enabled={admin?.mfaEnabled ?? false} />
                   <div className="pt-3 border-t border-slate-100 space-y-1.5 text-sm">

@@ -4,6 +4,7 @@ import { runWithTicketDb } from '../../../config/ticketDatabase';
 import { resolveTicketActor } from '../identity';
 import { nextTicketNumber } from '../utils/ticketNumber';
 import { getTicketNumberFormat } from './numberFormat';
+import { prisma } from '../../../config/database';
 
 // ─── Escalation: client (b2b_ticket) → administrators (b2b_ticketing_admin) ────
 // Both stores share the SAME 14-table schema. An ORG_ADMIN escalates an UNCLOSED ticket
@@ -31,7 +32,20 @@ export async function escalateTicket(
     throw Object.assign(new Error('This ticket has already been escalated.'), { status: 409, code: 'ALREADY_ESCALATED' });
   }
 
-  const orgName = source.customer?.name ?? source.projectName ?? 'Unknown organization';
+  // Preserve the ORIGINAL requester + their organization on the escalated copy.
+  // Org-created tickets don't link a ticket-store Customers row (source.customer is
+  // usually null), so without this we'd fall back to the PROJECT name as the client
+  // and drop the requester's identity entirely. The escalating org-admin belongs to
+  // the same B2B org as the ticket, so we resolve the real org from their account.
+  const requester = source.reporter; // original requester: { id, name, email }
+  const b2bOrg = await prisma.user.findUnique({
+    where: { id: b2bUserId },
+    select: { customer: { select: { name: true, mailId: true, contactPerson: true } } },
+  }).catch(() => null);
+  const orgName = source.customer?.name ?? b2bOrg?.customer?.name ?? source.projectName ?? 'Unknown organization';
+  const orgEmail = source.customer?.email ?? b2bOrg?.customer?.mailId ?? requester?.email ?? null;
+  const orgContact = source.customer?.contactPerson ?? requester?.name ?? b2bOrg?.customer?.contactPerson ?? null;
+  const requestedByLine = `Requested by ${requester?.name ?? 'Unknown user'}${requester?.email ? ` <${requester.email}>` : ''}.`;
 
   // Copy into the ADMIN store (14-table). Reporter + project + customer are resolved in
   // that store; the ticket number is allocated from the admin store's sequence; the copy
@@ -41,8 +55,8 @@ export async function escalateTicket(
     const projectId = await db.getOrCreateEscalationProject(actor.id);
     const customerId = await db.getOrCreateCustomerByName({
       name: orgName,
-      email: source.customer?.email ?? null,
-      contactPerson: source.customer?.contactPerson ?? source.reporter?.name ?? null,
+      email: orgEmail,
+      contactPerson: orgContact,
     });
     const fmt = await getTicketNumberFormat();
 
@@ -53,7 +67,7 @@ export async function escalateTicket(
         await db.createTicketRow({
           ticketNumber,
           title: source.title,
-          description: `Escalated from ${source.ticketNumber} (${orgName}).\n\n${source.description}`,
+          description: `Escalated from ${source.ticketNumber} (${orgName}).\n${requestedByLine}\n\n${source.description}`,
           type: source.type,
           priority: source.priority,
           status: 'todo',

@@ -11,6 +11,7 @@ import Sidebar from '@/components/ui/Sidebar';
 import KpiCard from '@/components/ui/KpiCard';
 import GlowButton from '@/components/ui/GlowButton';
 import { ShimmerCard, ShimmerRow } from '@/components/ui/Shimmer';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
 import { StatusBadge as TicketStatusBadge, PriorityBadge as TicketPriorityBadge } from '@/app/ticketing/shared';
 import type {
   SlaBreachReport, SlaTicket, ChatAnalytics, Announcement, AnnouncementLevel, TicketDTO,
@@ -245,6 +246,7 @@ function EscalationsSection() {
 // ─── Announcements manager ────────────────────────────────────────────────────
 function AnnouncementsManager({ orgs }: { orgs: OrgOverview[] }) {
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const [title, setTitle] = useState('');
   const [message, setMessage] = useState('');
   const [level, setLevel] = useState<AnnouncementLevel>('INFO');
@@ -374,7 +376,7 @@ function AnnouncementsManager({ orgs }: { orgs: OrgOverview[] }) {
                       {a.active ? 'Deactivate' : 'Activate'}
                     </button>
                     <button type="button"
-                      onClick={() => { if (confirm(`Delete "${a.title}"?`)) deleteMut.mutate(a.id); }}
+                      onClick={async () => { if (await confirm({ title: 'Delete announcement', message: <>&ldquo;{a.title}&rdquo; will be removed for everyone who can see it.</>, confirmText: 'Delete', variant: 'danger' })) deleteMut.mutate(a.id); }}
                       disabled={deleteMut.isPending}
                       className="text-xs font-medium text-slate-400 hover:text-red-600 transition-colors cursor-pointer disabled:opacity-50">
                       Delete

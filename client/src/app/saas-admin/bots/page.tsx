@@ -8,6 +8,8 @@ import RoleGuard from '@/components/guards/RoleGuard';
 import Sidebar from '@/components/ui/Sidebar';
 import GlowButton from '@/components/ui/GlowButton';
 import { Shimmer } from '@/components/ui/Shimmer';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
+import { useToast } from '@/components/ui/Toast';
 import { BotFieldGrid } from '@/components/BotFormFields';
 import type { SlackBot, SlackBotField, BotFieldType } from '@/lib/schemas';
 
@@ -125,6 +127,8 @@ function ManageBotDrawer({ botId, onClose }: { botId: string; onClose: () => voi
 
 function SettingsTab({ bot, onChange, onDeleted }: { bot: SlackBot; onChange: () => void; onDeleted: () => void }) {
   const qc = useQueryClient();
+  const confirm = useConfirm();
+  const toast = useToast();
   const [name, setName] = useState(bot.name);
   const [description, setDescription] = useState(bot.description ?? '');
   const [botToken, setBotToken] = useState('');
@@ -139,7 +143,7 @@ function SettingsTab({ bot, onChange, onDeleted }: { bot: SlackBot; onChange: ()
       ...(webhookUrl.trim() ? { webhookUrl: webhookUrl.trim() } : {}),
     }),
     onSuccess: () => { setBotToken(''); setAppToken(''); setWebhookUrl(''); onChange(); },
-    onError: (e: unknown) => alert((e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Could not save the bot.'),
+    onError: (e: unknown) => toast((e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Could not save the bot.', 'error'),
   });
   const toggleMut = useMutation({
     mutationFn: () => (bot.enabled ? slackBotsApi.disconnect(bot.id) : slackBotsApi.connect(bot.id)),
@@ -193,7 +197,7 @@ function SettingsTab({ bot, onChange, onDeleted }: { bot: SlackBot; onChange: ()
 
       <div className="flex items-center gap-3 pt-1">
         <GlowButton onClick={() => saveMut.mutate()} disabled={saveMut.isPending} loading={saveMut.isPending}>Save Changes</GlowButton>
-        <button type="button" onClick={() => { if (confirm(`Delete "${bot.name}"? This removes its form and org assignments.`)) deleteMut.mutate(); }}
+        <button type="button" onClick={async () => { if (await confirm({ title: 'Delete bot', message: <>&ldquo;{bot.name}&rdquo; and its form fields and org assignments will be removed.</>, confirmText: 'Delete', variant: 'danger' })) deleteMut.mutate(); }}
           className="ml-auto text-xs font-semibold text-red-600 hover:text-red-700 cursor-pointer">Delete bot</button>
       </div>
     </div>
@@ -204,6 +208,8 @@ function SettingsTab({ bot, onChange, onDeleted }: { bot: SlackBot; onChange: ()
 const slugKey = (label: string) => label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60);
 
 function FormBuilder({ bot, onChange }: { bot: SlackBot; onChange: () => void }) {
+  const confirm = useConfirm();
+  const toast = useToast();
   const fields = [...(bot.formFields ?? [])].sort((a, b) => a.order - b.order);
   const [editing, setEditing] = useState<SlackBotField | null>(null);
   const [showEditor, setShowEditor] = useState(false);
@@ -239,7 +245,7 @@ function FormBuilder({ bot, onChange }: { bot: SlackBot; onChange: () => void })
   const saveMut = useMutation({
     mutationFn: () => (editing ? slackBotsApi.updateField(bot.id, editing.id, payload()) : slackBotsApi.addField(bot.id, payload())),
     onSuccess: () => { reset(); onChange(); },
-    onError: (e: unknown) => alert((e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Could not save the field.'),
+    onError: (e: unknown) => toast((e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Could not save the field.', 'error'),
   });
   const delMut = useMutation({ mutationFn: (id: string) => slackBotsApi.deleteField(bot.id, id), onSuccess: onChange });
   // ⇅ reorder: swap order values with the neighbor (normalized to sorted indexes).
@@ -282,7 +288,7 @@ function FormBuilder({ bot, onChange }: { bot: SlackBot; onChange: () => void })
                 <p className="text-[11px] text-slate-400 truncate">{f.key} · {f.type}{f.options?.length ? ` · ${f.options.join(', ')}` : ''}</p>
               </div>
               <button type="button" onClick={() => load(f)} className="text-xs font-semibold text-brand hover:text-brand-700 cursor-pointer">Edit</button>
-              <button type="button" onClick={() => { if (confirm(`Delete field "${f.label}"?`)) delMut.mutate(f.id); }}
+              <button type="button" onClick={async () => { if (await confirm({ title: 'Delete field', message: <>Remove the &ldquo;{f.label}&rdquo; field from this bot&rsquo;s form?</>, confirmText: 'Delete', variant: 'danger' })) delMut.mutate(f.id); }}
                 className="text-xs font-semibold text-red-600 hover:text-red-700 cursor-pointer">Delete</button>
             </div>
           ))}
@@ -323,7 +329,7 @@ function FormBuilder({ bot, onChange }: { bot: SlackBot; onChange: () => void })
             </label>
             <div className="flex items-center gap-2">
               <GlowButton className="py-1.5 px-4 text-sm" disabled={saveMut.isPending} loading={saveMut.isPending}
-                onClick={() => { if (!label.trim() || !key.trim()) { alert('Label and key are required.'); return; } saveMut.mutate(); }}>
+                onClick={() => { if (!label.trim() || !key.trim()) { toast('Label and key are required.', 'error'); return; } saveMut.mutate(); }}>
                 {editing ? 'Save field' : 'Add field'}
               </GlowButton>
               <GlowButton variant="ghost" className="py-1.5 px-4 text-sm" onClick={reset}>Cancel</GlowButton>

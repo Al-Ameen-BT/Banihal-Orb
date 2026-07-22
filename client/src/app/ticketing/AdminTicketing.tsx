@@ -9,6 +9,8 @@ import { ticketingApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import GlowButton from '@/components/ui/GlowButton';
 import { ShimmerCard } from '@/components/ui/Shimmer';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
+import { useToast } from '@/components/ui/Toast';
 import {
   NewTicketForm, StatusBadge, PriorityBadge, TypeBadge, SlaBar, PageHeader,
   Toolbar, Segmented, SearchInput, EmptyState, Avatar, Icons,
@@ -309,6 +311,8 @@ function TicketsTab({ projectFilter, onClearProject }: { projectFilter: string |
 // ─── Projects ──────────────────────────────────────────────────────────────────
 function ProjectsTab({ onViewTickets }: { onViewTickets: (projectId: string) => void }) {
   const qc = useQueryClient();
+  const confirm = useConfirm();
+  const toast = useToast();
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -331,7 +335,7 @@ function ProjectsTab({ onViewTickets }: { onViewTickets: (projectId: string) => 
   });
   const deleteMut = useMutation({
     mutationFn: (id: string) => ticketingApi.deleteProject(id),
-    onError: (e: unknown) => alert((e as { response?: { data?: { error?: string } } }).response?.data?.error ?? 'Could not delete project'),
+    onError: (e: unknown) => toast((e as { response?: { data?: { error?: string } } }).response?.data?.error ?? 'Could not delete project', 'error'),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['ticketing'] }); },
   });
 
@@ -387,7 +391,7 @@ function ProjectsTab({ onViewTickets }: { onViewTickets: (projectId: string) => 
             <div key={p.id} className="card p-5 border-t-2 border-t-brand/60 flex flex-col hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-200">
               <div className="flex items-start justify-between gap-2">
                 <h3 className="text-base font-semibold text-slate-900">{p.name}</h3>
-                <button type="button" aria-label={`Delete ${p.name}`} onClick={() => { if (confirm(`Delete project "${p.name}"?`)) deleteMut.mutate(p.id); }}
+                <button type="button" aria-label={`Delete ${p.name}`} onClick={async () => { if (await confirm({ title: 'Delete project', message: <>&ldquo;{p.name}&rdquo; and its links to tickets will be removed. This can&rsquo;t be undone.</>, confirmText: 'Delete', variant: 'danger' })) deleteMut.mutate(p.id); }}
                   className="text-slate-300 hover:text-red-500 transition-colors cursor-pointer">
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
                 </button>

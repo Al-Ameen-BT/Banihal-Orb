@@ -12,8 +12,13 @@
 -- Re-running this file is therefore a no-op for databases that already exist.
 --
 -- The platform-Administrators' isolated ticket store (`b2b_ticketing_admin`,
--- ADMIN_TICKETING_DATABASE_URL) is intentionally NOT created here — the app
--- falls back to `b2b_ticket` when that URL is unset (see ticketDatabase.ts).
+-- ADMIN_TICKETING_DATABASE_URL) IS created here (it is a required store — the app
+-- has no fallback to b2b_ticket). Its SCHEMA is NOT one of the .sql files: it is
+-- loaded from the custom-format pg dump `ticketingDB` at the repo root, e.g.
+-- (from the repo root):
+--   pg_restore -d "$ADMIN_TICKETING_DATABASE_URL" ticketingDB
+-- (run after this script; skip if the DB is already populated — the dump is
+-- schema-only and a --clean restore would drop existing tickets).
 -- ============================================================================
 
 SELECT 'CREATE DATABASE b2b'
@@ -27,3 +32,6 @@ SELECT 'CREATE DATABASE b2b_ticketing'
 
 SELECT 'CREATE DATABASE b2b_ticket'
  WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'b2b_ticket')\gexec
+
+SELECT 'CREATE DATABASE b2b_ticketing_admin'
+ WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'b2b_ticketing_admin')\gexec

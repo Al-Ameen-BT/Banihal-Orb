@@ -3,6 +3,7 @@ import { nextTicketNumber } from './utils/ticketNumber';
 import { getTicketNumberFormat, resolveOrgCode } from './services/numberFormat';
 import { getNextAssignee, withLastAssigned } from './utils/roundRobin';
 import { pausePatch } from './services/slaService';
+import { prisma } from '../../config/database';
 import type { z } from 'zod';
 import type { CreateTicketSchema, UpdateTicketSchema, CreateProjectSchema, UpdateProjectSchema, CreateSlaSchema } from './ticketing.schema';
 import type { TicketDTO, ProjectDTO, SlaDTO, TicketFilters, TicketPriority } from './ticketing.types';
@@ -40,6 +41,20 @@ export async function createTicket(actorId: string, input: CreateTicketInput, b2
     if (next) { assigneeId = next; settingsToPersist = withLastAssigned(project.settings, next); }
   }
 
+  // Link the requesting organization as the ticket's client so the detail view shows
+  // Client Name / Email / Contact Person (org-created tickets otherwise carry no client
+  // and those fields render blank). Resolved from the creator's B2B org and reused
+  // across the org's tickets; an explicit input.customerId (already a ticket-store id) wins.
+  let customerId = input.customerId ?? null;
+  if (!customerId && b2bCustomerId) {
+    const org = await prisma.customer
+      .findUnique({ where: { id: b2bCustomerId }, select: { name: true, mailId: true, contactPerson: true } })
+      .catch(() => null);
+    if (org) {
+      customerId = await db.getOrCreateCustomerByName({ name: org.name, email: org.mailId, contactPerson: org.contactPerson });
+    }
+  }
+
   const base = {
     title: input.title,
     description: input.description,
@@ -50,7 +65,7 @@ export async function createTicket(actorId: string, input: CreateTicketInput, b2
     reporterId: actorId,
     createdBy: actorId,
     assigneeId,
-    customerId: input.customerId ?? null,
+    customerId,
     storyPoints: input.storyPoints ?? null,
     dueDate: input.dueDate ? new Date(input.dueDate) : null,
     ...(input.labels ? { labels: input.labels } : {}),

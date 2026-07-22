@@ -26,5 +26,9 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  // Exclude /api/* — those are proxied to the backend (next.config rewrites) and
+  // authenticate via their own httpOnly cookie / 401s. If the page-auth middleware
+  // ran on them it would 307-redirect the login POST itself to /login, breaking
+  // sign-in (the client then shows a bogus "undefined" verification screen).
+  matcher: ['/((?!api|_next/static|_next/image|favicon.ico).*)'],
 };

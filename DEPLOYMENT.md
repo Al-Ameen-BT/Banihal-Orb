@@ -67,11 +67,14 @@ makes requests same-origin, so the `SameSite=Lax` auth cookies "just work" and C
 
 ---
 
-## 3. Databases (four + optional admin store)
+## 3. Databases (four SQL-provisioned + the admin ticket store)
 
-The schema is provisioned by **idempotent SQL DDL** in `server/db/` — this
-replaces `prisma db push` as the schema source of truth (safe to re-run; never
-wipes data). Prisma _clients_ are still generated with `npm run db:generate`.
+Four databases' schemas are provisioned by **idempotent SQL DDL** in `server/db/`
+— this replaces `prisma db push` as the schema source of truth (safe to re-run;
+never wipes data). Prisma _clients_ are still generated with `npm run db:generate`.
+The fifth, the Administrators' isolated ticket store, is **required** and loaded
+from the custom-format pg dump `ticketingDB` (repo root) — **not** from a `.sql`
+file.
 
 | Database | Env var | Created / schema | Notes |
 |---|---|---|---|
@@ -79,9 +82,9 @@ wipes data). Prisma _clients_ are still generated with `npm run db:generate`.
 | `b2b_chat` | `CHAT_DATABASE_URL` | `db/b2b_chat.sql` | Assistant chat history |
 | `b2b_ticketing` | `TICKETING_DATABASE_URL` | `db/b2b_ticketing.sql` | Internal 2-table fallback store |
 | `b2b_ticket` | `TICKET_DATABASE_URL` | `db/b2b_ticket.sql` | 14-table external ticket platform |
-| `b2b_ticketing_admin` | `ADMIN_TICKETING_DATABASE_URL` | **not provisioned** (optional) | Administrators' isolated store; falls back to `b2b_ticket` when unset |
+| `b2b_ticketing_admin` | `ADMIN_TICKETING_DATABASE_URL` | `pg_restore` of `ticketingDB` | Administrators' isolated store — **required, no fallback** |
 
-Provision all four in one step (reads the DB URLs from `server/.env`):
+Provision the four SQL databases in one step (reads the DB URLs from `server/.env`):
 
 ```bash
 cd server && npm run db:provision      # = bash db/provision.sh
@@ -90,12 +93,21 @@ cd server && npm run db:provision      # = bash db/provision.sh
 Or manually:
 
 ```bash
-sudo -u postgres psql -f server/db/00_databases.sql        # create the 4 databases
+sudo -u postgres psql -f server/db/00_databases.sql        # create the 5 databases
 psql "$DATABASE_URL"           -f server/db/b2b.sql
 psql "$CHAT_DATABASE_URL"      -f server/db/b2b_chat.sql
 psql "$TICKETING_DATABASE_URL" -f server/db/b2b_ticketing.sql
 psql "$TICKET_DATABASE_URL"    -f server/db/b2b_ticket.sql
+
+# Admin ticket store — load the schema from the dump (ONLY on a fresh, empty DB;
+# the dump is schema-only, so a --clean restore would drop existing tickets):
+pg_restore -d "$ADMIN_TICKETING_DATABASE_URL" ticketingDB
 ```
+
+> ⚠️ `ADMIN_TICKETING_DATABASE_URL` is **required** and has **no fallback**. The
+> admin ticketing store always uses its own `b2b_ticketing_admin` database; if it
+> is unset or unreachable the API fails loudly rather than reading/writing the
+> shared `b2b_ticket` store. `npm run db:verify` checks it alongside the others.
 
 > ℹ️ `npm run db:push` is **deprecated** and now just forwards to `db:provision`
 > (the old Prisma push could wipe/recreate `b2b_ticketing`). See

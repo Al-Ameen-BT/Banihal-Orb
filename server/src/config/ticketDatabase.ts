@@ -17,12 +17,14 @@ export const ticketPrisma = globalForTicket.ticketPrisma ?? new PrismaClient({
 });
 
 // Platform ADMINISTRATOR ticketing store — the SAME 14-table ticket-client schema,
-// pointed at ADMIN_TICKETING_DATABASE_URL (b2b_ticketing_admin, which already holds
-// the full schema + data) via a datasource override. Falls back to the shared
-// b2b_ticket when the admin URL is unset, so environments without a separate admin
-// store keep working (administrators simply share the main store).
+// pointed at its OWN database ADMIN_TICKETING_DATABASE_URL (b2b_ticketing_admin;
+// schema loaded from the `ticketingDB` pg dump, already holding the full schema +
+// data) via a datasource override. There is NO fallback: the admin store is always
+// its own DB. ADMIN_TICKETING_DATABASE_URL is required (env.ts), so a
+// misconfigured/unreachable admin DB fails loudly instead of silently reading or
+// writing the shared b2b_ticket store.
 export const adminTicketPrisma = globalForTicket.adminTicketPrisma ?? new PrismaClient({
-  ...(env.ADMIN_TICKETING_DATABASE_URL ? { datasourceUrl: env.ADMIN_TICKETING_DATABASE_URL } : {}),
+  datasourceUrl: env.ADMIN_TICKETING_DATABASE_URL,
   log: process.env['NODE_ENV'] === 'development' ? ['warn', 'error'] : ['error'],
 });
 

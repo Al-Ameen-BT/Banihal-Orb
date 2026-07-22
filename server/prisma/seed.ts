@@ -152,7 +152,7 @@ async function main() {
     data: {
       name: 'Tech', slug: `platform-${ADMIN_DOMAIN.replace(/\./g, '-')}`, plan: 'ENTERPRISE',
       industry: 'Cybersecurity', contractValue: 0, healthScore: 100, csm: 'Internal',
-      creditLimit: 99999, ssoEnabled: true, mfaRequired: true,
+      creditLimit: 99999, ssoEnabled: true, mfaRequired: false, // 2FA off by default
       mailId: adminEmail, contactPerson: 'Alex Chen',
       contactNumber: '+1-555-0100', domain: deriveDomain(adminEmail),
       orgCode: codeFor('Tech'),
@@ -162,7 +162,7 @@ async function main() {
     data: {
       name: 'Alex Chen', email: adminEmail,
       passwordHash: await hash('SaasAdmin1!'),
-      role: 'ADMINISTRATOR', mfaEnabled: true,
+      role: 'ADMINISTRATOR', mfaEnabled: false, // 2FA off by default; enable from profile
       customerId: techOrg.id, lastLoginAt: now,
     },
   });
@@ -170,7 +170,7 @@ async function main() {
     data: {
       name: 'Super Admin', email: superAdminEmail,
       passwordHash: await hash('SuperAdmin1!'),
-      role: 'ADMINISTRATOR', mfaEnabled: true,
+      role: 'ADMINISTRATOR', mfaEnabled: false, // 2FA off by default; enable from profile
       customerId: techOrg.id, lastLoginAt: now,
     },
   });
@@ -382,7 +382,7 @@ async function main() {
         industry: spec.industry, contractValue: spec.contractValue,
         healthScore: spec.healthScore, csm: spec.csm,
         creditLimit: CREDIT_LIMITS[spec.plan]!,
-        ssoEnabled: spec.sso, mfaRequired: spec.mfa,
+        ssoEnabled: spec.sso, mfaRequired: false, // 2FA off by default
         mailId: spec.adminEmail, contactPerson: spec.adminName,
         contactNumber: `+1-555-${String(101 + created.length).padStart(4, '0')}`,
         domain: deriveDomain(spec.adminEmail),
@@ -395,7 +395,7 @@ async function main() {
       data: {
         name: spec.adminName, email: spec.adminEmail,
         passwordHash: await hash('Admin1234!'),
-        role: 'ORG_ADMIN', mfaEnabled: spec.mfa || spec.sso,
+        role: 'ORG_ADMIN', mfaEnabled: false, // 2FA off by default; enable from profile
         customerId: org.id,
         lastLoginAt: hoursAgo(Math.floor(Math.random() * 48) + 1),
       },
@@ -407,7 +407,7 @@ async function main() {
         data: {
           name: u.name, email: u.email,
           passwordHash: await hash('User1234!'),
-          role: 'USER', mfaEnabled: u.mfa ?? false,
+          role: 'USER', mfaEnabled: false, // 2FA off by default; enable from profile
           customerId: org.id,
         },
       });

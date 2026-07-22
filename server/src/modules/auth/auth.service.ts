@@ -320,7 +320,7 @@ export async function initiateLogin(
 ): Promise<LoginOutcome> {
   const user = await prisma.user.findUnique({
     where: { email: input.email },
-    select: { id: true, email: true, customerId: true, role: true, passwordHash: true },
+    select: { id: true, email: true, customerId: true, role: true, passwordHash: true, mfaEnabled: true, customer: { select: { mfaRequired: true } } },
   });
   if (!user) throw invalidCredentials();
 
@@ -336,6 +336,16 @@ export async function initiateLogin(
   }
 
   await assertNoActiveOtherSession(user, currentSession, rawRefreshToken);
+
+  // ─── Conditional MFA ──────────────────────────────────────────────────────
+  // Email MFA is opt-in per user (User.mfaEnabled, default off — toggled from
+  // the profile page), and can additionally be enforced org-wide by an org admin
+  // (Customer.mfaRequired). When neither is set, the password alone completes the
+  // login and NO email code is issued — there is no mandatory OTP step.
+  const mfaOn = user.mfaEnabled || user.customer.mfaRequired;
+  if (!mfaOn) {
+    return { mfaRequired: false, tokens: await finalizeLogin(user) };
+  }
 
   // Trusted device → password alone completes the login (MFA was proven on this
   // browser within the last TRUSTED_DEVICE_DAYS).
