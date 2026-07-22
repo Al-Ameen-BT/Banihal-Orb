@@ -69,7 +69,8 @@ makes requests same-origin, so the `SameSite=Lax` auth cookies "just work" and C
 ## 2. Prerequisites
 
 - **Node.js 20 LTS** and npm (both apps target Node 20).
-- **PostgreSQL 14+** with the `pgcrypto`/`gen_random_uuid()` function available (default in 14+).
+- **PostgreSQL 14+**. `gen_random_uuid()` is built into core (PG 13+), so **no `pgcrypto` extension or
+  `*-contrib` package is required** — the ticket-store DDL tries `pgcrypto` but tolerates its absence.
 - **Nginx** (reverse proxy + TLS termination) and **certbot** (Let's Encrypt), or your own certs.
 - A working **SMTP account** — needed for **email MFA** (opt-in per user, default off) and
   **password resets**. MFA is off by default, so mail isn't required just to log in — but any user
@@ -338,6 +339,9 @@ CI (`.github/workflows/ci-cd.yml`) runs **checks only** (typecheck/lint) — it 
 | Push notifications never arrive | `VAPID_*` unset (send returns 503); `NEXT_PUBLIC_VAPID_PUBLIC_KEY` missing/mismatched; not served over HTTPS (push needs a secure context — `localhost` is exempt); browser blocked notifications |
 | Admin can't log in | admin's email domain not in `ADMIN_DOMAINS` (public domains excluded by design) |
 | `/health` shows a DB `down` | that database's URL is wrong or the DB isn't created/loaded |
+| `db:provision` fails: `invalid URI query parameter: "schema"` | a `*_DATABASE_URL` carries Prisma's `?schema=public` suffix, which `psql` rejects. `provision.sh` strips it automatically; on an older copy, remove `?schema=…` from the URLs in `server/.env` (Prisma and node-`pg` don't need it) |
+| `db:provision` fails: `extension "pgcrypto" is not available` | the `*-contrib` package isn't installed — but it isn't needed: `gen_random_uuid()` is core (PG 13+). Delete the `CREATE EXTENSION pgcrypto` line from `db/b2b_ticket.sql`, or `dnf/yum install postgresql<N>-contrib` to keep it |
+| `db:provision`/`db:verify`: `password authentication failed for user "user"` | a placeholder credential from `.env.example` was left in a `*_DATABASE_URL`; set the real Postgres user/password (match the other DB URLs — only the database name should differ) |
 | Slack bot won't connect | bad `xoxb-` token (status shows **Error**), or missing Socket Mode/`xapp-` for the chat bridge |
 | Bot tokens/AD secrets won't decrypt after a redeploy | `SLACK_TOKEN_SECRET` changed or was missing (it fell back to `JWT_ACCESS_SECRET`, which then changed) |
 | Assistant returns 503 | `AGENT_URL` unreachable — start Ollama/agent or ignore if unused |
