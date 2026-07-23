@@ -44,7 +44,11 @@ export async function escalateTicket(
   }).catch(() => null);
   const orgName = source.customer?.name ?? b2bOrg?.customer?.name ?? source.projectName ?? 'Unknown organization';
   const orgEmail = source.customer?.email ?? b2bOrg?.customer?.mailId ?? requester?.email ?? null;
-  const orgContact = source.customer?.contactPerson ?? requester?.name ?? b2bOrg?.customer?.contactPerson ?? null;
+  // The Customers row represents the ORGANIZATION, so its contact is the org's contact —
+  // NOT whoever happened to escalate. (Using the requester here made the shared org row show
+  // the first escalation's requester forever.) The per-ticket requester is carried in the
+  // description below, which is accurate for every escalation.
+  const orgContact = source.customer?.contactPerson ?? b2bOrg?.customer?.contactPerson ?? null;
   const requestedByLine = `Requested by ${requester?.name ?? 'Unknown user'}${requester?.email ? ` <${requester.email}>` : ''}.`;
 
   // Copy into the ADMIN store (14-table). Reporter + project + customer are resolved in

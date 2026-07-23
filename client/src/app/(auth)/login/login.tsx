@@ -185,7 +185,10 @@ export default function LoginPage() {
           )}
 
           {phase === 'credentials' ? (
-            <form onSubmit={handleCredentials} className="space-y-5">
+            // method="post" matters: if the user submits before React hydrates the browser does
+            // a NATIVE submit — with the default GET that puts the email AND password in the URL
+            // (history, Referer, proxy logs). POST sends a body instead.
+            <form method="post" onSubmit={handleCredentials} className="space-y-5">
               <Suspense>
                 <RegistrationSuccessBanner />
               </Suspense>
@@ -210,7 +213,7 @@ export default function LoginPage() {
               </GlowButton>
             </form>
           ) : (
-            <form onSubmit={handleVerify} className="space-y-5">
+            <form method="post" onSubmit={handleVerify} className="space-y-5">
               {info && (
                 <div className="flex items-start gap-2.5 px-3.5 py-2.5 bg-brand-50 border border-brand-200 rounded-lg text-sm text-brand-700">
                   <svg className="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">

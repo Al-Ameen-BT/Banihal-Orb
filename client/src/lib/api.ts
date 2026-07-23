@@ -1,4 +1,7 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
+// Same specifier style as ToastProvider's import so both resolve to ONE module instance
+// (a mixed './toast-bus' vs '@/lib/toast-bus' can bundle as two, silently losing the handler).
+import { notify } from '@/lib/toast-bus';
 
 // In the BROWSER, always call the API same-origin via the relative `/api` path
 // (the Next.js rewrites() in next.config.js proxies /api/* to NEXT_PUBLIC_API_URL).
@@ -67,6 +70,15 @@ api.interceptors.response.use(
     // 403 — redirect to access-denied page (skip on auth endpoints and silent checks)
     if (status === 403 && !original._skipRetry && !isAuthEndpoint && !currentPath.startsWith('/403')) {
       if (typeof window !== 'undefined') window.location.href = '/403';
+      return Promise.reject(error);
+    }
+
+    // 429 — surface throttling explicitly. Without this the UI shows a component's
+    // generic "could not save" message and the user has no idea they're rate limited.
+    // Auth endpoints render the server message inline already, so skip those.
+    if (status === 429 && !original._skipRetry && !isAuthEndpoint) {
+      const msg = (error.response?.data as { error?: string } | undefined)?.error;
+      notify(msg ? `${msg} — please wait a moment and try again.` : 'Too many requests — please wait a moment and try again.', 'error');
       return Promise.reject(error);
     }
 

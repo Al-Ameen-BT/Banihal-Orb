@@ -73,7 +73,7 @@ export default function ForgotPasswordPage() {
               </Link>
             </div>
           ) : (
-            <form onSubmit={handleSubmit} className="space-y-5">
+            <form method="post" onSubmit={handleSubmit} className="space-y-5">
               {error && (
                 <motion.div
                   initial={{ opacity: 0, y: -4 }}

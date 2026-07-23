@@ -1,8 +1,9 @@
 'use client';
 
-import React, { createContext, useCallback, useContext, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import clsx from 'clsx';
+import { setToastHandler, type ToastType } from '@/lib/toast-bus';
 
 // ─── Lightweight toast notifications ──────────────────────────────────────────
 // Replaces native alert() with non-blocking, on-brand toasts. Usage:
@@ -10,8 +11,6 @@ import clsx from 'clsx';
 //   const toast = useToast();
 //   toast('Could not delete project', 'error');
 //   toast('Saved', 'success');
-
-type ToastType = 'success' | 'error' | 'info';
 
 interface ToastItem {
   id: number;
@@ -68,9 +67,22 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 
   const toast = useCallback<ToastFn>((message, type = 'info') => {
     const id = Date.now() + Math.random();
-    setToasts((list) => [...list, { id, message, type }]);
+    setToasts((list) => {
+      // De-dupe: one burst of failures (e.g. six parallel queries all hitting the same
+      // rate limit) should surface ONE toast, not a stack of identical ones.
+      if (list.some((t) => t.message === message && t.type === type)) return list;
+      return [...list, { id, message, type }];
+    });
+    // Safe to schedule unconditionally — remove() filters by id, so it's a no-op
+    // when the toast was de-duped away.
     window.setTimeout(() => remove(id), DURATION_MS);
   }, [remove]);
+
+  // Expose the dispatcher to non-React callers (e.g. the axios 429 handler in lib/api.ts).
+  useEffect(() => {
+    setToastHandler(toast);
+    return () => setToastHandler(null);
+  }, [toast]);
 
   return (
     <ToastContext.Provider value={toast}>

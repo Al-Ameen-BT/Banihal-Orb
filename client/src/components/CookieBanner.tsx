@@ -44,17 +44,22 @@ export default function CookieBanner() {
   return (
     <AnimatePresence>
       {isVisible && (
+        // role="region", not "dialog": this traps no focus and the page stays usable, so it
+        // isn't a modal. `dialog` also collided with generic [role="dialog"] queries (a11y
+        // tooling / e2e selectors) that target the app's real modals.
         <motion.div
           initial={{ y: 100, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: 100, opacity: 0 }}
           transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-          role="dialog"
+          role="region"
           aria-label="Cookie consent"
           className="fixed bottom-0 left-0 right-0 z-50 p-4 pointer-events-none sm:p-6"
         >
-          <div className="mx-auto max-w-7xl pointer-events-auto">
-            <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 pr-10 bg-white/90 backdrop-blur-md border border-slate-200/50 shadow-2xl rounded-2xl">
+          {/* pointer-events-auto lives on the CARD only — the full-width wrapper must stay
+              click-through so it doesn't swallow taps on UI beneath it (e.g. the chat input bar). */}
+          <div className="mx-auto max-w-7xl">
+            <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 pr-10 bg-white/90 backdrop-blur-md border border-slate-200/50 shadow-2xl rounded-2xl pointer-events-auto">
               {/* Cancel via the corner ✕ as well, for quick dismissal */}
               <button
                 onClick={handleCancel}

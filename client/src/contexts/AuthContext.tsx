@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import api, { authApi } from '@/lib/api';
+import { notify } from '@/lib/toast-bus';
 // api used directly for the initial auth check (validateStatus suppresses 401 console errors)
 import type { User } from '@/lib/schemas';
 
@@ -47,6 +48,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (refreshed.status === 200) {
           res = await api.get('/users/me', { validateStatus: (s) => s < 500 });
         }
+      }
+
+      // 429 is a transient throttle, NOT a sign-out. Because validateStatus above
+      // swallows non-5xx, the axios interceptor never sees it — without this branch a
+      // rate-limited user is silently treated as logged out and bounced to /login with
+      // no explanation. Surface it and keep whatever session we already have.
+      if (res.status === 429) {
+        notify('Too many requests — please wait a moment and try again.', 'error');
+        return;
       }
 
       if (res.status === 200) {

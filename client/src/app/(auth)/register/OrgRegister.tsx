@@ -76,7 +76,8 @@ export default function RegisterPage() {
 
         {/* Card */}
         <div className="card p-6">
-          <form onSubmit={handleSubmit} className="space-y-4">
+          {/* method="post": a pre-hydration native submit must not put credentials in the URL. */}
+          <form method="post" onSubmit={handleSubmit} className="space-y-4">
             {serverError && (
               <motion.div
                 initial={{ opacity: 0, y: -4 }}

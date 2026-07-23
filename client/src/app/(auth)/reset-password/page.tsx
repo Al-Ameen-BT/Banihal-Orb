@@ -101,7 +101,8 @@ function ResetPasswordForm() {
 
   return (
     <div className="card p-6">
-      <form onSubmit={handleSubmit} className="space-y-5">
+      {/* method="post": a pre-hydration native submit must not put the new password in the URL. */}
+      <form method="post" onSubmit={handleSubmit} className="space-y-5">
         {serverError && (
           <motion.div
             initial={{ opacity: 0, y: -4 }}

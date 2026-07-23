@@ -144,9 +144,24 @@ export async function createTicketRow(data: Parameters<typeof ticketPrisma.ticke
 // escalation to replicate the source org into the admin store so escalated tickets can
 // be grouped per organization and expose Client Name/Email/Contact. Never mutates an
 // existing row (production-safe: the admin DB's existing customers are untouched).
+// Resolve the ticket-store Customers row for an organization, creating it if absent.
+// An EXISTING row is refreshed when the incoming email/contactPerson differ — otherwise the
+// row keeps whatever the very first caller wrote (e.g. the first escalation's requester) and
+// silently goes stale as the org's details change.
 export async function getOrCreateCustomerByName(c: { name: string; email?: string | null; contactPerson?: string | null }): Promise<string> {
-  const existing = await getTicketDb().customers.findFirst({ where: { name: c.name }, select: { id: true } });
-  if (existing) return existing.id;
+  const existing = await getTicketDb().customers.findFirst({
+    where: { name: c.name },
+    select: { id: true, email: true, contactPerson: true },
+  });
+  if (existing) {
+    const patch: { email?: string | null; contactPerson?: string | null } = {};
+    if (c.email !== undefined && c.email !== null && c.email !== existing.email) patch.email = c.email;
+    if (c.contactPerson !== undefined && c.contactPerson !== null && c.contactPerson !== existing.contactPerson) patch.contactPerson = c.contactPerson;
+    if (Object.keys(patch).length > 0) {
+      await getTicketDb().customers.update({ where: { id: existing.id }, data: patch }).catch(() => {});
+    }
+    return existing.id;
+  }
   const created = await getTicketDb().customers.create({
     data: { name: c.name, email: c.email ?? null, contactPerson: c.contactPerson ?? null },
     select: { id: true },
