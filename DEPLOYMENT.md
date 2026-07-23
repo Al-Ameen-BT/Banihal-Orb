@@ -138,6 +138,7 @@ Copy `server/.env.example` → `server/.env` and fill in. **Generate every secre
 | `ADMIN_TICKETING_DATABASE_URL` | ✅ | Administrators' isolated ticket store (`b2b_ticketing_admin`) — **required, no fallback**; the API won't start without it |
 | `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `IMPERSONATION_SECRET` | ✅ (≥32 chars) | Token signing |
 | `SLACK_TOKEN_SECRET` | ✅ if using bots | **Encrypts Slack bot tokens, webhook URLs, and AD temp-passwords at rest.** Falls back to `JWT_ACCESS_SECRET`. **Back it up — if lost, all encrypted secrets become unrecoverable; if changed, existing ones stop decrypting.** |
+| `PASSWORD_PEPPER` | Optional | Keys the one-way fingerprint used to detect **shared passwords across accounts**. Falls back to `JWT_ACCESS_SECRET`. **Keep it stable** — changing it invalidates every stored fingerprint, so existing duplicates go undetected until those users next set a password. |
 | `NODE_ENV` | ✅ | Set to `production` |
 | `PORT` | ✅ | `3001` |
 | `COOKIE_SECURE` | ✅ | `true` under HTTPS (else the browser drops the auth cookie) |

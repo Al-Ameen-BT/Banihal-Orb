@@ -47,6 +47,11 @@ const EnvSchema = z.object({
   // Secret for encrypting Slack bot tokens at rest (AES-256-GCM). Falls back to
   // JWT_ACCESS_SECRET when unset so no extra config is required in dev.
   SLACK_TOKEN_SECRET: z.string().optional(),
+  // Pepper for the password-reuse fingerprint (HMAC-SHA256). Keep it OUT of the database
+  // and back it up: change it and every stored fingerprint stops matching, so reuse
+  // detection silently degrades until users next set a password. Falls back to
+  // JWT_ACCESS_SECRET so no extra config is required in dev.
+  PASSWORD_PEPPER: z.string().optional(),
   // Legacy Ollama settings (the agent manages its own model now; kept for the deploy preflight)
   OLLAMA_URL: z.string().url().default('http://localhost:11435'),
   OLLAMA_MODEL: z.string().default('qwen2.5:3b'),

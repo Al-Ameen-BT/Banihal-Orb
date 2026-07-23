@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { prisma } from '../../config/database';
 import { chatPrisma } from '../../config/chatDatabase';
 import { signImpersonationToken } from '../auth/auth.service';
+import { passwordFingerprint } from '../auth/passwordReuse';
 import { syncTicketUpdated } from '../requests/ticketing.provider';
 import { getTicketNumberFormat as readTicketNumberFormat } from '../ticketing/services/numberFormat';
 import type {
@@ -513,7 +514,9 @@ export async function resetUserPassword(targetUserId: string, adminUserId: strin
   const tempPassword = crypto.randomBytes(9).toString('base64').replace(/[+/=]/g, '') + 'A1!';
   const passwordHash = await bcrypt.hash(tempPassword, 12);
 
-  await prisma.user.update({ where: { id: targetUserId }, data: { passwordHash } });
+  // Random temp password — reuse check unnecessary, but record the fingerprint so the
+  // account stays covered by the password-reuse report.
+  await prisma.user.update({ where: { id: targetUserId }, data: { passwordHash, passwordFingerprint: passwordFingerprint(tempPassword) } });
   await prisma.refreshToken.deleteMany({ where: { userId: targetUserId } });  // force re-auth everywhere
 
   await prisma.auditLog.create({
@@ -730,7 +733,9 @@ export async function resetSadminPassword(targetUserId: string, administratorId:
   const tempPassword = crypto.randomBytes(9).toString('base64').replace(/[+/=]/g, '') + 'A1!';
   const passwordHash = await bcrypt.hash(tempPassword, 12);
 
-  await prisma.user.update({ where: { id: targetUserId }, data: { passwordHash } });
+  // Random temp password — reuse check unnecessary, but record the fingerprint so the
+  // account stays covered by the password-reuse report.
+  await prisma.user.update({ where: { id: targetUserId }, data: { passwordHash, passwordFingerprint: passwordFingerprint(tempPassword) } });
   await prisma.refreshToken.deleteMany({ where: { userId: targetUserId } });
 
   await prisma.auditLog.create({
@@ -911,4 +916,56 @@ export async function deleteAnnouncement(id: string, adminUserId: string, adminC
       metadata: { title: existing.title },
     },
   }).catch(() => {});
+}
+
+// ─── Password-reuse report (ADMINISTRATOR) ───────────────────────────────────
+// Lists groups of accounts that share the SAME password, platform-wide. Detection relies
+// on the keyed fingerprint written when a password is set (see auth/passwordReuse.ts) —
+// bcrypt hashes cannot reveal reuse because each one is randomly salted.
+//
+// Coverage is intentionally partial: accounts that have not set a password since the
+// feature shipped have no fingerprint, so they cannot be evaluated. The response reports
+// that explicitly rather than implying a clean bill of health.
+//
+// Raw SQL on purpose: the tenant extension would inject `customerId` into a model query
+// on User and silently reduce this to a single organization.
+export async function getPasswordReuseReport(): Promise<{
+  coverage: { totalUsers: number; withFingerprint: number; unchecked: number };
+  groups: Array<{ count: number; users: Array<{ id: string; name: string; email: string; role: string; organization: string }> }>;
+}> {
+  const [counts] = await prisma.$queryRaw<Array<{ total: bigint; covered: bigint }>>`
+    SELECT COUNT(*) AS total,
+           COUNT("passwordFingerprint") AS covered
+      FROM "User"`;
+  const totalUsers = Number(counts?.total ?? 0);
+  const withFingerprint = Number(counts?.covered ?? 0);
+
+  // Only fingerprints shared by 2+ accounts. The fingerprint itself is never returned.
+  const rows = await prisma.$queryRaw<Array<{
+    fingerprint: string; id: string; name: string; email: string; role: string; organization: string;
+  }>>`
+    SELECT u."passwordFingerprint" AS fingerprint,
+           u."id", u."name", u."email", u."role"::text AS role,
+           COALESCE(c."name", '—') AS organization
+      FROM "User" u
+      LEFT JOIN "customers" c ON c."id" = u."customerId"
+     WHERE u."passwordFingerprint" IN (
+             SELECT "passwordFingerprint" FROM "User"
+              WHERE "passwordFingerprint" IS NOT NULL
+              GROUP BY "passwordFingerprint" HAVING COUNT(*) > 1)
+     ORDER BY u."passwordFingerprint", u."email"`;
+
+  const byFingerprint = new Map<string, typeof rows>();
+  for (const r of rows) {
+    const list = byFingerprint.get(r.fingerprint) ?? [];
+    list.push(r);
+    byFingerprint.set(r.fingerprint, list);
+  }
+
+  const groups = [...byFingerprint.values()].map((list) => ({
+    count: list.length,
+    users: list.map(({ id, name, email, role, organization }) => ({ id, name, email, role, organization })),
+  })).sort((a, b) => b.count - a.count);
+
+  return { coverage: { totalUsers, withFingerprint, unchecked: totalUsers - withFingerprint }, groups };
 }

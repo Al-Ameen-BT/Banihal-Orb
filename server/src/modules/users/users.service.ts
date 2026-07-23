@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { prisma } from '../../config/database';
+import { assertPasswordNotReused, passwordFingerprint } from '../auth/passwordReuse';
 import { chatPrisma } from '../../config/chatDatabase';
 import type { UpdateMeInput, InviteUserInput, ChangeRoleInput, PaginationInput, ChangePasswordInput } from './users.schema';
 
@@ -33,8 +34,13 @@ export async function changeMyPassword(userId: string, input: ChangePasswordInpu
   const valid = await bcrypt.compare(input.currentPassword, user.passwordHash);
   if (!valid) throw Object.assign(new Error('Current password is incorrect'), { status: 400, code: 'INVALID_PASSWORD' });
 
+  // Block a password that another account already uses (self excluded).
+  await assertPasswordNotReused(input.newPassword, userId);
   const newHash = await bcrypt.hash(input.newPassword, 12);
-  await prisma.user.update({ where: { id: userId }, data: { passwordHash: newHash } });
+  await prisma.user.update({
+    where: { id: userId },
+    data: { passwordHash: newHash, passwordFingerprint: passwordFingerprint(input.newPassword) },
+  });
   // Revoke all refresh tokens so other sessions are logged out, and drop trusted
   // devices so every browser goes back through MFA on its next login.
   await prisma.refreshToken.deleteMany({ where: { userId } });
@@ -66,6 +72,9 @@ export async function inviteUser(input: InviteUserInput, customerId: string) {
       name: input.name,
       role: input.role,
       passwordHash,
+      // Random temp password — no reuse check needed (collision is negligible), but record
+      // the fingerprint so the account is covered by the reuse report from day one.
+      passwordFingerprint: passwordFingerprint(tempPassword),
       customerId,
     },
     select: userSelect,

@@ -61,6 +61,13 @@ model User {
   id            String         @id @default(cuid())
   email         String         @unique
   passwordHash  String
+  // Keyed fingerprint of the password: HMAC-SHA256(PASSWORD_PEPPER, password).
+  // bcrypt salts randomly, so identical passwords produce different hashes and reuse
+  // is undetectable from passwordHash alone. This deterministic value lets us block
+  // cross-account reuse and report it, without ever storing anything reversible.
+  // Written ONLY when the plaintext passes through (register / change / reset), so it
+  // is null for accounts that haven't set a password since this shipped.
+  passwordFingerprint String?
   name          String
   role          Role           @default(USER)
   mfaEnabled    Boolean        @default(false)
@@ -81,6 +88,7 @@ model User {
 
   @@index([customerId])
   @@index([email])
+  @@index([passwordFingerprint])
 }
 
 // Web Push (RFC 8030 / VAPID) subscription endpoints, one row per browser/device.

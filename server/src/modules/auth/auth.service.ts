@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { Role } from '@prisma/client';
 import { prisma } from '../../config/database';
+import { assertPasswordNotReused, passwordFingerprint } from './passwordReuse';
 import { env } from '../../config/env';
 import { uniqueOrgCode } from '../../utils/orgCode';
 import * as mailService from '../mail/mail.service';
@@ -66,6 +67,7 @@ async function createRefreshToken(userId: string, sessionId: string): Promise<st
 }
 
 export async function register(input: RegisterInput): Promise<TokenPair> {
+  await assertPasswordNotReused(input.password);
   const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
   const slug = generateSlug(input.organizationName);
 
@@ -82,6 +84,7 @@ export async function register(input: RegisterInput): Promise<TokenPair> {
         create: {
           email: input.email,
           passwordHash,
+          passwordFingerprint: passwordFingerprint(input.password),
           name: input.name,
           role: isProviderAdminEmail(input.email) ? 'ADMINISTRATOR' : 'ORG_ADMIN',
         },
@@ -144,11 +147,13 @@ export async function registerUser(input: RegisterUserInput): Promise<TokenPair>
     );
   }
 
+  await assertPasswordNotReused(input.password);
   const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
   const user = await prisma.user.create({
     data: {
       email: input.email,
       passwordHash,
+      passwordFingerprint: passwordFingerprint(input.password),
       name: input.name,
       role: isProviderAdminEmail(input.email) ? 'ADMINISTRATOR' : 'USER',
       customerId: customer.id,
@@ -543,11 +548,14 @@ export async function resetPassword(input: ResetPasswordInput): Promise<void> {
     throw Object.assign(new Error('Invalid or expired reset token'), { status: 400, code: 'INVALID_TOKEN' });
   }
 
+  // Reject a password another account already uses (self excluded — reusing your OWN
+  // previous password is a different policy and not blocked here).
+  await assertPasswordNotReused(input.newPassword, matchedToken.userId);
   const passwordHash = await bcrypt.hash(input.newPassword, BCRYPT_ROUNDS);
 
   await prisma.user.update({
     where: { id: matchedToken.userId },
-    data: { passwordHash },
+    data: { passwordHash, passwordFingerprint: passwordFingerprint(input.newPassword) },
   });
 
   // Clean up ALL reset tokens for this user

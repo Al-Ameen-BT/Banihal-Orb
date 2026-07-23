@@ -324,3 +324,9 @@ export async function deleteAnnouncement(req: Request, res: Response, next: Next
     res.status(204).end();
   } catch (err) { next(err); }
 }
+
+export async function getPasswordReuse(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    res.json(await saasAdminService.getPasswordReuseReport());
+  } catch (err) { next(err); }
+}

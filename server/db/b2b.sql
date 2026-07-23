@@ -68,6 +68,10 @@ CREATE TABLE IF NOT EXISTS "User" (
   "id"           TEXT PRIMARY KEY,
   "email"        TEXT    NOT NULL,
   "passwordHash" TEXT    NOT NULL,
+  -- HMAC-SHA256(PASSWORD_PEPPER, password): lets us detect/block the SAME password being
+  -- used by more than one account. bcrypt salts randomly, so passwordHash can't reveal that.
+  -- Nullable: only written when the plaintext passes through (register/change/reset).
+  "passwordFingerprint" TEXT,
   "name"         TEXT    NOT NULL,
   "role"         "Role"  NOT NULL DEFAULT 'USER',
   "mfaEnabled"   BOOLEAN NOT NULL DEFAULT false,
@@ -76,8 +80,12 @@ CREATE TABLE IF NOT EXISTS "User" (
   "updatedAt"    TIMESTAMPTZ NOT NULL DEFAULT now(),
   "customerId"   TEXT    NOT NULL REFERENCES "customers" ("id") ON DELETE CASCADE
 );
+-- CREATE TABLE IF NOT EXISTS above is a no-op on databases that already have "User",
+-- so add the column separately for existing installs (no-op when already present).
+ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "passwordFingerprint" TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS "User_email_key"        ON "User" ("email");
 CREATE INDEX        IF NOT EXISTS "User_customerId_idx"   ON "User" ("customerId");
+CREATE INDEX        IF NOT EXISTS "User_passwordFingerprint_idx" ON "User" ("passwordFingerprint");
 
 -- ─── PushSubscription ────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS "PushSubscription" (

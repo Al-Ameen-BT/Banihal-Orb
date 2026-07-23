@@ -69,4 +69,8 @@ router.patch('/sadmins/:id', onlyAdministrator, saasAdminController.updateSadmin
 router.delete('/sadmins/:id', onlyAdministrator, saasAdminController.removeSadmin);
 router.post('/sadmins/:id/reset-password', onlyAdministrator, saasAdminController.resetSadminPassword);
 
+// Security: accounts sharing the same password (platform-wide). ADMINISTRATOR only —
+// it enumerates users across every organization.
+router.get('/password-reuse', onlyAdministrator, saasAdminController.getPasswordReuse);
+
 export default router;
