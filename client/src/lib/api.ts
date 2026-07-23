@@ -226,7 +226,12 @@ export const chatApi = {
     const { sessionId, onToken, onSession, onDone, onError } = opts;
     let response: Response;
     try {
-      response = await fetch(`${BASE}/api/chat`, {
+      // NOTE: BASE already includes the `/api` prefix (browser: '/api'), so the
+      // path here is `/chat` — NOT `/api/chat`, which would resolve to a doubled
+      // `/api/api/chat` (404). In the browser this hits the same-origin Route
+      // Handler at app/api/chat/route.ts, which pipes the backend SSE through
+      // without the buffering the next.config rewrite proxy imposes on streams.
+      response = await fetch(`${BASE}/chat`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
