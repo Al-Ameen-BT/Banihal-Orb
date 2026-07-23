@@ -42,6 +42,7 @@ export default function EnablePushButton() {
         if (res.reason === 'denied') setError('Notifications are blocked. Enable them in your browser settings.');
         else if (res.reason === 'no-key') setError('Push is not configured (missing VAPID key).');
         else if (res.reason === 'unsupported') setError('This browser does not support push notifications.');
+        else if (res.reason === 'insecure-context') setError('Desktop notifications require an https:// connection.');
         else setError(res.message ?? 'Could not enable notifications.');
       }
     } finally {
@@ -63,6 +64,22 @@ export default function EnablePushButton() {
 
   // Render nothing decision-worthy until we've read the real permission client-side.
   if (!ready) return null;
+
+  // ── State: insecure context (http:// on a LAN IP/hostname, or a private window) ──
+  // The browser is capable; the page just isn't served over a secure origin, so it
+  // hides the service-worker API. Say that, rather than blaming the browser.
+  if (permission === 'insecure-context') {
+    return (
+      <div className="space-y-1">
+        <div className="text-sm font-medium text-amber-600">Not available on this connection</div>
+        <p className="text-xs text-slate-500">
+          Desktop notifications need a secure connection. Open the app over{' '}
+          <span className="font-medium">https://</span> (or on{' '}
+          <span className="font-medium">localhost</span>) and this option will appear.
+        </p>
+      </div>
+    );
+  }
 
   // ── State: unsupported (e.g. Safari < 16.1, or no ServiceWorker/PushManager) ──
   if (permission === 'unsupported') {

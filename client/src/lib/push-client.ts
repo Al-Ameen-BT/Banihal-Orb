@@ -13,6 +13,16 @@ const IDB_STORE = 'kv';
 const KEY_APP_SERVER_KEY = 'applicationServerKey';
 
 // ─── Feature detection ───────────────────────────────────────────────────────
+// Service workers are gated on a secure context: browsers expose them over
+// https:// and on localhost/127.0.0.1 ONLY. Reached over plain http:// on a LAN
+// IP or hostname, `navigator.serviceWorker` is simply absent — indistinguishable
+// from an old browser unless we check the context separately. Worth separating,
+// because "serve it over HTTPS" and "use a different browser" are very different
+// instructions to give a user.
+export function isSecureContext(): boolean {
+  return typeof window !== 'undefined' && window.isSecureContext === true;
+}
+
 export function isPushSupported(): boolean {
   return (
     typeof window !== 'undefined' &&
@@ -22,9 +32,14 @@ export function isPushSupported(): boolean {
   );
 }
 
-// Current OS/browser permission, or 'unsupported' when push can't run at all.
-export type PushPermission = 'unsupported' | NotificationPermission;
+// Current OS/browser permission, or why push can't run at all.
+export type PushPermission = 'unsupported' | 'insecure-context' | NotificationPermission;
 export function getPermission(): PushPermission {
+  if (typeof window === 'undefined') return 'unsupported';
+  // Check the context first: an insecure origin strips the very APIs that
+  // isPushSupported() looks for, so testing in the other order always reports
+  // 'unsupported' and hides the real cause.
+  if (!isSecureContext()) return 'insecure-context';
   if (!isPushSupported()) return 'unsupported';
   return Notification.permission; // 'default' | 'granted' | 'denied'
 }
@@ -107,11 +122,12 @@ async function postSubscription(sub: PushSubscription): Promise<void> {
 // ─── enablePush: request permission (must be called from a click handler) ────
 export interface EnableResult {
   ok: boolean;
-  reason?: 'unsupported' | 'denied' | 'no-key' | 'error';
+  reason?: 'unsupported' | 'insecure-context' | 'denied' | 'no-key' | 'error';
   message?: string;
 }
 
 export async function enablePush(vapidPublicKey: string): Promise<EnableResult> {
+  if (!isSecureContext()) return { ok: false, reason: 'insecure-context' };
   if (!isPushSupported()) return { ok: false, reason: 'unsupported' };
   if (!vapidPublicKey) return { ok: false, reason: 'no-key', message: 'Missing VAPID public key' };
 
