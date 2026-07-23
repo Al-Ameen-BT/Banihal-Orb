@@ -205,14 +205,14 @@ function AdminTicketCard({ ticket, onOpen }: { ticket: TicketDTO; onOpen: () => 
 
 type Category = 'all' | 'escalated';
 
-function TicketsTab({ projectFilter, onClearProject }: { projectFilter: string | null; onClearProject: () => void }) {
+function TicketsTab({ projectFilter, onClearProject, initialTicketId }: { projectFilter: string | null; onClearProject: () => void; initialTicketId?: string | null }) {
   const [category, setCategory] = useState<Category>('all');
   const [statusFilter, setStatusFilter] = useState<'ALL' | TicketStatus>('ALL');
   const [priorityFilter, setPriorityFilter] = useState<'ALL' | TicketPriority>('ALL');
   const [assigneeFilter, setAssigneeFilter] = useState<'ALL' | string>('ALL');
   const [search, setSearch] = useState('');
   const [view, setView] = useState<'list' | 'grid'>('list');
-  const [detailId, setDetailId] = useState<string | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(initialTicketId ?? null);
 
   const { data: staffData } = useQuery<{ assignees: Staff[] }>({
     queryKey: ['ticketing', 'assignees'], queryFn: () => ticketingApi.listAssignees().then((r) => r.data as { assignees: Staff[] }), staleTime: 60_000,
@@ -536,7 +536,12 @@ export default function AdminTicketing() {
   const { user } = useAuth();
   const searchParams = useSearchParams();
   const initialTab = (searchParams.get('tab') as Tab | null);
-  const [tab, setTab] = useState<Tab>(initialTab && TABS.includes(initialTab) ? initialTab : 'overview');
+  // /ticketing?ticket=<id> (the assignment push deep link) lands on the Tickets tab
+  // with that ticket already open, unless an explicit ?tab= says otherwise.
+  const deepLinkTicket = searchParams.get('ticket');
+  const [tab, setTab] = useState<Tab>(
+    initialTab && TABS.includes(initialTab) ? initialTab : deepLinkTicket ? 'tickets' : 'overview',
+  );
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
 
   const { data: projectsData } = useQuery<{ projects: TicketProject[] }>({
@@ -567,7 +572,7 @@ export default function AdminTicketing() {
 
       <motion.div key={tab} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
         {tab === 'overview' && <OverviewTab />}
-        {tab === 'tickets' && <TicketsTab projectFilter={projectFilter} onClearProject={() => setProjectFilter(null)} />}
+        {tab === 'tickets' && <TicketsTab projectFilter={projectFilter} onClearProject={() => setProjectFilter(null)} initialTicketId={deepLinkTicket} />}
         {tab === 'projects' && <ProjectsTab onViewTickets={(id) => { setProjectFilter(id); setTab('tickets'); }} />}
         {tab === 'slas' && <SlasTab />}
         {tab === 'reports' && <ReportsTab />}

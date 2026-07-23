@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { ticketingApi } from '@/lib/api';
@@ -33,7 +34,10 @@ function UserTicketing() {
     staleTime: 15_000,
   });
 
-  const [detailId, setDetailId] = useState<string | null>(null);
+  // /ticketing?ticket=<id> opens that ticket straight away — the deep link used by
+  // the assignment push notification.
+  const searchParams = useSearchParams();
+  const [detailId, setDetailId] = useState<string | null>(searchParams.get('ticket'));
   const [showForm, setShowForm] = useState(false);
   const [view, setView] = useState<View>('list');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');

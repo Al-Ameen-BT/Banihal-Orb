@@ -1,6 +1,7 @@
 import type { Role } from '@prisma/client';
-import { prisma } from '../../config/database';
+import { prisma, customerContext } from '../../config/database';
 import { getTicketDb, getTicketDbScope } from '../../config/ticketDatabase';
+import { BOT_EMAIL_DOMAIN } from './ticketing.client';
 
 // ─── Identity bridge ─────────────────────────────────────────────────────────
 // The B2B-Site login is the source of truth. The full ticketing schema has its
@@ -69,4 +70,48 @@ export async function resolveTicketActor(b2bUserId: string, platformRole: Role):
   });
   cache.set(cacheKey, row.id);
   return { id: row.id, role };
+}
+
+// ─── Reverse bridge: ticketing Users.id → B2B-Site account ───────────────────
+// Web Push is addressed to a B2B-Site account (userId + tenantId), but ticketing
+// only ever knows its own Users.id. Map back through email — the same key the
+// forward bridge above uses. Rows with no human behind them (Slack bots, staff
+// created natively in the ticketing system) simply resolve to null.
+
+export interface B2bIdentity {
+  userId: string;    // b2b_saas User.id
+  tenantId: string;  // that user's customerId — the PushSubscription tenant key
+}
+
+// scope+ticketUserId → b2b identity. Only POSITIVE results are cached: a null can
+// become resolvable later (the person registers / is bridged), and assignments are
+// rare enough that re-querying two indexed columns costs nothing.
+const reverseCache = new Map<string, B2bIdentity>();
+
+export async function resolveB2bIdentity(ticketUserId: string): Promise<B2bIdentity | null> {
+  const cacheKey = `${getTicketDbScope()}:${ticketUserId}`;
+  const cached = reverseCache.get(cacheKey);
+  if (cached) return cached;
+
+  const row = await getTicketDb().users.findUnique({
+    where: { id: ticketUserId },
+    select: { email: true },
+  });
+  if (!row?.email || row.email.endsWith(BOT_EMAIL_DOMAIN)) return null;
+
+  // Resolved OUTSIDE the tenant context: the Prisma extension would inject the
+  // ACTING user's customerId, and the shared ticket store's assignee pool spans
+  // organizations. Safe — the only fields read are the recipient's own id and
+  // customerId, purely to address a notification to them.
+  const b2bUser = await customerContext.exit(() =>
+    prisma.user.findFirst({
+      where: { email: { equals: row.email, mode: 'insensitive' } },
+      select: { id: true, customerId: true },
+    }),
+  );
+  if (!b2bUser) return null;
+
+  const identity: B2bIdentity = { userId: b2bUser.id, tenantId: b2bUser.customerId };
+  reverseCache.set(cacheKey, identity);
+  return identity;
 }

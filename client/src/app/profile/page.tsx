@@ -9,6 +9,7 @@ import RoleGuard from '@/components/guards/RoleGuard';
 import Sidebar from '@/components/ui/Sidebar';
 import Toggle from '@/components/ui/Toggle';
 import GlowButton from '@/components/ui/GlowButton';
+import EnablePushButton from '@/components/EnablePushButton';
 
 const roleConfig: Record<string, { label: string; cls: string; avatar: string }> = {
   USER:          { label: 'User',          cls: 'text-slate-600 bg-slate-100',  avatar: 'from-slate-400 to-slate-500' },
@@ -143,8 +144,21 @@ export default function ProfilePage() {
               </div>
             </motion.div>
 
-            {/* Change Password */}
+            {/* Notifications */}
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.1, ease: [0.4,0,0.2,1] }}>
+              <h2 className="text-base font-semibold text-slate-900 mb-4">Notifications</h2>
+              <div className="card p-6">
+                <p className="text-sm font-medium text-slate-900">Desktop notifications</p>
+                <p className="text-xs text-slate-500 mt-1 mb-4">
+                  Get notified on this device when a ticket is assigned to you — even when this tab isn’t open.
+                  Applies to this browser only; enable it again on each device you use.
+                </p>
+                <EnablePushButton />
+              </div>
+            </motion.div>
+
+            {/* Change Password */}
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.13, ease: [0.4,0,0.2,1] }}>
               <h2 className="text-base font-semibold text-slate-900 mb-4">Change Password</h2>
               <div className="card p-6 space-y-4">
                 <div>

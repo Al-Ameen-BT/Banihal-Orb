@@ -3,6 +3,7 @@ import { nextTicketNumber } from './utils/ticketNumber';
 import { getTicketNumberFormat, resolveOrgCode } from './services/numberFormat';
 import { getNextAssignee, withLastAssigned } from './utils/roundRobin';
 import { pausePatch } from './services/slaService';
+import { notifyTicketAssignedInBackground } from './services/ticketNotify';
 import { prisma } from '../../config/database';
 import type { z } from 'zod';
 import type { CreateTicketSchema, UpdateTicketSchema, CreateProjectSchema, UpdateProjectSchema, CreateSlaSchema } from './ticketing.schema';
@@ -90,7 +91,10 @@ export async function createTicket(actorId: string, input: CreateTicketInput, b2
   if (settingsToPersist) await db.setProjectSettings(input.projectId, settingsToPersist);
   await db.writeActivity({ type: 'created', ticketId, userId: actorId, description: `Created ${base.title}` });
 
-  return (await db.getTicketById(ticketId))!;
+  const ticket = (await db.getTicketById(ticketId))!;
+  // Assigned at creation (explicitly or by round-robin) → tell the assignee.
+  notifyTicketAssignedInBackground({ ticket, assigneeTicketUserId: assigneeId, actorTicketUserId: actorId });
+  return ticket;
 }
 
 export async function updateTicket(actorId: string, id: string, input: UpdateTicketInput): Promise<TicketDTO> {
@@ -130,11 +134,17 @@ export async function updateTicket(actorId: string, id: string, input: UpdateTic
   if (input.priority !== undefined && input.priority !== current.priority) {
     await db.writeActivity({ type: 'priority_changed', ticketId: id, userId: actorId, field: 'priority', oldValue: current.priority, newValue: input.priority });
   }
-  if (input.assigneeId !== undefined && input.assigneeId !== current.assigneeId) {
+  const reassigned = input.assigneeId !== undefined && input.assigneeId !== current.assigneeId;
+  if (reassigned) {
     await db.writeActivity({ type: 'assigned', ticketId: id, userId: actorId, field: 'assigneeId', oldValue: current.assigneeId, newValue: input.assigneeId });
   }
 
-  return (await db.getTicketById(id))!;
+  const ticket = (await db.getTicketById(id))!;
+  // Only a change TO a person notifies — clearing the assignee (null) does not.
+  if (reassigned && input.assigneeId) {
+    notifyTicketAssignedInBackground({ ticket, assigneeTicketUserId: input.assigneeId, actorTicketUserId: actorId });
+  }
+  return ticket;
 }
 
 // ─── Projects ──────────────────────────────────────────────────────────────────
