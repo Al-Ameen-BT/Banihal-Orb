@@ -125,10 +125,10 @@ if curl -s --connect-timeout 2 http://localhost:11435/api/tags >/dev/null; then
 else
     echo "  ⚠️ Warning: Ollama chatbot backend (http://localhost:11435) is unreachable. Chat may fail."
 fi
-if curl -s --connect-timeout 2 http://localhost:8050 >/dev/null; then
+if curl -s --connect-timeout 2 http://localhost:8001 >/dev/null; then
     echo "  ✨ Analytics Agent is active."
 else
-    echo "  ⚠️ Warning: Analytics Agent (http://localhost:8050) is unreachable. Chat may fail."
+    echo "  ⚠️ Warning: Analytics Agent (http://localhost:8001) is unreachable. Chat may fail."
 fi
 
 # --- 8. Systemd Configuration & Setup ---
