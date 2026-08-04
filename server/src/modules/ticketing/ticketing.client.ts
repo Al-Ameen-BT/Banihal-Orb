@@ -328,17 +328,40 @@ export async function resolveBotTicketUser(bot: { name: string; slug: string }):
 }
 
 // ─── Staff (assignee pool) ─────────────────────────────────────────────────────
-export async function listStaff(): Promise<Array<{ id: string; name: string; email: string; role: string }>> {
+// Called with NO arguments from the org path: platform administrators (role 'admin')
+// are excluded because they live in the isolated admin store and must not be
+// assignable — or even enumerable/countable — from an org-level New Ticket form.
+// `includeAdmins` is for the admin store only (listAdminAssignees), where the whole
+// active roster IS the assignee pool; it must never be set on an org-scoped call.
+export async function listStaff(opts?: { includeAdmins?: boolean }): Promise<Array<{ id: string; name: string; email: string; role: string }>> {
   const rows = await getTicketDb().users.findMany({
-    // Exclude platform administrators (role 'admin') from the org-facing assignee
-    // pool. They live in the isolated admin store and must not be assignable — or
-    // even enumerable/countable — from an org-level New Ticket form. Administrator
-    // callers get their own pool from listAdminAssignees() instead.
-    where: { isActive: true, role: { not: 'admin' }, NOT: { email: { endsWith: BOT_EMAIL_DOMAIN } } },
+    where: {
+      isActive: true,
+      ...(opts?.includeAdmins ? {} : { role: { not: 'admin' as const } }),
+      NOT: { email: { endsWith: BOT_EMAIL_DOMAIN } },
+    },
     select: { id: true, firstName: true, lastName: true, email: true, role: true },
     orderBy: [{ firstName: 'asc' }],
   });
   return rows.map((u) => ({ id: u.id, name: `${u.firstName} ${u.lastName}`.trim(), email: u.email, role: u.role as string }));
+}
+
+// ─── Customers (client pool) ───────────────────────────────────────────────────
+// The current store's client list, offered as the New Ticket form's client picker
+// (ADMINISTRATOR only — see the route guard). Read-only: creating clients is not
+// exposed here, so the externally-owned Customers rows are never added to by accident.
+export async function listCustomers(): Promise<Array<{ id: string; name: string; email: string | null; contactPerson: string | null; company: string | null }>> {
+  return getTicketDb().customers.findMany({
+    select: { id: true, name: true, email: true, contactPerson: true, company: true },
+    orderBy: { name: 'asc' },
+  });
+}
+
+// Set the contact person on an existing client. Deliberately narrow (we already hold
+// the id, unlike getOrCreateCustomerByName). Best-effort: a ticket must not fail to
+// be created because the client row vanished between the picker load and submit.
+export async function setCustomerContactPerson(id: string, contactPerson: string | null): Promise<void> {
+  await getTicketDb().customers.update({ where: { id }, data: { contactPerson } }).catch(() => {});
 }
 
 // ─── Comments ──────────────────────────────────────────────────────────────────

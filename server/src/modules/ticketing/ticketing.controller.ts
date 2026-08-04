@@ -51,7 +51,14 @@ export async function getTicket(req: Request, res: Response, next: NextFunction)
 
 export async function createTicket(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const input = CreateTicketSchema.parse(req.body);
+    const parsed = CreateTicketSchema.parse(req.body);
+    // Client + contact person are ADMINISTRATOR-only fields (the admin store's New
+    // Ticket form is the only surface that offers them). Silently drop them for every
+    // other role rather than 403 — no org-level client sends them, so a rejection could
+    // only ever come from a hand-rolled request trying to pick another org's client.
+    const input = req.user.role === 'ADMINISTRATOR'
+      ? parsed
+      : (({ customerId: _c, contactPerson: _p, ...rest }) => rest)(parsed);
     const me = await actor(req);
 
     // Org admin picked "Escalate to Administrators" as the assignee: create the
@@ -142,6 +149,12 @@ export async function listAssignees(req: Request, res: Response, next: NextFunct
       : staff;
     res.json({ assignees });
   } catch (err) { next(err); }
+}
+
+// Client pool for the admin New Ticket form. ADMINISTRATOR-only at the route, so this
+// always reads the isolated admin store — an org caller can never enumerate clients.
+export async function listCustomers(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try { res.json({ customers: await db.listCustomers() }); } catch (err) { next(err); }
 }
 
 export async function getStats(_req: Request, res: Response, next: NextFunction): Promise<void> {

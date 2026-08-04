@@ -46,14 +46,24 @@ export async function createTicket(actorId: string, input: CreateTicketInput, b2
   // Client Name / Email / Contact Person (org-created tickets otherwise carry no client
   // and those fields render blank). Resolved from the creator's B2B org and reused
   // across the org's tickets; an explicit input.customerId (already a ticket-store id) wins.
+  //
+  // The fallback is keyed on the field being ABSENT, not falsy: an administrator whose
+  // form offers a client picker sends customerId: null to mean "no client", and must not
+  // have their OWN organization silently linked instead.
   let customerId = input.customerId ?? null;
-  if (!customerId && b2bCustomerId) {
+  if (input.customerId === undefined && b2bCustomerId) {
     const org = await prisma.customer
       .findUnique({ where: { id: b2bCustomerId }, select: { name: true, mailId: true, contactPerson: true } })
       .catch(() => null);
     if (org) {
       customerId = await db.getOrCreateCustomerByName({ name: org.name, email: org.mailId, contactPerson: org.contactPerson });
     }
+  }
+
+  // Contact person belongs to the client record (Tickets has no such column), so it is
+  // stored on the picked Customers row and shows on every ticket for that client.
+  if (input.contactPerson !== undefined && customerId) {
+    await db.setCustomerContactPerson(customerId, input.contactPerson);
   }
 
   const base = {

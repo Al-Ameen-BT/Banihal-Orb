@@ -183,6 +183,7 @@ export const ticketingApi = {
   getAnalytics: () => api.get('/ticketing/analytics'),
   listProjects: () => api.get('/ticketing/projects'),
   listAssignees: () => api.get('/ticketing/assignees'),
+  listCustomers: () => api.get('/ticketing/customers'), // ADMINISTRATOR only (403 otherwise)
   createProject: (data: unknown) => api.post('/ticketing/projects', data),
   updateProject: (id: string, data: unknown) => api.patch(`/ticketing/projects/${id}`, data),
   deleteProject: (id: string) => api.delete(`/ticketing/projects/${id}`),

@@ -329,12 +329,18 @@ function FieldLabel({ htmlFor, children, required }: { htmlFor?: string; childre
 }
 
 // ─── Create ticket form (role-driven field set) ──────────────────────────────────
-type FormField = 'project' | 'type' | 'priority' | 'status' | 'assignee' | 'branch' | 'onSite';
+type FormField = 'project' | 'type' | 'priority' | 'status' | 'assignee' | 'client' | 'contact' | 'branch' | 'onSite';
+// 'client' + 'contact' are ADMINISTRATOR-only — they read/write the admin store's
+// Customers table, which org-level roles must not reach (also enforced server-side:
+// the controller strips both fields for any other role). Order drives the 2-col grid:
+// status | assignee, client | contact, branch | onSite.
 const ROLE_FIELDS: Record<Role, FormField[]> = {
   USER:          ['project', 'type', 'priority'],
   ORG_ADMIN:     ['project', 'type', 'priority', 'status', 'assignee'],
-  ADMINISTRATOR: ['project', 'type', 'priority', 'status', 'assignee', 'branch', 'onSite'],
+  ADMINISTRATOR: ['project', 'type', 'priority', 'status', 'assignee', 'client', 'contact', 'branch', 'onSite'],
 };
+
+type TicketCustomer = { id: string; name: string; email: string | null; contactPerson: string | null; company: string | null };
 
 // Synthetic assignee (org-admin only) that auto-escalates the new ticket to the
 // platform administrators. Must match ESCALATE_ADMINS_ID in the server's
@@ -356,6 +362,13 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
     enabled: has('assignee'),
     staleTime: 60_000,
   });
+  // Administrators pick the ticket's client from the admin store's Customers table.
+  const { data: customers } = useQuery<TicketCustomer[]>({
+    queryKey: ['ticketing', 'customers'],
+    queryFn: () => ticketingApi.listCustomers().then((r) => (r.data as { customers: TicketCustomer[] }).customers),
+    enabled: has('client'),
+    staleTime: 60_000,
+  });
   // Org-admins can assign a ticket to a Slack bot instead of a person (this org's bots).
   const { data: orgBots } = useQuery<OrgBot[]>({
     queryKey: ['bots', 'list'],
@@ -371,6 +384,8 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
   const [priority, setPriority] = useState<TicketPriority>('medium');
   const [status, setStatus] = useState<TicketStatus>('todo');
   const [assigneeId, setAssigneeId] = useState('');
+  const [customerId, setCustomerId] = useState('');
+  const [contactPerson, setContactPerson] = useState('');
   const [branch, setBranch] = useState('');
   const [onSite, setOnSite] = useState(false);
   const [assigneeMode, setAssigneeMode] = useState<'person' | 'bot'>('person');
@@ -394,6 +409,7 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
   function resetForm() {
     setTitle(''); setDescription(''); setProjectId(''); setType('task'); setPriority('medium');
     setStatus('todo'); setAssigneeId(''); setBranch(''); setOnSite(false); setError(null);
+    setCustomerId(''); setContactPerson('');
     setAssigneeMode('person'); setBotId(''); setBotValues({});
   }
 
@@ -425,6 +441,10 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
                 ? { escalateToAdministrators: true }
                 : { assigneeId: assigneeId || null })
             : {}),
+          // Sent even when empty (as null) so the server does NOT fall back to linking
+          // the administrator's own organization as the client.
+          ...(has('client') ? { customerId: customerId || null } : {}),
+          ...(has('contact') && customerId ? { contactPerson: contactPerson.trim() || null } : {}),
           ...(has('branch') ? { branch: branch.trim() || null } : {}),
           ...(has('onSite') ? { onSiteSupportRequired: onSite } : {}),
         });
@@ -486,6 +506,35 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
                 <option key={a.id} value={a.id}>{a.id === ESCALATE_ADMINS_ID ? `⤴ ${a.name}` : `${a.name} · ${a.role}`}</option>
               ))}
             </select>
+          </div>
+        );
+      case 'client':
+        return (
+          <div key={f}>
+            <FieldLabel htmlFor="tk-client">Client</FieldLabel>
+            <select id="tk-client" value={customerId} className="input"
+              onChange={(e) => {
+                const id = e.target.value;
+                setCustomerId(id);
+                // Prefill the contact person from the client record; still editable below.
+                setContactPerson((customers ?? []).find((c) => c.id === id)?.contactPerson ?? '');
+              }}>
+              <option value="">— No client —</option>
+              {(Array.isArray(customers) ? customers : []).map((c) => (
+                <option key={c.id} value={c.id}>{c.company ? `${c.name} · ${c.company}` : c.name}</option>
+              ))}
+            </select>
+          </div>
+        );
+      case 'contact':
+        return (
+          <div key={f}>
+            <FieldLabel htmlFor="tk-contact">Contact person</FieldLabel>
+            <input id="tk-contact" value={contactPerson} onChange={(e) => setContactPerson(e.target.value)}
+              maxLength={255} className="input" disabled={!customerId} placeholder="Who to reach at the client" />
+            <p className="text-[11px] text-slate-400 mt-1">
+              {customerId ? 'Saved to the client record — shown on all of their tickets.' : 'Select a client first.'}
+            </p>
           </div>
         );
       case 'branch':

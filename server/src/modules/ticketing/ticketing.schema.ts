@@ -24,7 +24,13 @@ export const CreateTicketSchema = z.object({
   status: StatusEnum.default('todo'),
   projectId: z.string().uuid(),
   assigneeId: z.string().uuid().nullable().optional(),
+  // ADMINISTRATOR only (stripped for every other role in the controller). `null` means
+  // the admin explicitly chose "no client" — distinct from omitting the key, which still
+  // falls back to linking the creator's own organization. See ticketing.service.createTicket.
   customerId: z.string().uuid().nullable().optional(),
+  // ADMINISTRATOR only. Written onto the SELECTED client's Customers row — the Tickets
+  // table has no contactPerson column, so this is per-client, not per-ticket.
+  contactPerson: z.string().max(255).nullable().optional(),
   storyPoints: z.number().int().min(0).max(100).nullable().optional(),
   dueDate: z.string().datetime().nullable().optional(),
   labels: z.array(z.string().max(60)).max(30).optional(),

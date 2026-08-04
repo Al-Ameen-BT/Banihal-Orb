@@ -41,6 +41,9 @@ router.get('/my-updates', ticketingController.myUpdates);
 // ADMINISTRATOR store, routed to the administrator group (unassigned, notify-all).
 router.post('/tickets/:id/escalate', onlyOrgAdmin, ticketingController.escalateTicket);
 
+// ADMINISTRATOR-only: the admin store's client pool (New Ticket form's client picker).
+router.get('/customers', onlyAdministrator, ticketingController.listCustomers);
+
 // ADMINISTRATOR escalation notifications + first-wins claim (admin store).
 router.get('/admin/escalation-alerts', onlyAdministrator, ticketingController.escalationAlerts);
 router.post('/admin/tickets/:id/claim', onlyAdministrator, ticketingController.claimTicket);
