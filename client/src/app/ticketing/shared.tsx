@@ -329,16 +329,18 @@ function FieldLabel({ htmlFor, children, required }: { htmlFor?: string; childre
 }
 
 // ─── Create ticket form (role-driven field set) ──────────────────────────────────
-type FormField = 'project' | 'type' | 'priority' | 'status' | 'assignee' | 'client' | 'contact' | 'branch' | 'onSite';
-// 'client' + 'contact' are ADMINISTRATOR-only — they read/write the admin store's
-// Customers table, which org-level roles must not reach (also enforced server-side:
-// the controller strips both fields for any other role). Order drives the 2-col grid:
-// status | assignee, client | contact, branch | onSite.
+type FormField = 'project' | 'type' | 'priority' | 'status' | 'assignee' | 'client' | 'clientEmail' | 'contact' | 'branch' | 'onSite';
+// 'client', 'clientEmail' + 'contact' are ADMINISTRATOR-only — they read/write the admin
+// store's Customers table, which org-level roles must not reach (also enforced server-side:
+// the controller strips those fields for any other role). Order drives the 2-col grid:
+// status | assignee, client | clientEmail, contact | branch, onSite.
 const ROLE_FIELDS: Record<Role, FormField[]> = {
   USER:          ['project', 'type', 'priority'],
   ORG_ADMIN:     ['project', 'type', 'priority', 'status', 'assignee'],
-  ADMINISTRATOR: ['project', 'type', 'priority', 'status', 'assignee', 'client', 'contact', 'branch', 'onSite'],
+  ADMINISTRATOR: ['project', 'type', 'priority', 'status', 'assignee', 'client', 'clientEmail', 'contact', 'branch', 'onSite'],
 };
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 type TicketCustomer = { id: string; name: string; email: string | null; contactPerson: string | null; company: string | null };
 
@@ -385,6 +387,7 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
   const [status, setStatus] = useState<TicketStatus>('todo');
   const [assigneeId, setAssigneeId] = useState('');
   const [customerId, setCustomerId] = useState('');
+  const [clientEmail, setClientEmail] = useState('');
   const [contactPerson, setContactPerson] = useState('');
   const [branch, setBranch] = useState('');
   const [onSite, setOnSite] = useState(false);
@@ -401,7 +404,12 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
   const botFieldsValid = !botMode || (!!selectedBot && selectedBot.formFields.every(
     (f) => !f.required || f.type === 'CHECKBOX' || (botValues[f.key] !== undefined && botValues[f.key] !== ''),
   ));
-  const isValid = title.trim().length >= 1 && description.trim().length >= 1 && projectId !== '' && (!botMode || !!botId) && botFieldsValid;
+  // The client's email is prefilled from the picked client record; when that record has
+  // none, the administrator types one here and it is saved back onto the client.
+  const selectedCustomer = (Array.isArray(customers) ? customers : []).find((c) => c.id === customerId) ?? null;
+  const emailAutoFilled = !!selectedCustomer?.email && clientEmail.trim() === selectedCustomer.email;
+  const emailValid = clientEmail.trim() === '' || EMAIL_RE.test(clientEmail.trim());
+  const isValid = title.trim().length >= 1 && description.trim().length >= 1 && projectId !== '' && (!botMode || !!botId) && botFieldsValid && emailValid;
   const effectiveFields = botMode ? fields.filter((f) => f !== 'assignee') : fields;
 
   const setBotVal = (key: string, v: unknown) => setBotValues((p) => ({ ...p, [key]: v }));
@@ -409,7 +417,7 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
   function resetForm() {
     setTitle(''); setDescription(''); setProjectId(''); setType('task'); setPriority('medium');
     setStatus('todo'); setAssigneeId(''); setBranch(''); setOnSite(false); setError(null);
-    setCustomerId(''); setContactPerson('');
+    setCustomerId(''); setClientEmail(''); setContactPerson('');
     setAssigneeMode('person'); setBotId(''); setBotValues({});
   }
 
@@ -444,6 +452,7 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
           // Sent even when empty (as null) so the server does NOT fall back to linking
           // the administrator's own organization as the client.
           ...(has('client') ? { customerId: customerId || null } : {}),
+          ...(has('clientEmail') && customerId ? { customerEmail: clientEmail.trim() || null } : {}),
           ...(has('contact') && customerId ? { contactPerson: contactPerson.trim() || null } : {}),
           ...(has('branch') ? { branch: branch.trim() || null } : {}),
           ...(has('onSite') ? { onSiteSupportRequired: onSite } : {}),
@@ -511,19 +520,36 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
       case 'client':
         return (
           <div key={f}>
-            <FieldLabel htmlFor="tk-client">Client</FieldLabel>
+            <FieldLabel htmlFor="tk-client">Client name</FieldLabel>
             <select id="tk-client" value={customerId} className="input"
               onChange={(e) => {
                 const id = e.target.value;
+                const picked = (customers ?? []).find((c) => c.id === id);
                 setCustomerId(id);
-                // Prefill the contact person from the client record; still editable below.
-                setContactPerson((customers ?? []).find((c) => c.id === id)?.contactPerson ?? '');
+                // Prefill email + contact person from the client record; both stay editable below.
+                setClientEmail(picked?.email ?? '');
+                setContactPerson(picked?.contactPerson ?? '');
               }}>
               <option value="">— No client —</option>
               {(Array.isArray(customers) ? customers : []).map((c) => (
                 <option key={c.id} value={c.id}>{c.company ? `${c.name} · ${c.company}` : c.name}</option>
               ))}
             </select>
+          </div>
+        );
+      case 'clientEmail':
+        return (
+          <div key={f}>
+            <FieldLabel htmlFor="tk-client-email">Client email</FieldLabel>
+            <input id="tk-client-email" type="email" value={clientEmail} onChange={(e) => setClientEmail(e.target.value)}
+              maxLength={255} className="input" disabled={!customerId}
+              placeholder={customerId ? 'name@company.com' : 'Select a client first'} />
+            <p className={`text-[11px] mt-1 ${emailValid ? 'text-slate-400' : 'text-red-600'}`}>
+              {!customerId ? 'Select a client first.'
+                : !emailValid ? 'Enter a valid email address.'
+                : emailAutoFilled ? 'Fetched from the client record — edit to update it.'
+                : 'No email on file for this client — the address you enter is saved to their record.'}
+            </p>
           </div>
         );
       case 'contact':

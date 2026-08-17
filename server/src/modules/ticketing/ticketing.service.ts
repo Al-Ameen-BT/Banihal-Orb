@@ -66,6 +66,13 @@ export async function createTicket(actorId: string, input: CreateTicketInput, b2
     await db.setCustomerContactPerson(customerId, input.contactPerson);
   }
 
+  // Same for the client's email: the form prefills it from the client record, so what
+  // comes back is either that same address or the one the administrator filled in for a
+  // client that had none.
+  if (input.customerEmail !== undefined && customerId) {
+    await db.setCustomerEmail(customerId, input.customerEmail);
+  }
+
   const base = {
     title: input.title,
     description: input.description,
