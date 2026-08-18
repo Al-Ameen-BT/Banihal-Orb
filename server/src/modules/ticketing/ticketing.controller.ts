@@ -227,6 +227,13 @@ export async function downloadAttachment(req: Request, res: Response, next: Next
     await service.assertAttachmentAccess(await service.ticketAccessScope(req.user), req.params['id']!);
     const file = await service.getAttachmentFile(req.params['id']!);
     if (!file?.path) { res.status(404).json({ error: 'Attachment not found', code: 'NOT_FOUND' }); return; }
+    // ?inline=1 serves the bytes for rendering in the page (<img src>) instead of
+    // forcing a download — same access check either way.
+    if (req.query['inline']) {
+      res.type(file.mimeType ?? 'application/octet-stream');
+      res.sendFile(file.path);
+      return;
+    }
     res.download(file.path, file.originalName ?? 'attachment');
   } catch (err) { next(err); }
 }

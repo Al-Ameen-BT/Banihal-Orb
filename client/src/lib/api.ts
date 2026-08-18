@@ -20,6 +20,9 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+// Per-request opt-out of the JSON default above, for FormData bodies.
+const MULTIPART = { headers: { 'Content-Type': undefined } } as const;
+
 let isRefreshing = false;
 let refreshSubscribers: Array<(ok: boolean) => void> = [];
 
@@ -195,11 +198,18 @@ export const ticketingApi = {
   getAlerts: (since: string) => api.get('/ticketing/alerts', { params: { since } }),
   // Collaboration
   getComments: (id: string) => api.get(`/ticketing/tickets/${id}/comments`),
-  addComment: (id: string, form: FormData) => api.post(`/ticketing/tickets/${id}/comments`, form),
+  // Content-Type MUST be undefined on FormData posts: the instance default above is
+  // application/json, and axios then JSON-stringifies the FormData (File → {}), so the
+  // request is never multipart and the server sees zero files. Undefined lets the
+  // browser set multipart/form-data with its own boundary.
+  addComment: (id: string, form: FormData) => api.post(`/ticketing/tickets/${id}/comments`, form, MULTIPART),
   getActivity: (id: string) => api.get(`/ticketing/tickets/${id}/activity`),
   getTicketAttachments: (id: string) => api.get(`/ticketing/tickets/${id}/attachments`),
-  uploadAttachments: (id: string, form: FormData) => api.post(`/ticketing/tickets/${id}/attachments`, form),
+  uploadAttachments: (id: string, form: FormData) => api.post(`/ticketing/tickets/${id}/attachments`, form, MULTIPART),
   downloadAttachment: (id: string) => api.get(`/ticketing/attachments/${id}/download`, { responseType: 'blob' }),
+  // Same-origin URL for rendering an attachment inline (<img src>): the httpOnly auth
+  // cookie rides along, so no blob/objectURL dance is needed.
+  attachmentUrl: (id: string) => `${BASE}/ticketing/attachments/${id}/download?inline=1`,
   getWatchers: (id: string) => api.get(`/ticketing/tickets/${id}/watchers`),
   watch: (id: string) => api.post(`/ticketing/tickets/${id}/watch`),
   unwatch: (id: string) => api.delete(`/ticketing/tickets/${id}/watch`),

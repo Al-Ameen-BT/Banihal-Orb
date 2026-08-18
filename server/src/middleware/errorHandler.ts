@@ -35,6 +35,13 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     return;
   }
 
+  // Multer rejects (file too large, too many files) carry a `code` but no `status`,
+  // so without this they'd surface as a 500 and bounce the client to /server-error.
+  if (err instanceof Error && err.name === 'MulterError') {
+    res.status(400).json({ error: err.message, code: (err as Error & { code?: string }).code ?? 'UPLOAD_REJECTED' });
+    return;
+  }
+
   if (err instanceof Error) {
     const status = (err as Error & { status?: number }).status ?? 500;
     const code = (err as Error & { code?: string }).code;

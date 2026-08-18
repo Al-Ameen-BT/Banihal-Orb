@@ -4,6 +4,7 @@ import { getTicketNumberFormat, resolveOrgCode } from './services/numberFormat';
 import { getNextAssignee, withLastAssigned } from './utils/roundRobin';
 import { pausePatch } from './services/slaService';
 import { notifyTicketAssignedInBackground } from './services/ticketNotify';
+import { mirrorComment, mirrorFields, mirrorInBackground } from './services/escalationMirror';
 import { prisma } from '../../config/database';
 import type { z } from 'zod';
 import type { CreateTicketSchema, UpdateTicketSchema, CreateProjectSchema, UpdateProjectSchema, CreateSlaSchema } from './ticketing.schema';
@@ -136,6 +137,15 @@ export async function updateTicket(actorId: string, id: string, input: UpdateTic
   };
 
   await db.updateTicketRow(id, data);
+
+  // An escalated ticket exists twice, in two databases — keep the resolution notes
+  // in step so the requester sees how it was resolved and why it was delayed.
+  if (input.resolvedMethods !== undefined || input.reasonForDelay !== undefined) {
+    mirrorInBackground(() => mirrorFields(id, {
+      ...(input.resolvedMethods !== undefined ? { resolvedMethods: input.resolvedMethods } : {}),
+      ...(input.reasonForDelay !== undefined ? { reasonForDelay: input.reasonForDelay } : {}),
+    }));
+  }
 
   // Typed activity log for the meaningful transitions.
   if (input.status !== undefined && input.status !== current.status) {
@@ -270,6 +280,8 @@ export async function addComment(actorId: string, ticketId: string, content: str
   const commentId = await db.createComment(ticketId, actorId, content);
   for (const f of files) await db.addCommentAttachment(commentId, f, actorId);
   await db.writeActivity({ type: 'commented', ticketId, userId: actorId, description: content.slice(0, 140) });
+  // Both halves of an escalated pair see the same conversation.
+  mirrorInBackground(() => mirrorComment(ticketId, actorId, content, files));
   return db.listComments(ticketId);
 }
 

@@ -1,11 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ticketingApi, botsApi } from '@/lib/api';
 import GlowButton from '@/components/ui/GlowButton';
 import { BotFieldGrid } from '@/components/BotFormFields';
+import { useAuth } from '@/contexts/AuthContext';
 import type { TicketDTO, TicketProject, TicketStatus, TicketPriority, TicketType, SlaStatus, SlaEvaluation, Role, OrgBot } from '@/lib/schemas';
 
 // ─── Option sets ──────────────────────────────────────────────────────────────
@@ -328,16 +329,69 @@ function FieldLabel({ htmlFor, children, required }: { htmlFor?: string; childre
   return <label htmlFor={htmlFor} className="block text-[11px] font-medium text-slate-500 mb-1">{children}{required && <span className="text-red-500"> *</span>}</label>;
 }
 
+// ─── Attachments ────────────────────────────────────────────────────────────────
+// One renderer for every attachment surface (ticket + comment, admin + user view):
+// images become thumbnails served inline from the API with the session cookie, and
+// anything else (legacy uploads — new ones are images-only) keeps a compact chip.
+export function formatBytes(n: number | null): string {
+  if (!n) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+export async function downloadAttachment(id: string, name: string) {
+  const { data } = await ticketingApi.downloadAttachment(id);
+  const url = URL.createObjectURL(data as Blob);
+  const a = document.createElement('a'); a.href = url; a.download = name; a.click(); URL.revokeObjectURL(url);
+}
+
+type AnyAttachment = { id: string; originalName: string | null; mimeType: string | null; size: number | null };
+
+export function AttachmentGrid({ attachments, size = 'md' }: { attachments: AnyAttachment[]; size?: 'sm' | 'md' }) {
+  if (attachments.length === 0) return <p className="text-xs text-slate-400">No attachments.</p>;
+  const box = size === 'sm' ? 'w-16 h-16' : 'w-24 h-24';
+  return (
+    <div className="flex flex-wrap gap-2">
+      {attachments.map((a) => {
+        const name = a.originalName ?? 'attachment';
+        if (a.mimeType?.startsWith('image/')) {
+          return (
+            <figure key={a.id} className="group relative">
+              <a href={ticketingApi.attachmentUrl(a.id)} target="_blank" rel="noopener noreferrer" title={name}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={ticketingApi.attachmentUrl(a.id)} alt={name}
+                  className={`${box} object-cover rounded-lg ring-1 ring-slate-200 bg-slate-50 hover:ring-brand/40 transition-colors`} />
+              </a>
+              <button type="button" aria-label={`Download ${name}`} onClick={() => void downloadAttachment(a.id, name)}
+                className="absolute bottom-0.5 right-0.5 px-1.5 py-0.5 rounded bg-slate-900/65 text-white text-[10px] font-semibold opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
+                Save
+              </button>
+            </figure>
+          );
+        }
+        return (
+          <button key={a.id} type="button" onClick={() => void downloadAttachment(a.id, name)}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 h-fit rounded-lg text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer">
+            <Icons.paperclip className="w-3.5 h-3.5 text-slate-400" />
+            {name} <span className="text-slate-400">{formatBytes(a.size)}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── Create ticket form (role-driven field set) ──────────────────────────────────
-type FormField = 'project' | 'type' | 'priority' | 'status' | 'assignee' | 'client' | 'contact' | 'branch' | 'onSite';
+type FormField = 'project' | 'type' | 'priority' | 'status' | 'assignee' | 'client' | 'contact' | 'branch' | 'onSite' | 'due' | 'points' | 'labels';
 // 'client' + 'contact' are ADMINISTRATOR-only — they read/write the admin store's
 // Customers table, which org-level roles must not reach (also enforced server-side:
 // the controller strips both fields for any other role). Order drives the 2-col grid:
 // status | assignee, client | contact, branch | onSite.
 const ROLE_FIELDS: Record<Role, FormField[]> = {
   USER:          ['project', 'type', 'priority'],
-  ORG_ADMIN:     ['project', 'type', 'priority', 'status', 'assignee'],
-  ADMINISTRATOR: ['project', 'type', 'priority', 'status', 'assignee', 'client', 'contact', 'branch', 'onSite'],
+  ORG_ADMIN:     ['project', 'type', 'priority', 'status', 'assignee', 'due', 'points', 'labels'],
+  ADMINISTRATOR: ['project', 'type', 'priority', 'status', 'assignee', 'client', 'contact', 'branch', 'onSite', 'due', 'points', 'labels'],
 };
 
 type TicketCustomer = { id: string; name: string; email: string | null; contactPerson: string | null; company: string | null };
@@ -347,6 +401,10 @@ type TicketCustomer = { id: string; name: string; email: string | null; contactP
 // ticketing.controller.ts — the server emits this option and interprets the
 // resulting { escalateToAdministrators: true } payload.
 const ESCALATE_ADMINS_ID = '__escalate_admins__';
+
+// Mirrors the server's multer config (uploads.ts): images only, 5 files, 10 MB each.
+const MAX_IMAGES = 5;
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: {
   projects: TicketProject[]; onCreated?: () => void; onCancel?: () => void; role?: Role;
@@ -386,8 +444,15 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
   const [assigneeId, setAssigneeId] = useState('');
   const [customerId, setCustomerId] = useState('');
   const [contactPerson, setContactPerson] = useState('');
+  // What the client record already held, so an untouched field never rewrites it.
+  const [prefilledContact, setPrefilledContact] = useState('');
   const [branch, setBranch] = useState('');
   const [onSite, setOnSite] = useState(false);
+  const [dueDate, setDueDate] = useState('');
+  const [storyPoints, setStoryPoints] = useState('');
+  const [labelsText, setLabelsText] = useState('');
+  const [images, setImages] = useState<File[]>([]);
+  const [uploadWarning, setUploadWarning] = useState<string | null>(null);
   const [assigneeMode, setAssigneeMode] = useState<'person' | 'bot'>('person');
   const [botId, setBotId] = useState('');
   const [botValues, setBotValues] = useState<Record<string, unknown>>({});
@@ -396,20 +461,50 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
   const [sentToSlack, setSentToSlack] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Administrators own what they raise: default the assignee to themselves rather
+  // than "Unassigned (round-robin)". Matched on email because the dropdown carries
+  // ticket-store user ids, not B2B ids. Still fully editable below.
+  const { user } = useAuth();
+  useEffect(() => {
+    if (role !== 'ADMINISTRATOR' || assigneeId || !user?.email || !assignees) return;
+    const me = assignees.find((a) => a.email.toLowerCase() === user.email.toLowerCase());
+    if (me) setAssigneeId(me.id);
+  }, [role, assigneeId, user?.email, assignees]);
+
+  // Local previews for the images picked but not yet uploaded.
+  const previews = useMemo(() => images.map((f) => URL.createObjectURL(f)), [images]);
+  useEffect(() => () => { previews.forEach((u) => URL.revokeObjectURL(u)); }, [previews]);
+
+  function addImages(picked: FileList | null) {
+    if (!picked?.length) return;
+    const files = Array.from(picked);
+    const tooBig = files.find((f) => f.size > MAX_IMAGE_BYTES);
+    if (tooBig) { setUploadWarning(`${tooBig.name} is larger than 10 MB.`); return; }
+    const notImage = files.find((f) => !f.type.startsWith('image/'));
+    if (notImage) { setUploadWarning(`${notImage.name} is not an image.`); return; }
+    setUploadWarning(null);
+    setImages((prev) => [...prev, ...files].slice(0, MAX_IMAGES));
+  }
+
   const botMode = isOrgAdmin && assigneeMode === 'bot';
   const selectedBot = (orgBots ?? []).find((b) => b.id === botId) ?? null;
   const botFieldsValid = !botMode || (!!selectedBot && selectedBot.formFields.every(
     (f) => !f.required || f.type === 'CHECKBOX' || (botValues[f.key] !== undefined && botValues[f.key] !== ''),
   ));
   const isValid = title.trim().length >= 1 && description.trim().length >= 1 && projectId !== '' && (!botMode || !!botId) && botFieldsValid;
-  const effectiveFields = botMode ? fields.filter((f) => f !== 'assignee') : fields;
+  // Bot tickets are created by botsApi.createTicket, whose payload carries neither an
+  // assignee (the bot IS the assignee) nor a status (the server hardcodes 'todo').
+  // Hide both rather than render a control whose value is thrown away.
+  const effectiveFields = botMode ? fields.filter((f) => f !== 'assignee' && f !== 'status') : fields;
 
   const setBotVal = (key: string, v: unknown) => setBotValues((p) => ({ ...p, [key]: v }));
 
   function resetForm() {
     setTitle(''); setDescription(''); setProjectId(''); setType('task'); setPriority('medium');
     setStatus('todo'); setAssigneeId(''); setBranch(''); setOnSite(false); setError(null);
-    setCustomerId(''); setContactPerson('');
+    setCustomerId(''); setContactPerson(''); setPrefilledContact('');
+    setDueDate(''); setStoryPoints(''); setLabelsText('');
+    setImages([]); setUploadWarning(null);
     setAssigneeMode('person'); setBotId(''); setBotValues({});
   }
 
@@ -419,6 +514,7 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
     setSubmitting(true); setError(null);
     try {
       let ticketNumber: string;
+      let newTicketId = '';
       if (botMode) {
         // Assign the ticket to the selected bot; its dynamic form values are validated server-side.
         const { data } = await botsApi.createTicket(botId, {
@@ -426,6 +522,7 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
         });
         const res = data as { ticket: TicketDTO; slackNotified?: boolean };
         ticketNumber = res.ticket.ticketNumber;
+        newTicketId = res.ticket.id;
         setSentToSlack(!!res.slackNotified);
       } else {
         setSentToSlack(false);
@@ -444,14 +541,38 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
           // Sent even when empty (as null) so the server does NOT fall back to linking
           // the administrator's own organization as the client.
           ...(has('client') ? { customerId: customerId || null } : {}),
-          ...(has('contact') && customerId ? { contactPerson: contactPerson.trim() || null } : {}),
+          // Only when actually EDITED: contactPerson is stored on the shared Customers
+          // row, so echoing back the prefilled value would rewrite the client record on
+          // every ticket. ponytail: per-ticket contacts need a contactPerson column on
+          // Tickets — a migration on the externally-owned schema.
+          ...(has('contact') && customerId && contactPerson.trim() !== prefilledContact.trim()
+            ? { contactPerson: contactPerson.trim() || null } : {}),
           ...(has('branch') ? { branch: branch.trim() || null } : {}),
           ...(has('onSite') ? { onSiteSupportRequired: onSite } : {}),
+          ...(has('due') && dueDate ? { dueDate: new Date(dueDate).toISOString() } : {}),
+          ...(has('points') && storyPoints !== '' ? { storyPoints: Number(storyPoints) } : {}),
+          ...(has('labels') && labelsText.trim()
+            ? { labels: labelsText.split(',').map((l) => l.trim()).filter(Boolean).slice(0, 30) } : {}),
         });
         ticketNumber = (data as TicketDTO).ticketNumber;
+        newTicketId = (data as TicketDTO).id;
       }
+      // Attachments need a ticket id, so they upload as a second call. A failed upload
+      // must not lose the ticket the user just wrote — warn and keep going.
+      let warning: string | null = null;
+      if (images.length && newTicketId) {
+        try {
+          const form = new FormData();
+          images.forEach((f) => form.append('files', f));
+          await ticketingApi.uploadAttachments(newTicketId, form);
+        } catch {
+          warning = `Ticket ${ticketNumber} was created, but the images could not be attached. Add them from the ticket.`;
+        }
+      }
+
       setCreatedNo(ticketNumber);
-      resetForm();
+      resetForm();          // clears uploadWarning — set it again below
+      setUploadWarning(warning);
       await queryClient.invalidateQueries({ queryKey: ['ticketing'] });
       onCreated?.();
       setTimeout(() => { setCreatedNo(null); setSentToSlack(false); }, 6000);
@@ -517,7 +638,8 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
                 const id = e.target.value;
                 setCustomerId(id);
                 // Prefill the contact person from the client record; still editable below.
-                setContactPerson((customers ?? []).find((c) => c.id === id)?.contactPerson ?? '');
+                const existing = (customers ?? []).find((c) => c.id === id)?.contactPerson ?? '';
+                setContactPerson(existing); setPrefilledContact(existing);
               }}>
               <option value="">— No client —</option>
               {(Array.isArray(customers) ? customers : []).map((c) => (
@@ -533,7 +655,7 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
             <input id="tk-contact" value={contactPerson} onChange={(e) => setContactPerson(e.target.value)}
               maxLength={255} className="input" disabled={!customerId} placeholder="Who to reach at the client" />
             <p className="text-[11px] text-slate-400 mt-1">
-              {customerId ? 'Saved to the client record — shown on all of their tickets.' : 'Select a client first.'}
+              {customerId ? 'Edits update the client record itself, so they show on ALL of this client’s tickets.' : 'Select a client first.'}
             </p>
           </div>
         );
@@ -552,6 +674,29 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
                 className="w-4 h-4 rounded border-slate-300 text-brand focus:ring-2 focus:ring-brand/40 cursor-pointer" />
               <span className="text-sm text-slate-700">On-site support required</span>
             </label>
+          </div>
+        );
+      case 'due':
+        return (
+          <div key={f}>
+            <FieldLabel htmlFor="tk-due">Due date</FieldLabel>
+            <input id="tk-due" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="input" />
+          </div>
+        );
+      case 'points':
+        return (
+          <div key={f}>
+            <FieldLabel htmlFor="tk-points">Story points</FieldLabel>
+            <input id="tk-points" type="number" min={0} max={100} value={storyPoints}
+              onChange={(e) => setStoryPoints(e.target.value)} className="input" placeholder="0–100" />
+          </div>
+        );
+      case 'labels':
+        return (
+          <div key={f} className="sm:col-span-2">
+            <FieldLabel htmlFor="tk-labels">Labels</FieldLabel>
+            <input id="tk-labels" value={labelsText} onChange={(e) => setLabelsText(e.target.value)}
+              className="input" placeholder="Comma separated — e.g. billing, urgent-callback" />
           </div>
         );
       default: return null;
@@ -609,6 +754,32 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
         <FieldLabel htmlFor="tk-desc" required>Description</FieldLabel>
         <textarea id="tk-desc" value={description} onChange={(e) => setDescription(e.target.value)} rows={4} maxLength={10_000} className="input resize-none"
           placeholder="What you observed, error messages, affected machine…" />
+      </div>
+
+      <div>
+        <FieldLabel>Images</FieldLabel>
+        <div className="flex flex-wrap items-start gap-2.5">
+          {previews.map((src, i) => (
+            <div key={src} className="relative w-20 h-20 rounded-lg overflow-hidden ring-1 ring-slate-200 bg-slate-50">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={src} alt={images[i]?.name ?? 'Selected image'} className="w-full h-full object-cover" />
+              <button type="button" aria-label={`Remove ${images[i]?.name ?? 'image'}`}
+                onClick={() => setImages((prev) => prev.filter((_, n) => n !== i))}
+                className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-slate-900/60 text-white text-xs leading-none cursor-pointer hover:bg-slate-900">×</button>
+            </div>
+          ))}
+          {images.length < MAX_IMAGES && (
+            <label className="w-20 h-20 rounded-lg ring-1 ring-dashed ring-slate-300 flex flex-col items-center justify-center gap-1 cursor-pointer text-slate-400 hover:text-brand hover:ring-brand/40 transition-colors">
+              <Icons.paperclip className="w-4 h-4" />
+              <span className="text-[10px] font-semibold">Add</span>
+              <input type="file" accept="image/*" multiple className="hidden"
+                onChange={(e) => { addImages(e.target.files); e.target.value = ''; }} />
+            </label>
+          )}
+        </div>
+        <p className={`text-[11px] mt-1.5 ${uploadWarning ? 'text-amber-600 font-medium' : 'text-slate-400'}`}>
+          {uploadWarning ?? `Images only — up to ${MAX_IMAGES} files, 10 MB each.`}
+        </p>
       </div>
 
       <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">

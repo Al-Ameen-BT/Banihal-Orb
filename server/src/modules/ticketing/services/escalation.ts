@@ -1,7 +1,7 @@
 import type { Role } from '@prisma/client';
 import * as db from '../ticketing.client';
 import { runWithTicketDb } from '../../../config/ticketDatabase';
-import { resolveTicketActor } from '../identity';
+import { resolveTicketActor, resolveB2bIdentity } from '../identity';
 import { nextTicketNumber } from '../utils/ticketNumber';
 import { getTicketNumberFormat } from './numberFormat';
 import { prisma } from '../../../config/database';
@@ -54,8 +54,24 @@ export async function escalateTicket(
   // Copy into the ADMIN store (14-table). Reporter + project + customer are resolved in
   // that store; the ticket number is allocated from the admin store's sequence; the copy
   // is left unassigned for the administrator group to handle.
+  // The escalated copy must be REPORTED BY the original requester, not by whoever
+  // escalated it — administrators triage by requester. The requester exists only in
+  // the source store, so bridge across: ticket user → B2B account → ticket user in
+  // the admin store (resolveTicketActor upserts by email, scoped to the active DB).
+  const requesterB2b = requester
+    ? await runWithTicketDb('default', () => resolveB2bIdentity(requester.id)).catch(() => null)
+    : null;
+  const requesterRole = requesterB2b
+    ? (await prisma.user.findUnique({ where: { id: requesterB2b.userId }, select: { role: true } }).catch(() => null))?.role ?? 'USER'
+    : null;
+
   await runWithTicketDb('admin', async () => {
     const actor = await resolveTicketActor(b2bUserId, platformRole);
+    // Falls back to the escalator when the requester has no B2B account behind them
+    // (staff created natively in the ticketing system).
+    const reporterId = requesterB2b && requesterRole
+      ? (await resolveTicketActor(requesterB2b.userId, requesterRole)).id
+      : actor.id;
     const projectId = await db.getOrCreateEscalationProject(actor.id);
     const customerId = await db.getOrCreateCustomerByName({
       name: orgName,
@@ -76,7 +92,7 @@ export async function escalateTicket(
           priority: source.priority,
           status: 'todo',
           projectId,
-          reporterId: actor.id,
+          reporterId,
           createdBy: actor.id,
           customerId,
           labels: ['escalated', `src:${source.ticketNumber}`, `org:${orgName}`],

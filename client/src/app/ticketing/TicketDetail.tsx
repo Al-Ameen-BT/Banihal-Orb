@@ -9,7 +9,7 @@ import { useConfirm } from '@/components/ui/ConfirmDialog';
 import { useToast } from '@/components/ui/Toast';
 import {
   StatusBadge, PriorityBadge, SlaBadge, TypeBadge, Avatar, Drawer, Icons,
-  STATUS_OPTIONS, PRIORITY_OPTIONS, fmtDate, timeAgo,
+  STATUS_OPTIONS, PRIORITY_OPTIONS, fmtDate, timeAgo, AttachmentGrid,
 } from './shared';
 import type {
   TicketDTO, TicketComment, TicketActivity, TicketAttachment, TicketProject,
@@ -17,29 +17,6 @@ import type {
 } from '@/lib/schemas';
 
 type Staff = { id: string; name: string; email: string; role: string };
-
-function formatBytes(n: number | null): string {
-  if (!n) return '';
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
-}
-
-async function triggerDownload(id: string, name: string) {
-  const { data } = await ticketingApi.downloadAttachment(id);
-  const url = URL.createObjectURL(data as Blob);
-  const a = document.createElement('a'); a.href = url; a.download = name; a.click(); URL.revokeObjectURL(url);
-}
-
-function AttachmentChip({ a }: { a: TicketAttachment }) {
-  return (
-    <button type="button" onClick={() => void triggerDownload(a.id, a.originalName ?? 'attachment')}
-      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer">
-      <Icons.paperclip className="w-3.5 h-3.5 text-slate-400" />
-      {a.originalName} <span className="text-slate-400">{formatBytes(a.size)}</span>
-    </button>
-  );
-}
 
 // ─── Staff quick-edit row ───────────────────────────────────────────────────────
 function QuickEdit({ ticket }: { ticket: TicketDTO }) {
@@ -198,14 +175,11 @@ export default function TicketDetail({ ticketId, onClose }: { ticketId: string; 
                 <div className="flex items-center justify-between mb-2">
                   <p className="eyebrow">Attachments ({attData?.attachments.length ?? 0})</p>
                   <label className="text-xs font-semibold text-brand hover:text-brand-700 cursor-pointer">
-                    + Add files
-                    <input type="file" multiple className="hidden" onChange={(e) => { if (e.target.files?.length) uploadMut.mutate(e.target.files); }} />
+                    + Add images
+                    <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => { if (e.target.files?.length) uploadMut.mutate(e.target.files); }} />
                   </label>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  {(attData?.attachments ?? []).map((a) => <AttachmentChip key={a.id} a={a} />)}
-                  {(attData?.attachments.length ?? 0) === 0 && <p className="text-xs text-slate-400">No attachments.</p>}
-                </div>
+                <AttachmentGrid attachments={attData?.attachments ?? []} />
               </div>
 
               <div>
@@ -217,7 +191,7 @@ export default function TicketDetail({ ticketId, onClose }: { ticketId: string; 
                       <div className="flex-1 min-w-0">
                         <p className="text-xs"><span className="font-semibold text-slate-800">{c.author?.name ?? 'Unknown'}</span> <span className="text-slate-400">· {timeAgo(c.createdAt)}</span></p>
                         <p className="text-sm text-slate-700 whitespace-pre-wrap mt-0.5">{c.content}</p>
-                        {c.attachments.length > 0 && <div className="flex flex-wrap gap-2 mt-1.5">{c.attachments.map((a) => <AttachmentChip key={a.id} a={a} />)}</div>}
+                        {c.attachments.length > 0 && <div className="mt-1.5"><AttachmentGrid attachments={c.attachments} size="sm" /></div>}
                       </div>
                     </div>
                   ))}
@@ -229,8 +203,8 @@ export default function TicketDetail({ ticketId, onClose }: { ticketId: string; 
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-slate-500 cursor-pointer hover:text-slate-700 inline-flex items-center gap-1">
                       <Icons.paperclip className="w-3.5 h-3.5" />
-                      {files?.length ? `${files.length} file(s)` : 'Attach files'}
-                      <input type="file" multiple className="hidden" onChange={(e) => setFiles(e.target.files)} />
+                      {files?.length ? `${files.length} image(s)` : 'Attach images'}
+                      <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => setFiles(e.target.files)} />
                     </label>
                     <GlowButton className="ml-auto py-1.5 px-4 text-xs" disabled={!comment.trim() || commentMut.isPending} loading={commentMut.isPending} onClick={() => commentMut.mutate()}>Comment</GlowButton>
                   </div>

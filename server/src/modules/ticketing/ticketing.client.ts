@@ -327,6 +327,25 @@ export async function resolveBotTicketUser(bot: { name: string; slug: string }):
   return row.id;
 }
 
+// Mirror a person into the CURRENT store by email — the same key the identity bridge
+// uses, so a user who exists in both stores keeps one row per store. Used by the
+// escalation mirror to attribute a mirrored comment to its real author even when that
+// author has no B2B account behind them (staff created natively in the ticketing tool).
+// The sentinel password can never match a bcrypt check, so this grants no login.
+export async function getOrCreateUserByEmail(u: { email: string; firstName: string; lastName: string; role?: string }): Promise<string> {
+  const email = u.email.toLowerCase();
+  const existing = await getTicketDb().users.findUnique({ where: { email }, select: { id: true } });
+  if (existing) return existing.id;
+  const row = await getTicketDb().users.create({
+    data: {
+      email, firstName: u.firstName || 'User', lastName: u.lastName,
+      password: '__sso_bridged__', role: (u.role ?? 'developer') as 'admin' | 'manager' | 'developer' | 'tester',
+    },
+    select: { id: true },
+  });
+  return row.id;
+}
+
 // ─── Staff (assignee pool) ─────────────────────────────────────────────────────
 // Called with NO arguments from the org path: platform administrators (role 'admin')
 // are excluded because they live in the isolated admin store and must not be

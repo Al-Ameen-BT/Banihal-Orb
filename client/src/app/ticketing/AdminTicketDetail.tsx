@@ -1,34 +1,17 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ticketingApi } from '@/lib/api';
+import { useAuth } from '@/contexts/AuthContext';
 import GlowButton from '@/components/ui/GlowButton';
 import {
   Modal, StatusBadge, PriorityBadge, TypeBadge, SlaBar, Avatar, Icons,
-  STATUS_OPTIONS, PRIORITY_OPTIONS, fmtDate, timeAgo,
+  STATUS_OPTIONS, PRIORITY_OPTIONS, fmtDate, timeAgo, AttachmentGrid,
 } from './shared';
 import type { TicketDTO, TicketComment, TicketAttachment, TicketStatus, TicketPriority } from '@/lib/schemas';
 
 type Staff = { id: string; name: string; email: string; role: string };
-
-function formatBytes(n: number | null): string {
-  if (!n) return '';
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
-}
-
-async function openAttachment(id: string, name: string, mode: 'preview' | 'download') {
-  const { data } = await ticketingApi.downloadAttachment(id);
-  const url = URL.createObjectURL(data as Blob);
-  if (mode === 'preview') {
-    window.open(url, '_blank', 'noopener');
-    setTimeout(() => URL.revokeObjectURL(url), 60_000);
-  } else {
-    const a = document.createElement('a'); a.href = url; a.download = name; a.click(); URL.revokeObjectURL(url);
-  }
-}
 
 // A single labelled read-only fact (Branch, On Site, Client Name, …).
 function Fact({ label, value }: { label: string; value: React.ReactNode }) {
@@ -65,6 +48,23 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
   }, [ticket]);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['ticketing'] });
+
+  // An escalated ticket arrives unassigned so any administrator can pick it up. The
+  // one who opens it takes ownership: /admin/tickets/:id/claim is a first-wins guarded
+  // UPDATE, so two admins opening it at once cannot double-assign — the loser's 409 is
+  // swallowed and the refetch shows who actually got it.
+  // ORG_ADMINs share this modal but see the escalated SOURCE ticket, and /claim is
+  // ADMINISTRATOR-only — firing it for them would 403, which the api interceptor turns
+  // into a full redirect to /403.
+  const { user } = useAuth();
+  const claimed = useRef(false);
+  useEffect(() => {
+    if (!ticket || claimed.current || user?.role !== 'ADMINISTRATOR') return;
+    if (ticket.assignee || !ticket.labels.includes('escalated')) return;
+    claimed.current = true;
+    ticketingApi.claim(ticket.id).then(() => void invalidate()).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticket, user?.role]);
   const patchMut = useMutation({
     mutationFn: (payload: Record<string, unknown>) => ticketingApi.updateTicket(ticketId, payload),
     onSuccess: () => void invalidate(),
@@ -129,18 +129,7 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
                 <div className="flex items-center justify-between mb-2">
                   <p className="eyebrow">Attached Files ({attData?.attachments.length ?? 0})</p>
                 </div>
-                <div className="space-y-1.5">
-                  {(attData?.attachments ?? []).map((a) => (
-                    <div key={a.id} className="flex items-center gap-2 rounded-lg bg-slate-50 ring-1 ring-slate-200/70 px-2.5 py-1.5">
-                      <Icons.paperclip className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-                      <span className="text-xs font-medium text-slate-700 truncate flex-1">{a.originalName}</span>
-                      <span className="text-[10px] text-slate-400">{formatBytes(a.size)}</span>
-                      <button type="button" onClick={() => void openAttachment(a.id, a.originalName ?? 'file', 'preview')} className="text-[11px] font-semibold text-brand hover:text-brand-700 cursor-pointer">Preview</button>
-                      <button type="button" onClick={() => void openAttachment(a.id, a.originalName ?? 'file', 'download')} className="text-[11px] font-semibold text-slate-500 hover:text-slate-800 cursor-pointer">Download</button>
-                    </div>
-                  ))}
-                  {(attData?.attachments.length ?? 0) === 0 && <p className="text-xs text-slate-400">No attachments.</p>}
-                </div>
+                <AttachmentGrid attachments={attData?.attachments ?? []} />
               </div>
 
               {/* Comments */}
@@ -153,6 +142,7 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
                       <div className="flex-1 min-w-0">
                         <p className="text-xs"><span className="font-semibold text-slate-800">{c.author?.name ?? 'Unknown'}</span> <span className="text-slate-400">· {timeAgo(c.createdAt)}</span></p>
                         <p className="text-sm text-slate-700 whitespace-pre-wrap mt-0.5">{c.content}</p>
+                        {c.attachments.length > 0 && <div className="mt-1.5"><AttachmentGrid attachments={c.attachments} size="sm" /></div>}
                       </div>
                     </div>
                   ))}
@@ -163,8 +153,8 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-slate-500 cursor-pointer hover:text-slate-700 inline-flex items-center gap-1">
                       <Icons.paperclip className="w-3.5 h-3.5" />
-                      {files?.length ? `${files.length} file(s)` : 'Attach files'}
-                      <input type="file" multiple className="hidden" onChange={(e) => setFiles(e.target.files)} />
+                      {files?.length ? `${files.length} image(s)` : 'Attach images'}
+                      <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => setFiles(e.target.files)} />
                     </label>
                     <GlowButton className="ml-auto py-1.5 px-4 text-xs" disabled={!comment.trim() || commentMut.isPending} loading={commentMut.isPending} onClick={() => commentMut.mutate()}>Send</GlowButton>
                   </div>
@@ -212,7 +202,9 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
               </div>
 
               <div className="space-y-2.5 text-xs">
-                <Fact label="Created by" value={ticket.reporter?.name ?? '—'} />
+                <Fact label="Requested by" value={ticket.reporter
+                  ? <span className="inline-flex items-center gap-1.5"><Avatar name={ticket.reporter.name} size="xs" />{ticket.reporter.name}{ticket.reporter.email && <span className="text-slate-400"> · {ticket.reporter.email}</span>}</span>
+                  : '—'} />
                 <Fact label="Created" value={fmtDate(ticket.createdAt)} />
                 <Fact label="SLA policy" value={ticket.sla ? `${ticket.sla.name} · ${ticket.sla.responseTime}${ticket.sla.timeUnit[0]}/${ticket.sla.resolutionTime}${ticket.sla.timeUnit[0]}` : 'None'} />
               </div>

@@ -17,5 +17,13 @@ const storage = multer.diskStorage({
   },
 });
 
+// Attachments are images only. Enforced HERE rather than per-route because both
+// upload routes (ticket attachments + comment attachments) share this instance, so
+// this is the single trust boundary a hand-rolled request has to pass.
+const imagesOnly: multer.Options['fileFilter'] = (_req, file, cb) => {
+  if (file.mimetype.startsWith('image/')) { cb(null, true); return; }
+  cb(Object.assign(new Error('Only image files can be attached.'), { status: 400, code: 'UNSUPPORTED_FILE_TYPE' }));
+};
+
 // Up to 5 files, 10 MB each — matches the report's guest/comment upload caps.
-export const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024, files: 5 } });
+export const upload = multer({ storage, fileFilter: imagesOnly, limits: { fileSize: 10 * 1024 * 1024, files: 5 } });
