@@ -31,6 +31,10 @@ export const CreateTicketSchema = z.object({
   // ADMINISTRATOR only. Written onto the SELECTED client's Customers row — the Tickets
   // table has no contactPerson column, so this is per-client, not per-ticket.
   contactPerson: z.string().max(255).nullable().optional(),
+  // ADMINISTRATOR only. Same deal as contactPerson: the New Ticket form prefills it from
+  // the picked client and writes back whatever the administrator leaves in the field, so a
+  // client that had no email on file gets one.
+  customerEmail: z.string().email().max(255).nullable().optional(),
   storyPoints: z.number().int().min(0).max(100).nullable().optional(),
   dueDate: z.string().datetime().nullable().optional(),
   labels: z.array(z.string().max(60)).max(30).optional(),

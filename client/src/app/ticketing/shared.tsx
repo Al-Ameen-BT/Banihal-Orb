@@ -383,6 +383,7 @@ export function AttachmentGrid({ attachments, size = 'md' }: { attachments: AnyA
 }
 
 // ─── Create ticket form (role-driven field set) ──────────────────────────────────
+<<<<<<< HEAD
 type FormField = 'project' | 'type' | 'priority' | 'status' | 'assignee' | 'client' | 'contact' | 'branch' | 'onSite' | 'due' | 'points' | 'labels';
 // 'client' + 'contact' are ADMINISTRATOR-only — they read/write the admin store's
 // Customers table, which org-level roles must not reach (also enforced server-side:
@@ -392,7 +393,20 @@ const ROLE_FIELDS: Record<Role, FormField[]> = {
   USER:          ['project', 'type', 'priority'],
   ORG_ADMIN:     ['project', 'type', 'priority', 'status', 'assignee', 'due', 'points', 'labels'],
   ADMINISTRATOR: ['project', 'type', 'priority', 'status', 'assignee', 'client', 'contact', 'branch', 'onSite', 'due', 'points', 'labels'],
+=======
+type FormField = 'project' | 'type' | 'priority' | 'status' | 'assignee' | 'client' | 'clientEmail' | 'contact' | 'branch' | 'onSite';
+// 'client', 'clientEmail' + 'contact' are ADMINISTRATOR-only — they read/write the admin
+// store's Customers table, which org-level roles must not reach (also enforced server-side:
+// the controller strips those fields for any other role). Order drives the 2-col grid:
+// status | assignee, client | clientEmail, contact | branch, onSite.
+const ROLE_FIELDS: Record<Role, FormField[]> = {
+  USER:          ['project', 'type', 'priority'],
+  ORG_ADMIN:     ['project', 'type', 'priority', 'status', 'assignee'],
+  ADMINISTRATOR: ['project', 'type', 'priority', 'status', 'assignee', 'client', 'clientEmail', 'contact', 'branch', 'onSite'],
+>>>>>>> a769e1b4e9a1d3b8bfb7b6b51e40a2bf719ea11c
 };
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 type TicketCustomer = { id: string; name: string; email: string | null; contactPerson: string | null; company: string | null };
 
@@ -443,6 +457,7 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
   const [status, setStatus] = useState<TicketStatus>('todo');
   const [assigneeId, setAssigneeId] = useState('');
   const [customerId, setCustomerId] = useState('');
+  const [clientEmail, setClientEmail] = useState('');
   const [contactPerson, setContactPerson] = useState('');
   // What the client record already held, so an untouched field never rewrites it.
   const [prefilledContact, setPrefilledContact] = useState('');
@@ -491,20 +506,34 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
   const botFieldsValid = !botMode || (!!selectedBot && selectedBot.formFields.every(
     (f) => !f.required || f.type === 'CHECKBOX' || (botValues[f.key] !== undefined && botValues[f.key] !== ''),
   ));
+<<<<<<< HEAD
   const isValid = title.trim().length >= 1 && description.trim().length >= 1 && projectId !== '' && (!botMode || !!botId) && botFieldsValid;
   // Bot tickets are created by botsApi.createTicket, whose payload carries neither an
   // assignee (the bot IS the assignee) nor a status (the server hardcodes 'todo').
   // Hide both rather than render a control whose value is thrown away.
   const effectiveFields = botMode ? fields.filter((f) => f !== 'assignee' && f !== 'status') : fields;
+=======
+  // The client's email is prefilled from the picked client record; when that record has
+  // none, the administrator types one here and it is saved back onto the client.
+  const selectedCustomer = (Array.isArray(customers) ? customers : []).find((c) => c.id === customerId) ?? null;
+  const emailAutoFilled = !!selectedCustomer?.email && clientEmail.trim() === selectedCustomer.email;
+  const emailValid = clientEmail.trim() === '' || EMAIL_RE.test(clientEmail.trim());
+  const isValid = title.trim().length >= 1 && description.trim().length >= 1 && projectId !== '' && (!botMode || !!botId) && botFieldsValid && emailValid;
+  const effectiveFields = botMode ? fields.filter((f) => f !== 'assignee') : fields;
+>>>>>>> a769e1b4e9a1d3b8bfb7b6b51e40a2bf719ea11c
 
   const setBotVal = (key: string, v: unknown) => setBotValues((p) => ({ ...p, [key]: v }));
 
   function resetForm() {
     setTitle(''); setDescription(''); setProjectId(''); setType('task'); setPriority('medium');
     setStatus('todo'); setAssigneeId(''); setBranch(''); setOnSite(false); setError(null);
+<<<<<<< HEAD
     setCustomerId(''); setContactPerson(''); setPrefilledContact('');
     setDueDate(''); setStoryPoints(''); setLabelsText('');
     setImages([]); setUploadWarning(null);
+=======
+    setCustomerId(''); setClientEmail(''); setContactPerson('');
+>>>>>>> a769e1b4e9a1d3b8bfb7b6b51e40a2bf719ea11c
     setAssigneeMode('person'); setBotId(''); setBotValues({});
   }
 
@@ -541,12 +570,17 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
           // Sent even when empty (as null) so the server does NOT fall back to linking
           // the administrator's own organization as the client.
           ...(has('client') ? { customerId: customerId || null } : {}),
+<<<<<<< HEAD
           // Only when actually EDITED: contactPerson is stored on the shared Customers
           // row, so echoing back the prefilled value would rewrite the client record on
           // every ticket. ponytail: per-ticket contacts need a contactPerson column on
           // Tickets — a migration on the externally-owned schema.
           ...(has('contact') && customerId && contactPerson.trim() !== prefilledContact.trim()
             ? { contactPerson: contactPerson.trim() || null } : {}),
+=======
+          ...(has('clientEmail') && customerId ? { customerEmail: clientEmail.trim() || null } : {}),
+          ...(has('contact') && customerId ? { contactPerson: contactPerson.trim() || null } : {}),
+>>>>>>> a769e1b4e9a1d3b8bfb7b6b51e40a2bf719ea11c
           ...(has('branch') ? { branch: branch.trim() || null } : {}),
           ...(has('onSite') ? { onSiteSupportRequired: onSite } : {}),
           ...(has('due') && dueDate ? { dueDate: new Date(dueDate).toISOString() } : {}),
@@ -632,20 +666,42 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
       case 'client':
         return (
           <div key={f}>
-            <FieldLabel htmlFor="tk-client">Client</FieldLabel>
+            <FieldLabel htmlFor="tk-client">Client name</FieldLabel>
             <select id="tk-client" value={customerId} className="input"
               onChange={(e) => {
                 const id = e.target.value;
+                const picked = (customers ?? []).find((c) => c.id === id);
                 setCustomerId(id);
+<<<<<<< HEAD
                 // Prefill the contact person from the client record; still editable below.
                 const existing = (customers ?? []).find((c) => c.id === id)?.contactPerson ?? '';
                 setContactPerson(existing); setPrefilledContact(existing);
+=======
+                // Prefill email + contact person from the client record; both stay editable below.
+                setClientEmail(picked?.email ?? '');
+                setContactPerson(picked?.contactPerson ?? '');
+>>>>>>> a769e1b4e9a1d3b8bfb7b6b51e40a2bf719ea11c
               }}>
               <option value="">— No client —</option>
               {(Array.isArray(customers) ? customers : []).map((c) => (
                 <option key={c.id} value={c.id}>{c.company ? `${c.name} · ${c.company}` : c.name}</option>
               ))}
             </select>
+          </div>
+        );
+      case 'clientEmail':
+        return (
+          <div key={f}>
+            <FieldLabel htmlFor="tk-client-email">Client email</FieldLabel>
+            <input id="tk-client-email" type="email" value={clientEmail} onChange={(e) => setClientEmail(e.target.value)}
+              maxLength={255} className="input" disabled={!customerId}
+              placeholder={customerId ? 'name@company.com' : 'Select a client first'} />
+            <p className={`text-[11px] mt-1 ${emailValid ? 'text-slate-400' : 'text-red-600'}`}>
+              {!customerId ? 'Select a client first.'
+                : !emailValid ? 'Enter a valid email address.'
+                : emailAutoFilled ? 'Fetched from the client record — edit to update it.'
+                : 'No email on file for this client — the address you enter is saved to their record.'}
+            </p>
           </div>
         );
       case 'contact':

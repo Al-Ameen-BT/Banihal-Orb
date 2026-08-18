@@ -52,13 +52,13 @@ export async function getTicket(req: Request, res: Response, next: NextFunction)
 export async function createTicket(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const parsed = CreateTicketSchema.parse(req.body);
-    // Client + contact person are ADMINISTRATOR-only fields (the admin store's New
-    // Ticket form is the only surface that offers them). Silently drop them for every
+    // Client, its email + contact person are ADMINISTRATOR-only fields (the admin store's
+    // New Ticket form is the only surface that offers them). Silently drop them for every
     // other role rather than 403 — no org-level client sends them, so a rejection could
     // only ever come from a hand-rolled request trying to pick another org's client.
     const input = req.user.role === 'ADMINISTRATOR'
       ? parsed
-      : (({ customerId: _c, contactPerson: _p, ...rest }) => rest)(parsed);
+      : { ...parsed, customerId: undefined, contactPerson: undefined, customerEmail: undefined };
     const me = await actor(req);
 
     // Org admin picked "Escalate to Administrators" as the assignee: create the

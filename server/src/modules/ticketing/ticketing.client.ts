@@ -383,6 +383,11 @@ export async function setCustomerContactPerson(id: string, contactPerson: string
   await getTicketDb().customers.update({ where: { id }, data: { contactPerson } }).catch(() => {});
 }
 
+// Set the email on an existing client. Best-effort for the same reason as above.
+export async function setCustomerEmail(id: string, email: string | null): Promise<void> {
+  await getTicketDb().customers.update({ where: { id }, data: { email } }).catch(() => {});
+}
+
 // ─── Comments ──────────────────────────────────────────────────────────────────
 function attDTO(a: { id: string; originalName: string | null; mimeType: string | null; size: number | null; createdAt: Date },
   kind: 'ticket' | 'comment', uploader: Parameters<typeof person>[0]): AttachmentDTO {
