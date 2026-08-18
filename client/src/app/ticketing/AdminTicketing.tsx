@@ -14,7 +14,7 @@ import { useToast } from '@/components/ui/Toast';
 import {
   NewTicketForm, StatusBadge, PriorityBadge, TypeBadge, SlaBar, PageHeader,
   Toolbar, Segmented, SearchInput, EmptyState, Avatar, Icons,
-  priorityCls, timeAgo, STATUS_OPTIONS, PRIORITY_OPTIONS,
+  priorityCls, timeAgo, STATUS_OPTIONS, PRIORITY_OPTIONS, staffLabel,
 } from './shared';
 import AdminTicketDetail from './AdminTicketDetail';
 import type { TicketDTO, TicketProject, TicketSla, TicketStats, TicketAnalytics, TicketReport, TicketStatus, TicketPriority } from '@/lib/schemas';
@@ -310,6 +310,7 @@ function TicketsTab({ projectFilter, onClearProject, initialTicketId }: { projec
 
 // ─── Projects ──────────────────────────────────────────────────────────────────
 function ProjectsTab({ onViewTickets }: { onViewTickets: (projectId: string) => void }) {
+  const { user } = useAuth();
   const qc = useQueryClient();
   const confirm = useConfirm();
   const toast = useToast();
@@ -369,7 +370,7 @@ function ProjectsTab({ onViewTickets }: { onViewTickets: (projectId: string) => 
             </label>
             {rrEnabled && (
               <select multiple value={rrAssignees} onChange={(e) => setRrAssignees(Array.from(e.target.selectedOptions, (o) => o.value))} className="input h-28 text-xs">
-                {staff.map((s) => <option key={s.id} value={s.id}>{s.name} · {s.role}</option>)}
+                {staff.map((s) => <option key={s.id} value={s.id}>{staffLabel(s, user?.role)}</option>)}
               </select>
             )}
           </div>

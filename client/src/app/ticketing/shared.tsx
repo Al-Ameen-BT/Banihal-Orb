@@ -386,13 +386,37 @@ export function AttachmentGrid({ attachments, size = 'md' }: { attachments: AnyA
 type FormField = 'project' | 'type' | 'priority' | 'status' | 'assignee' | 'client' | 'clientEmail' | 'contact' | 'branch' | 'onSite' | 'due' | 'points' | 'labels';
 // 'client', 'clientEmail' + 'contact' are ADMINISTRATOR-only — they read/write the admin
 // store's Customers table, which org-level roles must not reach (also enforced server-side:
-// the controller strips those fields for any other role). Order drives the 2-col grid:
-// status | assignee, client | clientEmail, contact | branch, onSite | due, points, labels.
+// the controller strips those fields for any other role).
+//
+// LAYOUT RULE — the form is a 2-column grid. A field is either full-width (listed in
+// FULL_WIDTH below) or half-width, and half-width fields pair up with their neighbour in
+// the order below. So every UNBROKEN RUN OF HALF-WIDTH FIELDS MUST HAVE AN EVEN LENGTH:
+// an odd run strands its last field beside an empty half. Adding a field means adding it
+// here AND checking that parity — nothing else in this file decides the layout.
+//
+//   full: project / type / priority ... onSite ... labels
+//   rows: status | assignee, client | clientEmail, contact | branch, due | points
 const ROLE_FIELDS: Record<Role, FormField[]> = {
   USER:          ['project', 'type', 'priority'],
   ORG_ADMIN:     ['project', 'type', 'priority', 'status', 'assignee', 'due', 'points', 'labels'],
-  ADMINISTRATOR: ['project', 'type', 'priority', 'status', 'assignee', 'client', 'clientEmail', 'contact', 'branch', 'onSite', 'due', 'points', 'labels'],
+  ADMINISTRATOR: ['project', 'type', 'priority', 'status', 'assignee', 'client', 'clientEmail', 'contact', 'branch', 'due', 'points', 'onSite', 'labels'],
 };
+
+// How an assignee / staff option is labelled, for every pool in the ticketing UI.
+//
+// The ADMINISTRATOR pool is the whole b2b_ticketing_admin roster: B2B users bridged in
+// AND people created natively in the ticketing tool. Their admin|manager|developer|tester
+// role comes from the ticketing system and has nothing to do with the B2B role of the same
+// name — so "Al Ameen N R · admin" next to a B2B ADMINISTRATOR reads as a contradiction.
+// Administrators therefore see plain names; org-level pools keep the role, where it maps
+// straight onto the platform role and is worth showing.
+export function staffLabel(s: { name: string; role: string }, viewerRole?: Role): string {
+  return viewerRole === 'ADMINISTRATOR' ? s.name : `${s.name} · ${s.role}`;
+}
+
+// The only place a field's width is decided. Everything unlisted is half-width.
+const FULL_WIDTH: ReadonlySet<FormField> = new Set<FormField>(['project', 'type', 'priority', 'onSite', 'labels']);
+const span = (f: FormField) => (FULL_WIDTH.has(f) ? 'sm:col-span-2' : undefined);
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -594,7 +618,7 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
     switch (f) {
       case 'project':
         return (
-          <div key={f} className="sm:col-span-2">
+          <div key={f} className={span(f)}>
             <FieldLabel htmlFor="tk-project" required>Project</FieldLabel>
             <select id="tk-project" value={projectId} onChange={(e) => setProjectId(e.target.value)} className="input">
               <option value="">— Select a project —</option>
@@ -604,7 +628,7 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
         );
       case 'type':
         return (
-          <div key={f} className="sm:col-span-2">
+          <div key={f} className={span(f)}>
             <FieldLabel required>Type</FieldLabel>
             <Segmented value={type} onChange={setType} layoutId="nt-type" size="sm"
               options={TICKET_TYPES.map((t) => ({ value: t.value, label: t.label, icon: typeIcon[t.value] }))} />
@@ -612,7 +636,7 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
         );
       case 'priority':
         return (
-          <div key={f} className="sm:col-span-2">
+          <div key={f} className={span(f)}>
             <FieldLabel required>Priority</FieldLabel>
             <Segmented value={priority} onChange={setPriority} layoutId="nt-priority" size="sm" options={PRIORITY_OPTIONS} />
           </div>
@@ -633,7 +657,7 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
             <select id="tk-assignee" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} className="input">
               <option value="">— Unassigned (round-robin) —</option>
               {(Array.isArray(assignees) ? assignees : []).map((a) => (
-                <option key={a.id} value={a.id}>{a.id === ESCALATE_ADMINS_ID ? `⤴ ${a.name}` : `${a.name} · ${a.role}`}</option>
+                <option key={a.id} value={a.id}>{a.id === ESCALATE_ADMINS_ID ? `⤴ ${a.name}` : staffLabel(a, role)}</option>
               ))}
             </select>
           </div>
@@ -694,7 +718,7 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
         );
       case 'onSite':
         return (
-          <div key={f} className="sm:pt-7">
+          <div key={f} className={span(f)}>
             <label className="inline-flex items-center gap-2.5 cursor-pointer select-none">
               <input type="checkbox" checked={onSite} onChange={(e) => setOnSite(e.target.checked)}
                 className="w-4 h-4 rounded border-slate-300 text-brand focus:ring-2 focus:ring-brand/40 cursor-pointer" />
@@ -719,7 +743,7 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
         );
       case 'labels':
         return (
-          <div key={f} className="sm:col-span-2">
+          <div key={f} className={span(f)}>
             <FieldLabel htmlFor="tk-labels">Labels</FieldLabel>
             <input id="tk-labels" value={labelsText} onChange={(e) => setLabelsText(e.target.value)}
               className="input" placeholder="Comma separated — e.g. billing, urgent-callback" />
