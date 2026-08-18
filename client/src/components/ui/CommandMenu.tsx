@@ -55,7 +55,7 @@ export default function CommandMenu() {
       { id: 'account-logout',group: 'Account',    label: 'Sign Out',            icon: ICON.logout, action: async () => { await logout(); router.push('/login'); } },
       { id: 'help-shortcuts',group: 'Help',       label: 'Keyboard Shortcuts',  hint: '⌘K opens this menu', icon: ICON.keyboard, action: () => { /* keep open */ } },
     ];
-  }, [router, user, logout, close]);
+  }, [router, user, logout]);
 
   const filtered = useMemo(() => {
     const visible = commands.filter((c) => (c.visible ? c.visible() : true));

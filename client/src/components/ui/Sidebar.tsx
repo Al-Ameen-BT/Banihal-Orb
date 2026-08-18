@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserNotifications, OrgNotifications, AdminNotifications } from './NotificationBell';
+import Image from 'next/image';
+import BrandLogo from '@/components/ui/BrandLogo';
 
 const icons = {
   ticketing: 'M16.5 3.75V16.5L12 14.25 7.5 16.5V3.75m9 0H18A2.25 2.25 0 0120.25 6v12A2.25 2.25 0 0118 20.25H6A2.25 2.25 0 013.75 18V6A2.25 2.25 0 016 3.75h1.5m9 0h-9',
@@ -66,11 +68,11 @@ export default function Sidebar() {
       {/* Brand mark */}
       <div className="px-5 py-5 border-b border-slate-100">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center shadow-sm bg-slate-50 border border-slate-100 flex-shrink-0">
-            <img src="/Alert.png" alt="Tech Logo" className="w-full h-full object-cover" />
+          <div className="relative w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center shadow-sm bg-slate-50 border border-slate-100 flex-shrink-0">
+            <Image src="/Alert.png" alt="" fill sizes="40px" className="object-cover" />
           </div>
           <div className="flex-1 min-w-0 flex items-center">
-            <img src="/banihal-logo.png" alt="Banihal Logo" className="max-h-9 w-auto object-contain" />
+            <BrandLogo height={36} />
           </div>
         </div>
       </div>

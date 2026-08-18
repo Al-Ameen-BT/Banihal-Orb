@@ -52,12 +52,12 @@ export default function CustomerServicesPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-services'] }),
   });
 
-  const allServices = data?.services ?? [];
   const services = useMemo(() => {
+    const allServices = data?.services ?? [];
     const q = search.trim().toLowerCase();
     if (!q) return allServices;
     return allServices.filter((s) => s.customer.name.toLowerCase().includes(q) || s.serviceName.toLowerCase().includes(q));
-  }, [allServices, search]);
+  }, [data?.services, search]);
 
   return (
     <RoleGuard allowedRoles={['ADMINISTRATOR']}>

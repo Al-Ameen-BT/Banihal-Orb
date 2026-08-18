@@ -578,7 +578,7 @@ function SadminPage() {
   });
 
   // ─── Filtering logic ───────────────────────────────────────────────────────
-  const allOrgs = orgsData?.orgs ?? [];
+  const allOrgs = useMemo(() => orgsData?.orgs ?? [], [orgsData]);
   const filterCounts = useMemo(() => ({
     ALL:       allOrgs.length,
     ACTIVE:    allOrgs.filter((o) => !o.suspended).length,

@@ -155,6 +155,31 @@ export function Avatar({ name, size = 'sm' }: { name?: string | null; size?: 'xs
   return <span title={label} className={`inline-flex items-center justify-center rounded-full font-bold flex-shrink-0 ${dim} ${tone}`}>{initials}</span>;
 }
 
+// ─── Person (identity value) ────────────────────────────────────────────────────
+// Avatar + name + email inside a narrow column. Stacked on two lines and BOTH lines
+// truncate, because the obvious one-line `inline-flex` version overflows: name and
+// email become flex items, a flex item's default `min-width: auto` floors it at
+// min-content, and `break-words` does NOT reduce min-content width (only
+// `word-break: break-all` does) — so the row spills out of its cell instead of
+// wrapping. `min-w-0` is what lets the text shrink; `title` keeps the full value
+// reachable on hover so nothing is actually lost.
+export function Person({ person, fallback = '—' }: {
+  person?: { name: string; email?: string | null } | null; fallback?: React.ReactNode;
+}) {
+  if (!person) return <>{fallback}</>;
+  return (
+    <div className="min-w-0">
+      <span className="flex items-center gap-1.5 min-w-0">
+        <Avatar name={person.name} size="xs" />
+        <span className="truncate" title={person.name}>{person.name}</span>
+      </span>
+      {person.email && (
+        <span className="block truncate text-xs text-slate-400" title={person.email}>{person.email}</span>
+      )}
+    </div>
+  );
+}
+
 // ─── Format helpers ─────────────────────────────────────────────────────────────
 export function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -383,7 +408,7 @@ export function AttachmentGrid({ attachments, size = 'md' }: { attachments: AnyA
 }
 
 // ─── Create ticket form (role-driven field set) ──────────────────────────────────
-type FormField = 'project' | 'type' | 'priority' | 'status' | 'assignee' | 'client' | 'clientEmail' | 'contact' | 'branch' | 'onSite' | 'due' | 'points' | 'labels';
+type FormField = 'project' | 'type' | 'priority' | 'status' | 'assignee' | 'client' | 'clientEmail' | 'contact' | 'branch' | 'onSite' | 'labels';
 // 'client', 'clientEmail' + 'contact' are ADMINISTRATOR-only — they read/write the admin
 // store's Customers table, which org-level roles must not reach (also enforced server-side:
 // the controller strips those fields for any other role).
@@ -395,11 +420,11 @@ type FormField = 'project' | 'type' | 'priority' | 'status' | 'assignee' | 'clie
 // here AND checking that parity — nothing else in this file decides the layout.
 //
 //   full: project / type / priority ... onSite ... labels
-//   rows: status | assignee, client | clientEmail, contact | branch, due | points
+//   rows: status | assignee, client | clientEmail, contact | branch
 const ROLE_FIELDS: Record<Role, FormField[]> = {
   USER:          ['project', 'type', 'priority'],
-  ORG_ADMIN:     ['project', 'type', 'priority', 'status', 'assignee', 'due', 'points', 'labels'],
-  ADMINISTRATOR: ['project', 'type', 'priority', 'status', 'assignee', 'client', 'clientEmail', 'contact', 'branch', 'due', 'points', 'onSite', 'labels'],
+  ORG_ADMIN:     ['project', 'type', 'priority', 'status', 'assignee', 'labels'],
+  ADMINISTRATOR: ['project', 'type', 'priority', 'status', 'assignee', 'client', 'clientEmail', 'contact', 'branch', 'onSite', 'labels'],
 };
 
 // How an assignee / staff option is labelled, for every pool in the ticketing UI.
@@ -475,8 +500,6 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
   const [prefilledContact, setPrefilledContact] = useState('');
   const [branch, setBranch] = useState('');
   const [onSite, setOnSite] = useState(false);
-  const [dueDate, setDueDate] = useState('');
-  const [storyPoints, setStoryPoints] = useState('');
   const [labelsText, setLabelsText] = useState('');
   const [images, setImages] = useState<File[]>([]);
   const [uploadWarning, setUploadWarning] = useState<string | null>(null);
@@ -535,7 +558,7 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
     setTitle(''); setDescription(''); setProjectId(''); setType('task'); setPriority('medium');
     setStatus('todo'); setAssigneeId(''); setBranch(''); setOnSite(false); setError(null);
     setCustomerId(''); setClientEmail(''); setContactPerson(''); setPrefilledContact('');
-    setDueDate(''); setStoryPoints(''); setLabelsText('');
+    setLabelsText('');
     setImages([]); setUploadWarning(null);
     setAssigneeMode('person'); setBotId(''); setBotValues({});
   }
@@ -582,8 +605,6 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
             ? { contactPerson: contactPerson.trim() || null } : {}),
           ...(has('branch') ? { branch: branch.trim() || null } : {}),
           ...(has('onSite') ? { onSiteSupportRequired: onSite } : {}),
-          ...(has('due') && dueDate ? { dueDate: new Date(dueDate).toISOString() } : {}),
-          ...(has('points') && storyPoints !== '' ? { storyPoints: Number(storyPoints) } : {}),
           ...(has('labels') && labelsText.trim()
             ? { labels: labelsText.split(',').map((l) => l.trim()).filter(Boolean).slice(0, 30) } : {}),
         });
@@ -724,21 +745,6 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
                 className="w-4 h-4 rounded border-slate-300 text-brand focus:ring-2 focus:ring-brand/40 cursor-pointer" />
               <span className="text-sm text-slate-700">On-site support required</span>
             </label>
-          </div>
-        );
-      case 'due':
-        return (
-          <div key={f}>
-            <FieldLabel htmlFor="tk-due">Due date</FieldLabel>
-            <input id="tk-due" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="input" />
-          </div>
-        );
-      case 'points':
-        return (
-          <div key={f}>
-            <FieldLabel htmlFor="tk-points">Story points</FieldLabel>
-            <input id="tk-points" type="number" min={0} max={100} value={storyPoints}
-              onChange={(e) => setStoryPoints(e.target.value)} className="input" placeholder="0–100" />
           </div>
         );
       case 'labels':

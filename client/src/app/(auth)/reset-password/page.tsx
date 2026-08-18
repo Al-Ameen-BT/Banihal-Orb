@@ -8,6 +8,7 @@ import { authApi } from '@/lib/api';
 import GlowButton from '@/components/ui/GlowButton';
 import AmbientBackdrop from '@/components/ui/AmbientBackdrop';
 import { z } from 'zod';
+import BrandLogo from '@/components/ui/BrandLogo';
 
 const ResetPasswordSchema = z.object({
   password: z
@@ -166,7 +167,7 @@ export default function ResetPasswordPage() {
       >
         <div className="mb-8 text-center">
           <div className="flex justify-center mb-6">
-            <img src="/banihal-logo.png" alt="Banihal Logo" className="max-h-12 w-auto object-contain" />
+            <BrandLogo height={48} />
           </div>
           <h1 className="text-2xl font-bold text-slate-900 mb-1 tracking-tight">Create new password</h1>
           <p className="text-sm text-slate-500">Your new password must be different from previous used passwords.</p>

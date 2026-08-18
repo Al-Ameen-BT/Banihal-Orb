@@ -558,10 +558,10 @@ export default function AdminPlatformDashboard() {
     },
   });
 
-  const orgs = orgsData?.orgs ?? [];
+  const orgs = useMemo(() => orgsData?.orgs ?? [], [orgsData]);
 
   // At-risk scoring: low health, critical tickets, expired/expiring services.
-  const atRisk = useMemo(() => (orgs ?? [])
+  const atRisk = useMemo(() => orgs
     .map((o) => {
       const reasons: string[] = [];
       if (o.healthScore < 80) reasons.push(`Health ${o.healthScore}`);

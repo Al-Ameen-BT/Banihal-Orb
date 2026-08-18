@@ -8,6 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { LoginSchema } from '@/lib/schemas';
 import GlowButton from '@/components/ui/GlowButton';
 import AmbientBackdrop from '@/components/ui/AmbientBackdrop';
+import BrandLogo from '@/components/ui/BrandLogo';
 
 const RESEND_COOLDOWN = 30;
 
@@ -149,7 +150,7 @@ export default function LoginPage() {
         {/* Brand */}
         <div className="mb-8 text-center">
           <div className="flex justify-center mb-6">
-            <img src="/banihal-logo.png" alt="Banihal Logo" className="max-h-12 w-auto object-contain" />
+            <BrandLogo height={48} />
           </div>
           <h1 className="text-2xl font-bold text-slate-900 mb-1 tracking-tight">
             {phase === 'credentials' ? 'Welcome back' : 'Check your email'}

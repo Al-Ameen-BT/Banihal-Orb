@@ -7,7 +7,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import GlowButton from '@/components/ui/GlowButton';
 import {
   Modal, StatusBadge, PriorityBadge, TypeBadge, SlaBar, Avatar, Icons,
-  STATUS_OPTIONS, PRIORITY_OPTIONS, fmtDate, timeAgo, AttachmentGrid,
+  STATUS_OPTIONS, PRIORITY_OPTIONS, fmtDate, timeAgo, AttachmentGrid, Person,
 } from './shared';
 import type { TicketDTO, TicketComment, TicketAttachment, TicketStatus, TicketPriority } from '@/lib/schemas';
 
@@ -18,7 +18,7 @@ function Fact({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="min-w-0">
       <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">{label}</p>
-      <div className="text-sm text-slate-800 mt-0.5 break-words">{value}</div>
+      <div className="text-sm text-slate-800 mt-0.5 min-w-0 break-words">{value}</div>
     </div>
   );
 }
@@ -116,11 +116,11 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 rounded-xl bg-slate-50 ring-1 ring-slate-200/70 p-4">
                 <Fact label="Branch" value={ticket.branch || '—'} />
                 <Fact label="On Site Required" value={ticket.onSiteSupportRequired ? 'Yes' : 'No'} />
-                <Fact label="Assigned to" value={ticket.assignee
-                  ? <span className="inline-flex items-center gap-1.5"><Avatar name={ticket.assignee.name} size="xs" />{ticket.assignee.name}{ticket.assignee.email && <span className="text-slate-400 text-xs"> · {ticket.assignee.email}</span>}</span>
-                  : <span className="text-red-500 font-semibold">Unassigned</span>} />
+                <Fact label="Assigned to" value={
+                  <Person person={ticket.assignee} fallback={<span className="text-red-500 font-semibold">Unassigned</span>} />} />
                 <Fact label="Client Name" value={ticket.customer?.name || '—'} />
-                <Fact label="Client Email" value={ticket.customer?.email || '—'} />
+                <Fact label="Client Email" value={
+                  <span className="block truncate" title={ticket.customer?.email ?? ''}>{ticket.customer?.email || '—'}</span>} />
                 <Fact label="Contact Person" value={ticket.customer?.contactPerson || '—'} />
               </div>
 
@@ -202,9 +202,7 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
               </div>
 
               <div className="space-y-2.5 text-xs">
-                <Fact label="Requested by" value={ticket.reporter
-                  ? <span className="inline-flex items-center gap-1.5"><Avatar name={ticket.reporter.name} size="xs" />{ticket.reporter.name}{ticket.reporter.email && <span className="text-slate-400"> · {ticket.reporter.email}</span>}</span>
-                  : '—'} />
+                <Fact label="Requested by" value={<Person person={ticket.reporter} />} />
                 <Fact label="Created" value={fmtDate(ticket.createdAt)} />
                 <Fact label="SLA policy" value={ticket.sla ? `${ticket.sla.name} · ${ticket.sla.responseTime}${ticket.sla.timeUnit[0]}/${ticket.sla.resolutionTime}${ticket.sla.timeUnit[0]}` : 'None'} />
               </div>
