@@ -19,7 +19,7 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Tech — Managed Cybersecurity Platform',
+  title: 'Banihaltechnologies.com',
   description: 'Multi-tenant security operations & client management for managed security service providers.',
 };
 
