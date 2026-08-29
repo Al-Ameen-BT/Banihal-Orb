@@ -26,6 +26,7 @@ import botsRoutes from './modules/bots/bots.routes';
 import adIngestRoutes from './modules/ad-secrets/adIngest.routes';
 import adSecretsRoutes from './modules/ad-secrets/adSecrets.routes';
 import pushRoutes from './modules/push/push.routes';
+import agentRoutes from './modules/agent/agent.routes';
 
 const app = express();
 
@@ -85,6 +86,9 @@ const withTenant = tenantMiddleware as express.RequestHandler;
 app.use('/api/users', withTenant, usersRoutes);
 app.use('/api/organizations', withTenant, orgsRoutes);
 app.use('/api/chat', withTenant, chatRoutes);
+// Signed /v1 agent API (one-shot role-scoped chat + complaint analytics). Distinct
+// from /api/chat above, which streams the agent's unsigned SSE endpoint.
+app.use('/api/agent', withTenant, agentRoutes);
 app.use('/api/requests', withTenant, requestsRoutes);
 app.use('/api/announcements', withTenant, announcementsRoutes);
 app.use('/api/ticketing', withTenant, ticketingRoutes);

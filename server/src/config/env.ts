@@ -44,6 +44,25 @@ const EnvSchema = z.object({
   // Chatbot backend — Analytics Agent (SSE streaming) on the same host.
   // The agent wraps the LLM + knowledge base; /api/chat proxies to it.
   AGENT_URL: z.string().url().default('http://localhost:8001'),
+
+  // ─── Agent signed /v1 API (services/agentApi.ts) ──────────────────────────
+  // The SAME agent server as AGENT_URL above, reached through its documented,
+  // HMAC-signed surface instead of the unsigned /api/chat stream. Everything the
+  // agent exposes lives on one port (8001), so this is one base URL; it is named
+  // AGENT_BASE_URL because that is what the agent's own useAPI.md tells
+  // integrators to set. Falls back to AGENT_URL so a deployment that only set the
+  // older name does not silently sign requests against localhost.
+  AGENT_BASE_URL: z.string().url().optional(),
+
+  // Chat credential (`ext-*`). Both halves must be set or the /v1 chat route
+  // reports 503 rather than sending an unsigned request that would 401 anyway.
+  AGENT_CHAT_CLIENT_ID: z.string().optional(),
+  AGENT_CHAT_SECRET: z.string().optional(),
+
+  // Top-complaints credential (`dc-*`) — issued SEPARATELY from the chat one;
+  // a chat credential will not authenticate against /v1/top-complaints.
+  AGENT_COMPLAINTS_CLIENT_ID: z.string().optional(),
+  AGENT_COMPLAINTS_SECRET: z.string().optional(),
   // Secret for encrypting Slack bot tokens at rest (AES-256-GCM). Falls back to
   // JWT_ACCESS_SECRET when unset so no extra config is required in dev.
   SLACK_TOKEN_SECRET: z.string().optional(),
