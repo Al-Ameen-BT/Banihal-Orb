@@ -206,10 +206,16 @@ function AdminTicketCard({ ticket, onOpen }: { ticket: TicketDTO; onOpen: () => 
 type Category = 'all' | 'escalated';
 
 function TicketsTab({ projectFilter, onClearProject, initialTicketId }: { projectFilter: string | null; onClearProject: () => void; initialTicketId?: string | null }) {
+  const searchParams = useSearchParams();
   const [category, setCategory] = useState<Category>('all');
   const [statusFilter, setStatusFilter] = useState<'ALL' | TicketStatus>('ALL');
   const [priorityFilter, setPriorityFilter] = useState<'ALL' | TicketPriority>('ALL');
-  const [assigneeFilter, setAssigneeFilter] = useState<'ALL' | string>('ALL');
+  // /ticketing?assignee=<id> lands pre-filtered — the deep link the ops
+  // dashboard's assignee scorecards point at. Seeded once; the select owns it
+  // afterwards, so clearing the filter does not fight the URL.
+  const [assigneeFilter, setAssigneeFilter] = useState<'ALL' | string>(
+    () => searchParams.get('assignee') ?? 'ALL',
+  );
   const [search, setSearch] = useState('');
   const [view, setView] = useState<'list' | 'grid'>('list');
   const [detailId, setDetailId] = useState<string | null>(initialTicketId ?? null);
@@ -540,8 +546,9 @@ export default function AdminTicketing() {
   // /ticketing?ticket=<id> (the assignment push deep link) lands on the Tickets tab
   // with that ticket already open, unless an explicit ?tab= says otherwise.
   const deepLinkTicket = searchParams.get('ticket');
+  const deepLinkTickets = deepLinkTicket || searchParams.get('assignee');
   const [tab, setTab] = useState<Tab>(
-    initialTab && TABS.includes(initialTab) ? initialTab : deepLinkTicket ? 'tickets' : 'overview',
+    initialTab && TABS.includes(initialTab) ? initialTab : deepLinkTickets ? 'tickets' : 'overview',
   );
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
 
@@ -577,11 +584,16 @@ export default function AdminTicketing() {
         {tab === 'projects' && <ProjectsTab onViewTickets={(id) => { setProjectFilter(id); setTab('tickets'); }} />}
         {tab === 'slas' && <SlasTab />}
         {tab === 'reports' && <ReportsTab />}
-        {tab === 'new' && (
+        {/* `user` is guaranteed by the RoleGuard wrapping this page, so waiting on it
+            costs nothing — but defaulting the role would not be free: ROLE_FIELDS keys
+            the whole form off it, so an ADMINISTRATOR rendered as ORG_ADMIN silently
+            loses the client / client-email / contact / branch / on-site fields and
+            fires a /api/bots request they have no use for. Never guess this one. */}
+        {tab === 'new' && user && (
           <div className="max-w-[820px]">
             <div className="card p-6 sm:p-8">
               <h3 className="text-lg font-bold tracking-tight text-slate-900 mb-5">Create new ticket</h3>
-              <NewTicketForm projects={projectsData?.projects ?? []} role={user?.role ?? 'ORG_ADMIN'} onCreated={() => setTab('tickets')} onCancel={() => setTab('tickets')} />
+              <NewTicketForm projects={projectsData?.projects ?? []} role={user.role} onCreated={() => setTab('tickets')} onCancel={() => setTab('tickets')} />
             </div>
           </div>
         )}

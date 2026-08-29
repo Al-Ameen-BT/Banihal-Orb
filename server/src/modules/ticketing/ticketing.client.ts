@@ -1,5 +1,5 @@
 import { ticketPrisma, getTicketDb } from '../../config/ticketDatabase';
-import { evaluateSla, evaluateResponseSla, type TimeUnit } from './services/slaService';
+import { evaluateSla, evaluateResponseSla, convertToSeconds, type TimeUnit } from './services/slaService';
 import type {
   TicketDTO, ProjectDTO, SlaDTO, TicketFilters, PersonRef,
   TicketStatus, TicketPriority, TicketType, ProjectPriority,
@@ -426,10 +426,13 @@ export function addTicketAttachment(ticketId: string, file: UploadedFile, upload
     data: { ticketId, filename: file.filename, originalName: file.originalname, mimeType: file.mimetype, size: file.size, path: file.path, uploadedBy },
   });
 }
-export async function getAttachmentFile(id: string): Promise<{ path: string | null; originalName: string | null; mimeType: string | null } | null> {
-  const t = await getTicketDb().ticketAttachments.findUnique({ where: { id }, select: { path: true, originalName: true, mimeType: true } });
+export async function getAttachmentFile(id: string): Promise<{ filename: string | null; path: string | null; originalName: string | null; mimeType: string | null } | null> {
+  // `filename` is the random basename inside UPLOAD_DIR; the download handler
+  // serves by that under a fixed root rather than trusting the absolute `path`.
+  const sel = { filename: true, path: true, originalName: true, mimeType: true } as const;
+  const t = await getTicketDb().ticketAttachments.findUnique({ where: { id }, select: sel });
   if (t) return t;
-  return getTicketDb().commentAttachments.findUnique({ where: { id }, select: { path: true, originalName: true, mimeType: true } });
+  return getTicketDb().commentAttachments.findUnique({ where: { id }, select: sel });
 }
 
 // ─── Watchers ───────────────────────────────────────────────────────────────────
@@ -491,4 +494,70 @@ export async function allTicketsForStats() {
   });
   const byId = new Map(projects.map((p) => [p.id, p]));
   return rows.map((r) => ({ ...r, Projects: byId.get(r.projectId) ?? null }));
+}
+
+// ─── Dashboard feed ──────────────────────────────────────────────────────────
+// The whole ticket estate in the flat shape services/dashboardAggregate consumes.
+// It owns every panel's arithmetic; this side only supplies rows, so adding a panel
+// never means adding a query here. Names are denormalised (assignee/reporter/customer)
+// because the aggregator groups by them and cannot follow a relation.
+export interface FeedTicket {
+  id: string; ticketNumber: string; title: string; status: string; priority: string;
+  branch: string | null; projectId: string;
+  assigneeId: string | null; assigneeName: string | null;
+  reporterId: string | null; reporterName: string | null; reporterEmail: string | null;
+  customerId: string | null; customerName: string | null;
+  createdAt: string; updatedAt: string;
+  pausedTime: string | null; totalPausedTime: number;
+  slaResolutionSeconds: number | null;
+}
+export interface FeedProject { id: string; status: string; endDate: string | null }
+
+export async function dashboardFeed(): Promise<{ tickets: FeedTicket[]; projects: FeedProject[] }> {
+  const db = getTicketDb();
+  const [rows, projects] = await Promise.all([
+    db.tickets.findMany({
+      select: {
+        id: true, ticketNumber: true, title: true, status: true, priority: true,
+        branch: true, projectId: true, assigneeId: true, reporterId: true, customerId: true,
+        createdAt: true, updatedAt: true, pausedTime: true, totalPausedTime: true,
+        Users_Tickets_assigneeIdToUsers: userSel,
+        Customers: { select: { name: true } },
+        SLAs: { select: { resolutionTime: true, timeUnit: true } },
+      },
+      // The "recent activity" panel just takes the first 8 rows, so the ordering is
+      // part of this contract, not a convenience.
+      orderBy: { createdAt: 'desc' },
+    }),
+    db.projects.findMany({ select: { id: true, status: true, endDate: true } }),
+  ]);
+
+  // Reporters are a required relation the admin store can orphan (see ticketInclude),
+  // so they are batch-loaded and missing rows tolerated rather than `include`d.
+  const reporters = await db.users.findMany({
+    where: { id: { in: [...new Set(rows.map((r) => r.reporterId))] } },
+    ...userSel,
+  });
+  const byId = new Map(reporters.map((u) => [u.id, u]));
+
+  return {
+    tickets: rows.map((r) => {
+      const rep = byId.get(r.reporterId) ?? null;
+      const a = r.Users_Tickets_assigneeIdToUsers;
+      return {
+        id: r.id, ticketNumber: r.ticketNumber, title: r.title, status: r.status, priority: r.priority,
+        branch: r.branch, projectId: r.projectId,
+        assigneeId: r.assigneeId, assigneeName: a ? `${a.firstName} ${a.lastName}`.trim() : null,
+        reporterId: r.reporterId, reporterName: rep ? `${rep.firstName} ${rep.lastName}`.trim() : null,
+        reporterEmail: rep?.email ?? null,
+        customerId: r.customerId, customerName: r.Customers?.name ?? null,
+        createdAt: r.createdAt.toISOString(), updatedAt: r.updatedAt.toISOString(),
+        pausedTime: r.pausedTime?.toISOString() ?? null, totalPausedTime: r.totalPausedTime,
+        slaResolutionSeconds: r.SLAs
+          ? convertToSeconds(r.SLAs.resolutionTime, r.SLAs.timeUnit as TimeUnit)
+          : null,
+      };
+    }),
+    projects: projects.map((p) => ({ id: p.id, status: p.status, endDate: p.endDate?.toISOString() ?? null })),
+  };
 }

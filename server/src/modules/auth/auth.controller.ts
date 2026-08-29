@@ -18,11 +18,22 @@ const COOKIE_OPTS = {
   sameSite: 'lax' as const,
 };
 
+const REFRESH_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
 function setTokenCookies(res: Response, tokens: { accessToken: string; refreshToken: string }): void {
   res.cookie('accessToken', tokens.accessToken, { ...COOKIE_OPTS, maxAge: 15 * 60 * 1000 });
   // Path covers /api/auth/refresh AND /api/auth/logout (a path of /api/auth/refresh
   // meant browsers never sent the cookie to logout, so sessions were never revoked).
-  res.cookie('refreshToken', tokens.refreshToken, { ...COOKIE_OPTS, maxAge: 7 * 24 * 60 * 60 * 1000, path: '/api/auth' });
+  res.cookie('refreshToken', tokens.refreshToken, { ...COOKIE_OPTS, maxAge: REFRESH_MAX_AGE_MS, path: '/api/auth' });
+  // Value-less marker whose ONLY job is to be visible at path '/'. The client's Next
+  // middleware gates page routes on cookies, and accessToken (15 min) is the only one
+  // it can see — refreshToken is scoped to /api/auth, so browsers never send it with a
+  // page request. Without this, a session idle for 15 minutes looked signed out to the
+  // middleware and got bounced to /login despite a refresh token good for another week.
+  // It carries no token and grants nothing: authMiddleware still demands a valid
+  // accessToken on every /api route, so forging this only buys you a page shell that
+  // immediately refreshes or redirects itself.
+  res.cookie('hasSession', '1', { ...COOKIE_OPTS, maxAge: REFRESH_MAX_AGE_MS, path: '/' });
 }
 
 export async function register(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -145,6 +156,9 @@ export async function logout(req: Request, res: Response, next: NextFunction): P
     res.clearCookie('accessToken', COOKIE_OPTS);
     res.clearCookie('refreshToken', { ...COOKIE_OPTS, path: '/api/auth' });
     res.clearCookie('refreshToken', { ...COOKIE_OPTS, path: '/api/auth/refresh' }); // legacy path
+    // Must be cleared with the same path it was set on, or the marker outlives the
+    // session and the middleware keeps waving signed-out users through to a shell.
+    res.clearCookie('hasSession', { ...COOKIE_OPTS, path: '/' });
     res.json({ message: 'Logged out' });
   } catch (err) {
     next(err);

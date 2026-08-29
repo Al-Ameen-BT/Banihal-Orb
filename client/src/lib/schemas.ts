@@ -380,3 +380,80 @@ export interface ChatAnalytics {
   perOrg: Array<{ customerId: string; name: string; sessions: number; messages: number }>;
   daily: Array<{ date: string; messages: number }>;
 }
+
+// ─── Ops dashboard (ORG_ADMIN / ADMINISTRATOR) ───────────────────────────────
+// Mirrors `DashboardOverview` in the server's ticketing/services/dashboardAggregate.
+// Every panel of the ops dashboard arrives in this one payload; the server does all
+// the grouping, so these are plain interfaces rather than zod schemas — nothing on
+// the client re-derives them.
+
+export interface DashIssueSlice { label: string; count: number; pct: number }
+
+export interface DashAssignee {
+  id: string;
+  name: string;
+  closed: number;
+  open: number;
+  closureRate: number;
+  /** Open tickets untouched for 72h+ — the queue that went quiet, not merely long. */
+  stuck: number;
+  slowestTitle: string | null;
+  slowestHours: number;
+}
+
+export interface DashUser {
+  id: string;
+  name: string;
+  email: string | null;
+  open: number;
+  total: number;
+  completed: number;
+  highPriority: number;
+  avgOpenAgeHours: number;
+  lastActivityAt: string | null;
+}
+
+export interface DashOverview {
+  generatedAt: string;
+  analyzed: number;
+  ticketStats: {
+    total: number; completed: number; inProgress: number; todo: number;
+    clientPending: number; highPriority: number; today: number; open: number;
+    completionRate: number;
+  };
+  projectStats: { total: number; completed: number; active: number; atRisk: number; onTrack: number };
+  issueDistribution: {
+    top: DashIssueSlice[];
+    other: DashIssueSlice;
+    total: number;
+    top3Pct: number;
+    weekDeltaPct: number;
+  };
+  kpi: {
+    ticketsToday: number;
+    openTickets: number;
+    slaBreachPct: number;
+    createdSpark: number[];
+    openSpark: number[];
+    breachSpark: number[];
+    alert: string | null;
+  };
+  recent: Array<{
+    id: string; ticketNumber: string; title: string;
+    status: string; priority: string; createdAt: string;
+  }>;
+  daily: {
+    points: Array<{ date: string; created: number; topIssue: string | null }>;
+    peakDate: string | null;
+    peakCreated: number;
+    average: number;
+  };
+  branches: {
+    rows: Array<{ branch: string; count: number; pct: number }>;
+    average: number;
+    topVsAverage: number | null;
+  };
+  assignees: DashAssignee[];
+  clients: Array<{ id: string; name: string; open: number; total: number; demand: 'high' | 'medium' | 'low' }>;
+  users: DashUser[];
+}

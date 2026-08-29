@@ -149,7 +149,7 @@ if systemctl list-unit-files 2>/dev/null | grep -qE '^b2b-(api|web)\.service'; t
 fi
 rm -f /etc/systemd/system/b2b-api.service /etc/systemd/system/b2b-web.service
 
-# Generate the combined b2b.service (runs both node processes under one unit)
+# Generate the combined b2b.service (runs the API and the Next server under one unit)
 sed -e "s|\[Service\]|\[Service\]\nEnvironment=\"PATH=$CLEAN_PATH\"|g" \
     -e "s|/opt/B2B-Site|$PROJECT_DIR|g" \
     -e "s|User=b2bapp|User=$SERVICE_USER|g" \

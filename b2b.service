@@ -15,9 +15,11 @@ EnvironmentFile=-/opt/B2B-Site/server/.env
 EnvironmentFile=-/opt/B2B-Site/client/.env
 Environment=NODE_ENV=production
 
-# One unit supervises BOTH node processes. Each runs in its own subshell with its own
-# working directory and PORT. If EITHER child exits, the wrapper returns and
-# Restart=always restarts the pair; SIGTERM is forwarded to both for a clean stop.
+# One unit supervises BOTH processes: the Node API (:3001) and the Next server
+# (:3000). Each runs in its own subshell with its own working directory and PORT. If
+# EITHER child exits, the wrapper returns and Restart=always restarts the pair;
+# SIGTERM is forwarded to both for a clean stop.
+#
 # NOTE: `$$` is how you write a literal `$` in a systemd ExecStart (otherwise systemd
 # tries to expand it as one of its own variables).
 ExecStart=/usr/bin/env bash -c ' \

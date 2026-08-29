@@ -57,6 +57,9 @@ router.get('/slas', staff, ticketingController.listSlas);
 router.post('/slas', staff, ticketingController.createSla);
 router.patch('/slas/:id', staff, ticketingController.updateSla);
 router.delete('/slas/:id', staff, ticketingController.deleteSla);
+// Ops-dashboard aggregate. Scoped by the same role→store rule as everything else
+// above, so an ORG_ADMIN's dashboard can only ever aggregate their own store.
+router.get('/dashboard', staff, ticketingController.dashboardOverview);
 router.get('/stats', staff, ticketingController.getStats);
 router.get('/analytics', staff, ticketingController.getAnalytics);
 router.get('/reports', staff, ticketingController.getReport);

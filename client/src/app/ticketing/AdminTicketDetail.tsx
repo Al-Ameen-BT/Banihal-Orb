@@ -160,9 +160,32 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
                   </div>
                 </div>
               </div>
+
+              {/* Resolution write-ups — same composer sizing as the comment box above,
+                  because they are the same kind of input: free prose an admin types
+                  about this ticket, not a sidebar setting. */}
+              <div>
+                <p className="eyebrow mb-2">Resolved Methods</p>
+                {ticket.resolvedMethods && <p className="text-xs text-slate-500 mb-2">Current: <span className="text-slate-700">{ticket.resolvedMethods}</span></p>}
+                <textarea value={resolved} onChange={(e) => setResolved(e.target.value)} rows={2} className="input resize-none text-sm" placeholder="Describe how it was resolved…" />
+                <div className="mt-2 flex items-center gap-2">
+                  <GlowButton className="ml-auto py-1.5 px-4 text-xs" disabled={resolved === (ticket.resolvedMethods ?? '') || patchMut.isPending}
+                    onClick={() => patchMut.mutate({ resolvedMethods: resolved.trim() || null })}>Update</GlowButton>
+                </div>
+              </div>
+
+              <div>
+                <p className="eyebrow mb-2">Reason for Delay</p>
+                {ticket.reasonForDelay && <p className="text-xs text-slate-500 mb-2">Current: <span className="text-slate-700">{ticket.reasonForDelay}</span></p>}
+                <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} className="input resize-none text-sm" placeholder="Why is this taking longer…" />
+                <div className="mt-2 flex items-center gap-2">
+                  <GlowButton className="ml-auto py-1.5 px-4 text-xs" disabled={reason === (ticket.reasonForDelay ?? '') || patchMut.isPending}
+                    onClick={() => patchMut.mutate({ reasonForDelay: reason.trim() || null })}>Save Reason</GlowButton>
+                </div>
+              </div>
             </div>
 
-            {/* Sidebar — manage + SLA + resolution */}
+            {/* Sidebar — manage + SLA + facts */}
             <div className="p-6 space-y-5 bg-slate-50/40">
               <div className="rounded-xl bg-white ring-1 ring-slate-200/70 p-3.5 space-y-3">
                 <p className="eyebrow">Manage</p>
@@ -205,23 +228,6 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
                 <Fact label="Requested by" value={<Person person={ticket.reporter} />} />
                 <Fact label="Created" value={fmtDate(ticket.createdAt)} />
                 <Fact label="SLA policy" value={ticket.sla ? `${ticket.sla.name} · ${ticket.sla.responseTime}${ticket.sla.timeUnit[0]}/${ticket.sla.resolutionTime}${ticket.sla.timeUnit[0]}` : 'None'} />
-              </div>
-
-              {/* Resolved methods */}
-              <div className="rounded-xl bg-white ring-1 ring-slate-200/70 p-3.5 space-y-2">
-                <p className="eyebrow">Resolved Methods</p>
-                {ticket.resolvedMethods && <p className="text-xs text-slate-500">Current: <span className="text-slate-700">{ticket.resolvedMethods}</span></p>}
-                <textarea value={resolved} onChange={(e) => setResolved(e.target.value)} rows={2} className="input resize-none text-xs" placeholder="Describe how it was resolved…" />
-                <GlowButton className="w-full py-1.5 text-xs" disabled={resolved === (ticket.resolvedMethods ?? '') || patchMut.isPending}
-                  onClick={() => patchMut.mutate({ resolvedMethods: resolved.trim() || null })}>Update</GlowButton>
-              </div>
-
-              {/* Reason for delay */}
-              <div className="rounded-xl bg-white ring-1 ring-slate-200/70 p-3.5 space-y-2">
-                <p className="eyebrow">Reason for Delay</p>
-                <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} className="input resize-none text-xs" placeholder="Why is this taking longer…" />
-                <GlowButton className="w-full py-1.5 text-xs" disabled={reason === (ticket.reasonForDelay ?? '') || patchMut.isPending}
-                  onClick={() => patchMut.mutate({ reasonForDelay: reason.trim() || null })}>Save Reason</GlowButton>
               </div>
 
               <GlowButton variant="secondary" className="w-full py-1.5 text-xs" onClick={onClose}>Close</GlowButton>

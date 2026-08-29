@@ -1,4 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
+import path from 'path';
+import { UPLOAD_DIR, SERVEABLE_TYPES } from './uploads';
 import {
   ListTicketsSchema, CreateTicketSchema, UpdateTicketSchema,
   CreateProjectSchema, UpdateProjectSchema, CreateSlaSchema, ReportSchema,
@@ -8,6 +10,7 @@ import * as db from './ticketing.client';
 import * as escalation from './services/escalation';
 import { listAdminAssignees } from './services/adminAssignees';
 import { resolveTicketActor } from './identity';
+import { aggregate } from './services/dashboardAggregate';
 
 // Bridge the B2B-Site user to a ticketing staff Users row (id + mapped role).
 const actor = (req: Request) => resolveTicketActor(req.user.userId, req.user.role);
@@ -161,6 +164,18 @@ export async function getStats(_req: Request, res: Response, next: NextFunction)
   try { res.json(await service.getStats()); } catch (err) { next(err); }
 }
 
+// Every panel of the ops dashboard in one payload. The flat estate comes from the
+// same store the rest of this router is scoped to, and the arithmetic runs in
+// dashboardAggregate — so an ORG_ADMIN can only ever aggregate their own store.
+export async function dashboardOverview(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    // The per-user grid is a second pass over every ticket and only the ORG_ADMIN
+    // view renders it, so a platform admin does not pay for a panel they never see.
+    const withUsers = req.query['users'] === 'true';
+    res.json(aggregate(await db.dashboardFeed(), new Date(), withUsers));
+  } catch (err) { next(err); }
+}
+
 export async function getAnalytics(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try { res.json(await service.getAnalytics()); } catch (err) { next(err); }
 }
@@ -226,15 +241,30 @@ export async function downloadAttachment(req: Request, res: Response, next: Next
   try {
     await service.assertAttachmentAccess(await service.ticketAccessScope(req.user), req.params['id']!);
     const file = await service.getAttachmentFile(req.params['id']!);
-    if (!file?.path) { res.status(404).json({ error: 'Attachment not found', code: 'NOT_FOUND' }); return; }
+    // Serve by stored basename under a fixed root rather than by the absolute
+    // `path` column: express then refuses to resolve outside UPLOAD_DIR, so a
+    // tampered or legacy path row cannot reach an arbitrary file on the box.
+    const name = file?.filename ?? (file?.path ? path.basename(file.path) : null);
+    if (!name) { res.status(404).json({ error: 'Attachment not found', code: 'NOT_FOUND' }); return; }
+
+    // Only the four types verified on upload are echoed back; anything else is
+    // opaque bytes the browser must not try to render. nosniff stops it
+    // second-guessing that, and the sandbox CSP neuters the response if it does.
+    const type = SERVEABLE_TYPES.has(file?.mimeType ?? '') ? file!.mimeType! : 'application/octet-stream';
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+
     // ?inline=1 serves the bytes for rendering in the page (<img src>) instead of
-    // forcing a download — same access check either way.
-    if (req.query['inline']) {
-      res.type(file.mimeType ?? 'application/octet-stream');
-      res.sendFile(file.path);
-      return;
+    // forcing a download — same access check either way. An unverifiable type is
+    // never rendered inline, only attached.
+    if (!(req.query['inline'] && type !== 'application/octet-stream')) {
+      // Sets Content-Disposition with the original name properly quoted/encoded.
+      res.attachment(file?.originalName ?? 'attachment');
     }
-    res.download(file.path, file.originalName ?? 'attachment');
+    res.type(type); // after attachment(), which would otherwise derive it from that name
+    res.sendFile(path.basename(name), { root: UPLOAD_DIR, dotfiles: 'deny' }, (err) => {
+      if (err) next(err);
+    });
   } catch (err) { next(err); }
 }
 export async function getWatchers(req: Request, res: Response, next: NextFunction): Promise<void> {

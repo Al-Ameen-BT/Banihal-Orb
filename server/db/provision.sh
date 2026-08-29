@@ -39,7 +39,7 @@ load_from_env() {
   fi
 }
 
-for k in DATABASE_URL CHAT_DATABASE_URL TICKETING_DATABASE_URL TICKET_DATABASE_URL; do
+for k in DATABASE_URL CHAT_DATABASE_URL TICKETING_DATABASE_URL TICKET_DATABASE_URL ADMIN_TICKETING_DATABASE_URL; do
   load_from_env "$k"
   if [ -z "${!k:-}" ]; then echo "❌ $k is not set (env or $ENV_FILE)"; exit 1; fi
 done
@@ -59,5 +59,10 @@ psql "$(psql_url "$DATABASE_URL")"           -v ON_ERROR_STOP=1 -f "$DB_DIR/b2b.
 psql "$(psql_url "$CHAT_DATABASE_URL")"      -v ON_ERROR_STOP=1 -f "$DB_DIR/b2b_chat.sql"
 psql "$(psql_url "$TICKETING_DATABASE_URL")" -v ON_ERROR_STOP=1 -f "$DB_DIR/b2b_ticketing.sql"
 psql "$(psql_url "$TICKET_DATABASE_URL")"    -v ON_ERROR_STOP=1 -f "$DB_DIR/b2b_ticket.sql"
+# The Administrators' isolated store is the SAME 14-table schema in its own
+# database. Upstream loads it from the `ticketingDB` pg dump, which is not in this
+# repo — b2b_ticket.sql is idempotent and non-destructive, so applying it here
+# gives a from-scratch install a working admin store instead of a schemaless one.
+psql "$(psql_url "$ADMIN_TICKETING_DATABASE_URL")" -v ON_ERROR_STOP=1 -f "$DB_DIR/b2b_ticket.sql"
 
 echo "✅ Provisioning complete."

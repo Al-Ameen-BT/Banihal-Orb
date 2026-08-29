@@ -147,12 +147,30 @@ export default function TicketingPage() {
 
 function TicketingPageInner() {
   const { user } = useAuth();
+  const searchParams = useSearchParams();
   const isAdmin = user?.role === 'ORG_ADMIN' || user?.role === 'ADMINISTRATOR';
+
+  // Every deep link into this page (?tab=, ?ticket=, ?assignee=) is read through a
+  // useState INITIALIZER, which React runs once per mount. A client-side navigation to
+  // /ticketing?… while this tree is already mounted reuses the components, so those
+  // initializers never re-run and the new URL is silently ignored — you had to hard
+  // refresh to make a deep link take effect. Keying on the query string remounts the
+  // tree whenever it changes, which is exactly when the seeds must be re-read.
+  //
+  // Safe because NOTHING under app/ticketing writes to the URL (no router.push, no
+  // history.pushState): the query string only ever changes on a real navigation, so
+  // this can never discard filters/search the user is in the middle of typing. Add a
+  // URL write here and this remounts on every keystroke — sync the state explicitly
+  // in that case instead.
+  const deepLinkKey = searchParams.toString();
+
   return (
     <RoleGuard allowedRoles={['USER', 'ORG_ADMIN', 'ADMINISTRATOR']}>
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
-        <main className="flex-1 overflow-y-auto">{isAdmin ? <AdminTicketing /> : <UserTicketing />}</main>
+        <main className="flex-1 overflow-y-auto">
+          {isAdmin ? <AdminTicketing key={deepLinkKey} /> : <UserTicketing key={deepLinkKey} />}
+        </main>
       </div>
     </RoleGuard>
   );

@@ -17,8 +17,18 @@ export function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  const hasAccessToken = req.cookies.has('accessToken');
-  if (!hasAccessToken) {
+  // accessToken lives 15 minutes; the session behind it lives 7 days and the axios
+  // interceptor renews it transparently on the first 401. Gating on accessToken ALONE
+  // therefore bounced anyone idle for a quarter of an hour to /login mid-session — and
+  // because refreshToken is path-scoped to /api/auth, browsers never send it here, so
+  // there is nothing else for this to see. `hasSession` (server/src/modules/auth/
+  // auth.controller.ts) is a value-less marker set at path '/' for exactly that reason:
+  // it says a refreshable session should exist, and nothing more.
+  //
+  // This is a UX gate, never the security boundary. Every /api route is independently
+  // gated by authMiddleware, and RoleGuard redirects client-side once /users/me
+  // resolves — so the worst a stale marker buys is an app shell that bounces itself.
+  if (!req.cookies.has('accessToken') && !req.cookies.has('hasSession')) {
     return NextResponse.redirect(new URL('/login', req.url));
   }
 

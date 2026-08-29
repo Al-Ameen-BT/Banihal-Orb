@@ -7,3 +7,7 @@ xoxb-*
 # System files
 .DS_Store
 Thumbs.db
+
+# Ticket/comment attachments — user-uploaded runtime data, never source.
+# Point UPLOAD_DIR at a persistent path OUTSIDE the deploy tree in production.
+server/uploads/

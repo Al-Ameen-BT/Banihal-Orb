@@ -355,3 +355,10 @@ export const saasAdminApi = {
   removeSadmin: (id: string) => api.delete(`/saas-admin/sadmins/${id}`),
   resetSadminPassword: (id: string) => api.post(`/saas-admin/sadmins/${id}/reset-password`),
 };
+
+// Ops dashboard. One aggregate over the whole ticket estate; the server scopes it
+// by role (ADMINISTRATOR → admin store, ORG_ADMIN → their own), so the session
+// cookie riding along as on every other call is the whole authorization story.
+export const dashboardApi = {
+  overview: (users = false) => api.get('/ticketing/dashboard', { params: users ? { users: true } : undefined }),
+};
