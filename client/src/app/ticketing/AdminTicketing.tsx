@@ -4,8 +4,8 @@ import { useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, Area, XAxis, YAxis } from 'recharts';
-import { ticketingApi } from '@/lib/api';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, Area, BarChart, Bar, LabelList, XAxis, YAxis } from 'recharts';
+import { agentApi, ticketingApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import GlowButton from '@/components/ui/GlowButton';
 import { ShimmerCard } from '@/components/ui/Shimmer';
@@ -54,8 +54,6 @@ function OverviewTab() {
   const daily = analytics?.daily ?? [];
   const createdTotal = daily.reduce((s, d) => s + d.created, 0);
   const peak = Math.max(1, ...daily.map((d) => d.created));
-  const byPriority = analytics?.byPriority ?? [];
-  const maxPrio = Math.max(1, ...byPriority.map((p) => p.count));
 
   const statusData = t ? ([
     { key: 'todo', name: 'To Do', value: t.todo },
@@ -63,7 +61,7 @@ function OverviewTab() {
     { key: 'client_pending', name: 'Client Pending', value: t.clientPending },
     { key: 'completed', name: 'Completed', value: t.completed },
   ]).filter((d) => d.value > 0) : [];
-  const statusTotal = statusData.reduce((s, d) => s + d.value, 0) || 1;
+  const statusTotal = statusData.reduce((sum, d) => sum + d.value, 0) || 1;
 
   const StatSkeleton = <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">{Array.from({ length: 6 }).map((_, i) => <ShimmerCard key={i} />)}</div>;
 
@@ -110,9 +108,9 @@ function OverviewTab() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Status breakdown donut with total in the center */}
+        {/* Total tickets — donut by status, count in the middle */}
         <div className="card p-5">
-          <h3 className="text-base font-semibold text-slate-900 mb-2">Status breakdown</h3>
+          <h3 className="text-base font-semibold text-slate-900 mb-2">Total tickets</h3>
           {sl ? <ShimmerCard /> : statusData.length === 0 ? (
             <p className="py-12 text-center text-sm text-slate-500">No tickets to analyze yet.</p>
           ) : (
@@ -123,7 +121,7 @@ function OverviewTab() {
                     <Pie data={statusData} dataKey="value" nameKey="name" innerRadius={64} outerRadius={92} paddingAngle={2} strokeWidth={0}>
                       {statusData.map((d) => <Cell key={d.key} fill={STATUS_TONES[d.key]} />)}
                     </Pie>
-                    <Tooltip formatter={(v: number, n: string) => [`${v} tickets`, n]} />
+                    <Tooltip formatter={(v: number, n: string) => [`${v} tickets`, n]} contentStyle={chartTooltip} />
                   </PieChart>
                 </ResponsiveContainer>
                 <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
@@ -145,27 +143,77 @@ function OverviewTab() {
           )}
         </div>
 
-        {/* Priority distribution */}
-        <div className="card p-5">
-          <h3 className="text-base font-semibold text-slate-900 mb-4">Tickets by priority</h3>
-          {al ? <ShimmerCard /> : byPriority.length === 0 ? (
-            <p className="py-12 text-center text-sm text-slate-500">No data yet.</p>
-          ) : (
-            <div className="space-y-3.5 pt-2">
-              {byPriority.map((p) => (
-                <div key={p.priority} className="flex items-center gap-3">
-                  <span className="w-16 text-xs font-medium text-slate-600 capitalize">{p.priority}</span>
-                  <div className="flex-1 h-2.5 rounded-full bg-slate-100 overflow-hidden">
-                    <motion.div initial={{ width: 0 }} animate={{ width: `${(p.count / maxPrio) * 100}%` }} transition={{ duration: 0.5 }}
-                      className={`h-full rounded-full ${priorityCls[p.priority]?.split(' ').find((c) => c.startsWith('bg-')) ?? 'bg-slate-400'}`} />
-                  </div>
-                  <span className="w-10 text-right font-mono tabular-nums text-sm font-semibold text-slate-900">{p.count}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <TopComplaintsChart />
       </div>
+    </div>
+  );
+}
+
+// ─── Top complaint categories (Analytics Agent) ────────────────────────────────
+interface TopComplaints {
+  complaints: { category: string; count: number }[];
+  total: number;
+  fetchedAt: string;
+}
+
+// Categorical hues in fixed order — slot i is category i in both charts, so a
+// slice and its bar always carry the same colour. Never cycled: a ninth category
+// folds into "Other" rather than reusing slot 1.
+const COMPLAINT_HUES = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
+
+const shortLabel = (s: string) => (s.length > 22 ? `${s.slice(0, 21)}…` : s);
+
+const chartTooltip = {
+  borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12,
+  boxShadow: '0 4px 12px -2px rgba(15,23,42,0.1)',
+} as const;
+
+// The complaint mix across the whole estate, from the Analytics Agent's signed
+// /v1 surface — a different source from the ticket counters above, which come
+// from this platform's own store. The agent is a separate box, so a failure here
+// is contained to this card (the call opts out of the global 5xx/403 redirects
+// and `retry: false` keeps a dead agent cheap).
+function TopComplaintsChart() {
+  const { data, isLoading, isError } = useQuery<TopComplaints>({
+    queryKey: ['ticketing', 'top-complaints'],
+    queryFn: () => agentApi.topComplaints().then((r) => r.data as TopComplaints),
+    staleTime: 300_000,
+    retry: false,
+  });
+
+  const rows = useMemo(() => {
+    const all = data?.complaints ?? [];
+    if (all.length <= COMPLAINT_HUES.length) return all;
+    const rest = all.slice(COMPLAINT_HUES.length - 1).reduce((sum, c) => sum + c.count, 0);
+    return [...all.slice(0, COMPLAINT_HUES.length - 1), { category: 'Other', count: rest }];
+  }, [data]);
+
+  return (
+    <div className="card p-5">
+      <div className="flex items-baseline justify-between mb-2">
+        <h3 className="text-base font-semibold text-slate-900">Top complaints by category</h3>
+        {data && <span className="text-xs text-slate-400">{data.total.toLocaleString()} tickets · updated {timeAgo(data.fetchedAt)}</span>}
+      </div>
+      {isLoading ? <ShimmerCard /> : isError || rows.length === 0 ? (
+        <p className="py-12 text-center text-sm text-slate-500">
+          {isError ? 'Analytics agent unavailable — complaint categories could not be loaded.' : 'No complaint categories reported yet.'}
+        </p>
+      ) : (
+        <div className="h-[260px] -ml-2">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 34, left: 0, bottom: 0 }}>
+              <XAxis type="number" hide />
+              <YAxis type="category" dataKey="category" tickFormatter={shortLabel} width={140}
+                tick={{ fontSize: 11, fill: '#475569' }} axisLine={false} tickLine={false} />
+              <Tooltip cursor={{ fill: '#f8fafc' }} formatter={(v: number) => [`${v} tickets`, 'Volume']} contentStyle={chartTooltip} />
+              <Bar dataKey="count" barSize={14} radius={[0, 4, 4, 0]}>
+                {rows.map((c, i) => <Cell key={c.category} fill={COMPLAINT_HUES[i]} />)}
+                <LabelList dataKey="count" position="right" fontSize={11} fill="#475569" />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
     </div>
   );
 }

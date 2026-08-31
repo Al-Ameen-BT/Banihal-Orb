@@ -51,10 +51,15 @@ export const agentChatEnabled = (): boolean =>
 export const agentComplaintsEnabled = (): boolean =>
   Boolean(env.AGENT_COMPLAINTS_CLIENT_ID && env.AGENT_COMPLAINTS_SECRET);
 
-// The model runs on CPU: a single reply legitimately takes 30s to several minutes,
-// and the agent's own guide insists on >= 180s. A stock 30s timeout aborts requests
-// that were going to succeed, which reads as a flaky agent rather than a client bug.
-const CHAT_TIMEOUT_MS = 180_000;
+// The deadline for one reply. The agent's guide asks for >= 180s because that is
+// its own upstream ceiling; we deliberately run a much tighter budget (default 15s,
+// AGENT_CHAT_TIMEOUT_MS) because a chat that answers in 15s or says so beats one
+// that might answer in three minutes. Measured: short answers land in 0.2-5s, a
+// long multi-step one took 18.9s — those are the replies this cuts off.
+//
+// ponytail: a deadline, not a fix for slow generation. The only real lever on
+// answer LENGTH (and therefore time) lives on the agent side.
+const CHAT_TIMEOUT_MS = env.AGENT_CHAT_TIMEOUT_MS;
 // Complaints is a plain database read on the agent's side — no model involved.
 const COMPLAINTS_TIMEOUT_MS = 15_000;
 
@@ -160,8 +165,14 @@ async function signedFetch(
     });
   } catch (err) {
     const aborted = err instanceof Error && err.name === 'AbortError';
+    // A transport failure that returns in ~25ms is almost never "the agent is
+    // down" — it is the self-signed certificate going untrusted because
+    // NODE_EXTRA_CA_CERTS is missing from this process's environment.
+    console.error(`[agentApi] ${path} transport failure${aborted ? ' (timeout)' : ' — if instant, suspect NODE_EXTRA_CA_CERTS / the self-signed cert'}:`, err);
     throw agentError(
-      aborted ? 'The assistant timed out' : 'The assistant is unavailable',
+      aborted
+        ? `The assistant took longer than ${Math.round(timeoutMs / 1000)}s to answer — try asking for a shorter answer, or ask again`
+        : 'The assistant is unavailable',
       503, aborted ? 'AGENT_TIMEOUT' : 'AGENT_UNAVAILABLE',
     );
   } finally {
@@ -179,6 +190,10 @@ async function signedFetch(
       ?? (parsed as { detail?: string } | null)?.detail
       ?? 'AGENT_ERROR';
     const retryAfter = Number(res.headers.get('Retry-After')) || undefined;
+    // Never let a non-200 disappear into a generic user-facing message: the agent's
+    // own status + code is the whole diagnosis (403 role_not_allowed vs 429
+    // server_busy vs 401 bad_signature) and it is unrecoverable after the fact.
+    console.error(`[agentApi] ${path} failed: HTTP ${res.status} ${code}`);
     throw agentError(describe(code), statusFor(code, res.status), code, retryAfter);
   }
   return parsed;
@@ -205,6 +220,28 @@ async function withBusyRetry<T>(attempt: () => Promise<T>): Promise<T> {
   }
 }
 
+// ─── Serialization ───────────────────────────────────────────────────────────
+
+/**
+ * The agent processes ONE /v1/chat at a time across every client and role — a
+ * second concurrent call is refused instantly with 429 `server_busy`, never
+ * queued. So the queue has to live on this side: model calls from this process
+ * run one at a time, in arrival order, and a busy user waits instead of failing.
+ *
+ * The per-request timeout starts inside `signedFetch`, so time spent waiting for
+ * the lane does not eat into the 180s model budget.
+ *
+ * ponytail: one in-process lane, which is the whole deployment today (systemd
+ * runs a single API process). If the API is ever scaled to more than one process,
+ * this needs a shared lock (Redis/advisory lock) or the cap is breached again.
+ */
+let lane: Promise<unknown> = Promise.resolve();
+function inLane<T>(run: () => Promise<T>): Promise<T> {
+  const next = lane.then(run, run);
+  lane = next.catch(() => undefined);
+  return next;
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 export interface AgentChatReply { reply: string; role: AgentRole }
@@ -218,13 +255,30 @@ export async function agentChat(message: string, role: AgentRole): Promise<Agent
     throw agentError('The assistant API is not configured', 503, 'AGENT_NOT_CONFIGURED');
   }
   const creds = { clientId: env.AGENT_CHAT_CLIENT_ID!, secret: env.AGENT_CHAT_SECRET! };
-  // Serialised once, here — this exact string is both signed and sent.
-  const body = JSON.stringify({ message, role });
 
-  const data = await withBusyRetry(() => signedFetch(creds, '/v1/chat', body, CHAT_TIMEOUT_MS));
-  const reply = (data as { reply?: unknown } | null)?.reply;
-  if (typeof reply !== 'string') throw agentError('The assistant returned an unreadable reply', 502, 'AGENT_MALFORMED');
-  return { reply, role };
+  const send = async (as: AgentRole): Promise<AgentChatReply> => {
+    // Serialised once, here — this exact string is both signed and sent.
+    const body = JSON.stringify({ message, role: as });
+    const data = await inLane(() => withBusyRetry(() => signedFetch(creds, '/v1/chat', body, CHAT_TIMEOUT_MS)));
+    const reply = (data as { reply?: unknown } | null)?.reply;
+    if (typeof reply !== 'string') throw agentError('The assistant returned an unreadable reply', 502, 'AGENT_MALFORMED');
+    return { reply, role: as };
+  };
+
+  try {
+    return await send(role);
+  } catch (err) {
+    // A role can be perfectly valid and still be outside THIS credential's
+    // allowed-roles list — the agent answers 403 role_not_allowed. Measured on
+    // ext-55df9387: only `end_user` is granted, so every ORG_ADMIN (l1) and
+    // ADMINISTRATOR (l3) chat used to fail outright and left an orphan user turn
+    // in chat history. Falling back gives them a working assistant with
+    // end-user-scoped guidance, and the richer role resumes on its own the moment
+    // the agent's administrator widens the credential — no redeploy.
+    if ((err as AgentError).code !== 'role_not_allowed' || role === 'end_user') throw err;
+    console.error(`[agentApi] role "${role}" not allowed for this credential — answering as end_user; widen the credential's allowed-roles list to restore role-scoped answers`);
+    return send('end_user');
+  }
 }
 
 export interface ComplaintCategory { category: string; count: number }
@@ -238,7 +292,7 @@ export interface TopComplaints {
 /**
  * `GET /v1/top-complaints` — the highest-volume ticket categories, plus their total.
  *
- * Returns however many the agent sends (documented as up to six) rather than
+ * Returns however many the agent sends (documented as up to seven) rather than
  * padding or truncating to a fixed length: a hardcoded slice count would either
  * invent empty rows or silently hide a category if the agent's cap ever changes.
  * `total` sums exactly the rows returned, so the figure always matches the list

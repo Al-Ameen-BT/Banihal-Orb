@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { orgsApi, requestsApi, chatApi, announcementsApi } from '@/lib/api';
 import RoleGuard from '@/components/guards/RoleGuard';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
 import Sidebar from '@/components/ui/Sidebar';
 import { ShimmerCard } from '@/components/ui/Shimmer';
 import { useAuth } from '@/contexts/AuthContext';
@@ -362,6 +363,7 @@ export default function DashboardPage() {
 function MemberDashboard() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const confirm = useConfirm();
   const [statusFilter, setStatusFilter] = useState<RequestStatus | 'ALL'>('ALL');
   const [orgStatusFilter, setOrgStatusFilter] = useState<RequestStatus | 'ALL'>('ALL');
   const [openSession, setOpenSession] = useState<string | null>(null);
@@ -421,9 +423,20 @@ function MemberDashboard() {
   const orgTotal      = orgData?.total ?? 0;
   const filteredOrgTickets = orgStatusFilter === 'ALL' ? orgTickets : orgTickets.filter((t) => t.status === orgStatusFilter);
 
-  async function handleDeleteSession(id: string) {
-    await chatApi.deleteSession(id);
+  // Same prompt (and same "don't ask me again" key) as the rail on /chat, so the
+  // user's choice carries across both places a conversation can be deleted from.
+  async function handleDeleteSession(s: ChatSessionSummary) {
+    const ok = await confirm({
+      title: 'Delete conversation',
+      message: <>&ldquo;{s.title ?? 'Untitled conversation'}&rdquo; and its {s.messageCount} message{s.messageCount === 1 ? '' : 's'} will be permanently deleted. This cannot be undone.</>,
+      confirmText: 'Delete',
+      variant: 'danger',
+      rememberKey: 'chat-session-delete',
+    });
+    if (!ok) return;
+    await chatApi.deleteSession(s.id);
     await queryClient.invalidateQueries({ queryKey: ['chat-sessions'] });
+    if (openSession === s.id) setOpenSession(null);
   }
 
   return (
@@ -561,7 +574,7 @@ function MemberDashboard() {
                       </button>
                       <div className="flex items-center justify-between mt-3 pt-3 border-t border-slate-100">
                         <button type="button" onClick={() => setOpenSession(s.id)} className="text-xs font-semibold text-brand hover:text-brand-700 transition-colors cursor-pointer">View</button>
-                        <button type="button" onClick={() => void handleDeleteSession(s.id)} className="text-xs font-medium text-slate-400 hover:text-red-600 transition-colors cursor-pointer">Delete</button>
+                        <button type="button" onClick={() => void handleDeleteSession(s)} className="text-xs font-medium text-slate-400 hover:text-red-600 transition-colors cursor-pointer">Delete</button>
                       </div>
                     </div>
                   ))}

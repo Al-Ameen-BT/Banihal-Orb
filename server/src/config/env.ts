@@ -56,6 +56,13 @@ const EnvSchema = z.object({
 
   // Chat credential (`ext-*`). Both halves must be set or the /v1 chat route
   // reports 503 rather than sending an unsigned request that would 401 anyway.
+  // How long a single /v1/chat call may run before we give up on it, in ms.
+  // The agent's own guide asks for >= 180s (its upstream ceiling) — this default is
+  // deliberately far below that: the product requirement is an answer inside 15s,
+  // and a reply still generating at that point is worth abandoning with a clear
+  // message rather than making the user watch a spinner. Raise it here (no code
+  // change) if long, thorough answers matter more than the deadline.
+  AGENT_CHAT_TIMEOUT_MS: z.coerce.number().min(1000).default(15_000),
   AGENT_CHAT_CLIENT_ID: z.string().optional(),
   AGENT_CHAT_SECRET: z.string().optional(),
 

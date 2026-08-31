@@ -14,9 +14,14 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store';
 
-// Same backend origin the next.config rewrite targets. Server-side value; the
-// `?? localhost` fallback matches next.config.js.
-const API_ORIGIN = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001';
+// Loopback, NOT NEXT_PUBLIC_API_URL. That variable is this server's own public
+// https:// origin, whose certificate is self-signed — Node's fetch rejects it
+// (DEPTH_ZERO_SELF_SIGNED_CERT), so every request through this handler fell into
+// the catch below and answered "The assistant is unavailable". The API listens on
+// 127.0.0.1:3001 (systemd unit), which is the same hop nginx makes for
+// `location = /api/chat`, and staying off the public origin also keeps the
+// nginx -> :3000 -> nginx proxy loop impossible.
+const API_ORIGIN = 'http://127.0.0.1:3001';
 
 const SSE_HEADERS: Record<string, string> = {
   'Content-Type': 'text/event-stream; charset=utf-8',

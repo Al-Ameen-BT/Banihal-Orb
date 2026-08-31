@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useMemo, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ticketingApi } from '@/lib/api';
 import type { TicketProject, TicketType, TicketPriority, TicketDTO } from '@/lib/schemas';
@@ -37,6 +37,7 @@ interface ChatbotProps {
     text: string,
     history: ChatTurn[],
     onToken?: (token: string) => void,
+    signal?: AbortSignal,
   ) => Promise<string>;
   /** Seed the thread with a resumed conversation; replaces the greeting when non-empty. */
   initialMessages?: Array<{ role: 'user' | 'bot'; content: string; timestamp?: number }>;
@@ -136,8 +137,19 @@ function pickReply(text: string, fallbackIdx: number): string {
 
 // Inline: **bold** and `code`, keeping plain text between.
 function renderInline(text: string, keyPrefix: string): ReactNode[] {
-  return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((p, i) => {
+  return text.split(/(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)\s]+\))/g).map((p, i) => {
     if (!p) return null;
+    // [label](url) — the agent links to docs; a raw markdown link in the bubble is
+    // something the reader has to copy by hand, so make it clickable.
+    const link = /^\[([^\]]+)\]\(([^)\s]+)\)$/.exec(p);
+    if (link) {
+      return (
+        <a key={`${keyPrefix}-l${i}`} href={link[2]} target="_blank" rel="noreferrer noopener"
+          className="font-medium text-brand underline underline-offset-2 hover:text-brand-700">
+          {link[1]}
+        </a>
+      );
+    }
     if (p.startsWith('**') && p.endsWith('**')) {
       return <strong key={`${keyPrefix}-b${i}`} className="font-semibold">{p.slice(2, -2)}</strong>;
     }
@@ -153,7 +165,14 @@ function renderInline(text: string, keyPrefix: string): ReactNode[] {
 }
 
 const ORDERED = /^\s*(\d+)\.\s+(.*)$/;
-const BULLET = /^\s*[-*]\s+(.*)$/;
+const BULLET = /^(\s*)[-*]\s+(.*)$/;
+const HEADING = /^\s*#{1,6}\s+(.*)$/;
+// A bullet indented by two or more spaces belongs to the step above it — that is
+// exactly the shape the agent emits ("1. **Check cables:**" then "    * …").
+const isNested = (line: string): boolean => {
+  const m = BULLET.exec(line);
+  return !!m && (m[1] ?? '').length >= 2;
+};
 
 // The agent often emits the whole answer on one line (steps and code fences
 // inline). Insert line breaks so the structure parser can see lists/code blocks.
@@ -197,22 +216,49 @@ function renderContent(text: string): ReactNode[] {
       continue;
     }
 
+    // Heading — rendered as a strong line, not an <h*>: these sit inside a chat
+    // bubble, where a 24px document heading looks broken.
+    const hm = line.match(HEADING);
+    if (hm) {
+      out.push(
+        <p key={`h${k++}`} className="mt-2.5 mb-1 first:mt-0 text-[13px] font-semibold text-slate-900">
+          {renderInline(hm[1] ?? '', `h${k}`)}
+        </p>,
+      );
+      i++;
+      continue;
+    }
+
     // Ordered list — preserve the real numbers so they stay correct even if a
     // code block interrupts the sequence.
     let om = line.match(ORDERED);
     if (om) {
-      const items: Array<{ n: string; text: string }> = [];
+      const items: Array<{ n: string; text: string; sub: string[] }> = [];
       while (om) {
-        items.push({ n: om[1] ?? '', text: om[2] ?? '' });
+        const sub: string[] = [];
+        items.push({ n: om[1] ?? '', text: om[2] ?? '', sub });
         i++;
+        // Pull the step's own indented bullets in with it, so they render under
+        // the number instead of breaking the list into a separate flat one.
+        while (i < lines.length && isNested(lines[i] ?? '')) {
+          sub.push(BULLET.exec(lines[i] ?? '')?.[2] ?? '');
+          i++;
+        }
         om = i < lines.length ? (lines[i] ?? '').match(ORDERED) : null;
       }
       out.push(
-        <div key={`ol${k++}`} className="my-1.5 space-y-1.5">
+        <div key={`ol${k++}`} className="my-1.5 space-y-2">
           {items.map((it, j) => (
             <div key={j} className="flex gap-2">
               <span className="font-semibold text-slate-500 tabular-nums flex-shrink-0">{it.n}.</span>
-              <span className="flex-1">{renderInline(it.text, `ol${k}i${j}`)}</span>
+              <div className="flex-1 min-w-0">
+                <span>{renderInline(it.text, `ol${k}i${j}`)}</span>
+                {it.sub.length > 0 && (
+                  <ul className="mt-1 list-disc space-y-0.5 pl-4 marker:text-slate-300">
+                    {it.sub.map((sb, m) => <li key={m}>{renderInline(sb, `ol${k}i${j}s${m}`)}</li>)}
+                  </ul>
+                )}
+              </div>
             </div>
           ))}
         </div>,
@@ -225,7 +271,7 @@ function renderContent(text: string): ReactNode[] {
     if (bm) {
       const items: string[] = [];
       while (bm) {
-        items.push(bm[1] ?? '');
+        items.push(bm[2] ?? '');
         i++;
         bm = i < lines.length ? (lines[i] ?? '').match(BULLET) : null;
       }
@@ -243,7 +289,7 @@ function renderContent(text: string): ReactNode[] {
     const para: string[] = [];
     while (i < lines.length) {
       const l = lines[i] ?? '';
-      if (!l.trim() || l.trimStart().startsWith('```') || ORDERED.test(l) || BULLET.test(l)) break;
+      if (!l.trim() || l.trimStart().startsWith('```') || ORDERED.test(l) || BULLET.test(l) || HEADING.test(l)) break;
       para.push(l);
       i++;
     }
@@ -306,6 +352,88 @@ function TicketCreatedCard({ meta }: { meta: TicketMeta }) {
   );
 }
 
+// ─── "Thinking" pill ─────────────────────────────────────────────────────────
+// The agent answers in one shot, so this owns the whole wait — now bounded by the
+// 15s server deadline. Deliberately small: an icon, one word, and a stop. A big
+// skeleton block over-promises ("your answer is nearly rendered") for something
+// that is really just a request in flight, and a ticking seconds counter makes the
+// reader watch the clock, which is the opposite of what this is for.
+const THINKING_STAGES: { at: number; label: string; icon: ReactNode }[] = [
+  {
+    at: 0, label: 'Thinking',
+    icon: <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v2m0 14v2m9-9h-2M5 12H3m14.5-6.5-1.4 1.4M7.9 16.1l-1.4 1.4m11.2 0-1.4-1.4M7.9 7.9 6.5 6.5" />,
+  },
+  {
+    at: 2_000, label: 'Searching',
+    icon: <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-4.35-4.35M17 11a6 6 0 1 1-12 0 6 6 0 0 1 12 0Z" />,
+  },
+  {
+    at: 5_000, label: 'Checking docs',
+    icon: <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.25C10.5 5 8.5 4.75 6 5.25v12c2.5-.5 4.5-.25 6 1 1.5-1.25 3.5-1.5 6-1v-12c-2.5-.5-4.5-.25-6 1.5Zm0 0v12" />,
+  },
+  {
+    at: 9_000, label: 'Writing',
+    icon: <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 4.5a2.12 2.12 0 0 1 3 3L8 19l-4 1 1-4 11.5-11.5Z" />,
+  },
+  {
+    at: 13_000, label: 'Almost there',
+    icon: <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l3.5 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />,
+  },
+];
+
+function ThinkingPill({ onStop }: { onStop: () => void }) {
+  const [elapsed, setElapsed] = useState(0);
+  const reduce = useReducedMotion();
+
+  useEffect(() => {
+    const started = Date.now();
+    const id = window.setInterval(() => setElapsed(Date.now() - started), 300);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const stage = THINKING_STAGES.filter((st) => elapsed >= st.at).pop() ?? THINKING_STAGES[0]!;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96 }}
+      transition={{ duration: reduce ? 0 : 0.15 }}
+      className="flex gap-2.5 justify-start"
+    >
+      <BotAvatar />
+      <div className="inline-flex items-center gap-2 self-center rounded-full border border-slate-200 bg-white px-3 py-1.5 shadow-sm">
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.span
+            key={stage.label}
+            initial={{ opacity: 0, y: reduce ? 0 : 5 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: reduce ? 0 : -5 }}
+            transition={{ duration: reduce ? 0 : 0.18 }}
+            className="inline-flex items-center gap-1.5"
+          >
+            <svg className={`h-3.5 w-3.5 text-brand ${reduce ? '' : 'animate-pulse-soft'}`} fill="none"
+              stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24" aria-hidden="true">
+              {stage.icon}
+            </svg>
+            {/* aria-live: the stage word is the status, so a screen reader hears it too */}
+            <span className="text-[12px] font-medium text-slate-600" aria-live="polite">{stage.label}</span>
+          </motion.span>
+        </AnimatePresence>
+
+        <span className="flex gap-0.5" aria-hidden="true">
+          <span className="h-1 w-1 rounded-full bg-brand/60 animate-bounce" style={{ animationDelay: '0ms' }} />
+          <span className="h-1 w-1 rounded-full bg-brand/60 animate-bounce" style={{ animationDelay: '150ms' }} />
+          <span className="h-1 w-1 rounded-full bg-brand/60 animate-bounce" style={{ animationDelay: '300ms' }} />
+        </span>
+
+        <button type="button" onClick={onStop}
+          className="ml-0.5 border-l border-slate-200 pl-2 text-[11px] font-semibold text-slate-400 transition-colors hover:text-red-600 cursor-pointer">
+          Stop
+        </button>
+      </div>
+    </motion.div>
+  );
+}
+
 export default function Chatbot({ onUserMessage, initialMessages, onNewChat, userName, orgName, className }: ChatbotProps) {
   const queryClient = useQueryClient();
 
@@ -330,9 +458,48 @@ export default function Chatbot({ onUserMessage, initialMessages, onNewChat, use
   const [typing, setTyping] = useState(false);
   const [streamingMsgId, setStreamingMsgId] = useState<string | null>(null);
   const fallbackCounter = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
+  const revealRef = useRef<number | null>(null);
+  const fullTextRef = useRef('');
   const streamingIdRef = useRef<string>('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // ── Reply reveal ─────────────────────────────────────────────────────────
+  // The agent returns the entire answer in ONE frame — its connection guide is
+  // explicit that there is nothing to stream — so the reveal is built here, which
+  // is what the guide tells integrators to do. Chunks are sized to finish in about
+  // a second whatever the length, so a long answer is not slower to read than a
+  // short one; the point is that the first line is in front of the reader while
+  // the rest lands, instead of a wall of text appearing at once.
+  function stopReveal(flushInto?: string): void {
+    if (revealRef.current !== null) {
+      window.clearInterval(revealRef.current);
+      revealRef.current = null;
+    }
+    if (flushInto) {
+      const full = fullTextRef.current;
+      setMessages((prev) => prev.map((m) => (m.id === flushInto ? { ...m, content: full } : m)));
+    }
+  }
+
+  function startReveal(id: string): void {
+    stopReveal();
+    let shown = 0;
+    revealRef.current = window.setInterval(() => {
+      const full = fullTextRef.current;
+      // Split on whitespace but KEEP it, so the joined prefix is the original text.
+      const words = full.split(/(\s+)/);
+      shown += Math.max(2, Math.ceil(words.length / 40));
+      const done = shown >= words.length;
+      const text = done ? full : words.slice(0, shown).join('');
+      setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, content: text } : m)));
+      if (done) stopReveal();
+    }, 25);
+  }
+
+  // Never leave an interval running behind a closed chat.
+  useEffect(() => () => stopReveal(), []);
 
   // ── Ticket form state ────────────────────────────────────────────────────
   const [showTicketForm, setShowTicketForm] = useState(false);
@@ -394,6 +561,9 @@ export default function Chatbot({ onUserMessage, initialMessages, onNewChat, use
       }))
       .slice(-MAX_HISTORY_TURNS);
 
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
       if (onUserMessage) {
         let firstToken = true;
@@ -404,19 +574,36 @@ export default function Chatbot({ onUserMessage, initialMessages, onNewChat, use
             const id = `b-${Date.now()}`;
             streamingIdRef.current = id;
             setStreamingMsgId(id);
-            setMessages((prev) => [...prev, { id, role: 'bot', content: token, timestamp: Date.now() }]);
+            fullTextRef.current = token;
+            setMessages((prev) => [...prev, { id, role: 'bot', content: '', timestamp: Date.now() }]);
             setTyping(false);
+            startReveal(id);
           } else {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === streamingIdRef.current ? { ...m, content: m.content + token } : m,
-              ),
-            );
+            // A genuinely streaming transport would land here; grow the target and
+            // let the same reveal loop keep pace with it.
+            fullTextRef.current += token;
+            if (revealRef.current === null) {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === streamingIdRef.current ? { ...m, content: fullTextRef.current } : m,
+                ),
+              );
+            }
           }
-        });
+        }, controller.signal);
 
-        // Handle non-streaming fallback: onUserMessage resolved but no tokens were fired
-        if (firstToken) {
+        // Stopped by the user: keep whatever arrived, say so if nothing did.
+        if (controller.signal.aborted) {
+          setTyping(false);
+          if (firstToken) {
+            setMessages((prev) => [...prev, {
+              id: `b-${Date.now()}`, role: 'bot',
+              content: "Stopped. Ask me again whenever you're ready.",
+              timestamp: Date.now(),
+            }]);
+          }
+        } else if (firstToken) {
+          // Non-streaming fallback: onUserMessage resolved but no tokens were fired
           setMessages((prev) => [...prev, {
             id: `b-${Date.now()}`,
             role: 'bot',
@@ -432,8 +619,14 @@ export default function Chatbot({ onUserMessage, initialMessages, onNewChat, use
         setMessages((prev) => [...prev, { id: `b-${Date.now()}`, role: 'bot', content: replyText, timestamp: Date.now() }]);
         setTyping(false);
       }
-    } catch {
-      const errMsg = "Sorry — I hit an error reaching the assistant. Please try again, or open a ticket if it's urgent.";
+    } catch (err) {
+      stopReveal();
+      // Prefer the server's own words: "took longer than 15s to answer" tells the
+      // user what to do next, where a generic failure line does not.
+      const detail = err instanceof Error ? err.message.trim() : '';
+      const errMsg = detail
+        ? `${detail}. If it keeps happening, open a ticket and a person will pick it up.`
+        : "Sorry — I hit an error reaching the assistant. Please try again, or open a ticket if it's urgent.";
       if (streamingIdRef.current) {
         setMessages((prev) =>
           prev.map((m) => m.id === streamingIdRef.current ? { ...m, content: errMsg } : m),
@@ -445,7 +638,19 @@ export default function Chatbot({ onUserMessage, initialMessages, onNewChat, use
     } finally {
       setStreamingMsgId(null);
       streamingIdRef.current = '';
+      abortRef.current = null;
     }
+  }
+
+  // The reply can legitimately run for minutes; the user must be able to bail out
+  // of one without reloading the page. Aborting ends the stream quietly — the
+  // request is cancelled client-side, and the turn already saved server-side stays
+  // in history, so the conversation is still resumable.
+  function stopReply() {
+    abortRef.current?.abort();
+    // Mid-reveal, "Stop" means "don't make me wait for the animation" — flush the
+    // text that already arrived rather than freezing it half-written.
+    if (revealRef.current !== null && streamingIdRef.current) stopReveal(streamingIdRef.current);
   }
 
   // ── Ticket form handlers ─────────────────────────────────────────────────
@@ -624,21 +829,7 @@ export default function Chatbot({ onUserMessage, initialMessages, onNewChat, use
 
         {/* Typing indicator — shown while waiting for the first token */}
         <AnimatePresence>
-          {typing && (
-            <motion.div
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-              className="flex gap-2.5 justify-start"
-            >
-              <BotAvatar />
-              <div className="bg-white border border-slate-200 rounded-2xl rounded-bl-md px-4 py-3 flex gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: '0ms' }} />
-                <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: '150ms' }} />
-                <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: '300ms' }} />
-              </div>
-            </motion.div>
-          )}
+          {typing && <ThinkingPill onStop={stopReply} />}
         </AnimatePresence>
       </div>
 

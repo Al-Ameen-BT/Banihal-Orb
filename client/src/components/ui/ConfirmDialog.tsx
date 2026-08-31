@@ -12,6 +12,11 @@ import clsx from 'clsx';
 //                       confirmText: 'Delete' })) mutation.mutate();
 //
 // The promise resolves true (confirmed) or false (cancelled / dismissed).
+//
+// Pass `rememberKey` to offer a "Don't ask me again" checkbox. Once ticked and
+// confirmed, every later confirm() with that same key resolves true immediately
+// without opening the dialog. The choice is per-browser (localStorage), per key —
+// so skipping chat deletions never silently skips a different destructive action.
 
 type ConfirmVariant = 'default' | 'danger';
 
@@ -21,6 +26,10 @@ export interface ConfirmOptions {
   confirmText?: string;
   cancelText?: string;
   variant?: ConfirmVariant;
+  /** Enables the "Don't ask me again" checkbox, remembered under this key. */
+  rememberKey?: string;
+  /** Checkbox wording; defaults to "Don't ask me again". */
+  rememberLabel?: string;
 }
 
 type ConfirmFn = (options: ConfirmOptions) => Promise<boolean>;
@@ -46,19 +55,43 @@ const QuestionIcon = () => (
   </svg>
 );
 
+// localStorage throws in some privacy modes, and a storage failure must never
+// block a confirmation — a missed "don't ask again" just means asking again.
+const skipStorageKey = (key: string) => `confirm-skip:${key}`;
+function isSkipped(key: string): boolean {
+  try { return window.localStorage.getItem(skipStorageKey(key)) === '1'; } catch { return false; }
+}
+function rememberSkip(key: string): void {
+  try { window.localStorage.setItem(skipStorageKey(key), '1'); } catch { /* ignore */ }
+}
+
 export function ConfirmProvider({ children }: { children: React.ReactNode }) {
   const [options, setOptions] = useState<ConfirmOptions | null>(null);
+  const [remember, setRemember] = useState(false);
+  // Mirrored in refs so `close` stays referentially stable — it is a dependency of
+  // the focus/scroll-lock effect, and re-running that on every checkbox tick would
+  // yank focus off the checkbox and back onto Cancel.
+  const rememberRef = useRef(false);
+  const rememberKeyRef = useRef<string | undefined>(undefined);
   const resolverRef = useRef<((ok: boolean) => void) | null>(null);
   const confirmBtnRef = useRef<HTMLButtonElement>(null);
   const cancelBtnRef = useRef<HTMLButtonElement>(null);
   const reduce = useReducedMotion();
 
   const confirm = useCallback<ConfirmFn>((opts) => {
+    // Already told us not to ask for this action: proceed without a dialog.
+    if (opts.rememberKey && isSkipped(opts.rememberKey)) return Promise.resolve(true);
+    rememberKeyRef.current = opts.rememberKey;
+    rememberRef.current = false;
+    setRemember(false);
     setOptions(opts);
     return new Promise<boolean>((resolve) => { resolverRef.current = resolve; });
   }, []);
 
   const close = useCallback((result: boolean) => {
+    // Only a confirmed action can arm the skip — cancelling with the box ticked
+    // must not silently authorise the next deletion.
+    if (result && rememberRef.current && rememberKeyRef.current) rememberSkip(rememberKeyRef.current);
     resolverRef.current?.(result);
     resolverRef.current = null;
     setOptions(null);
@@ -143,6 +176,18 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
                 <div id="confirm-desc" className="mx-auto mt-1.5 max-w-sm text-center text-sm leading-relaxed text-slate-600">
                   {options.message}
                 </div>
+              )}
+
+              {options.rememberKey && (
+                <label className="mt-5 flex cursor-pointer items-center justify-center gap-2 text-sm text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={remember}
+                    onChange={(e) => { rememberRef.current = e.target.checked; setRemember(e.target.checked); }}
+                    className="h-4 w-4 cursor-pointer rounded border-slate-300 text-brand focus-visible:ring-2 focus-visible:ring-brand/50"
+                  />
+                  {options.rememberLabel ?? "Don't ask me again"}
+                </label>
               )}
 
               <div className="mt-6 flex gap-3">

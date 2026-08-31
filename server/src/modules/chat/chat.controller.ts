@@ -26,6 +26,7 @@ export async function sendMessage(req: Request, res: Response, next: NextFunctio
     await chatService.streamToResponse(message, history, req, res, {
       userId: req.user.userId,
       customerId: req.user.customerId,
+      role: req.user.role,
       sessionId,
     });
   } catch (err) {

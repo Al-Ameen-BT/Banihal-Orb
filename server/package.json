@@ -12,13 +12,14 @@
     "db:generate": "prisma generate && prisma generate --schema prisma/chat.prisma && prisma generate --schema prisma/ticketing.prisma && prisma generate --schema prisma/ticket.prisma",
     "db:provision": "bash db/provision.sh",
     "db:verify": "tsx db/verify.ts",
-    "db:push": "echo 'db:push is deprecated and can wipe data — use db:provision (idempotent SQL DDL)' && npm run db:provision",
+    "db:push": "echo 'db:push is deprecated and can wipe data \u2014 use db:provision (idempotent SQL DDL)' && npm run db:provision",
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
     "db:seed:tickets": "tsx prisma/seed-tickets.ts",
     "test": "vitest run --reporter=verbose",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "agent:check": "NODE_EXTRA_CA_CERTS=certs/agent.pem tsx scripts/agent-check.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.10.2",

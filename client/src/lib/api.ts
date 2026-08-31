@@ -1,4 +1,4 @@
-import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
+import axios, { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios';
 // Same specifier style as ToastProvider's import so both resolve to ONE module instance
 // (a mixed './toast-bus' vs '@/lib/toast-bus' can bundle as two, silently losing the handler).
 import { notify } from '@/lib/toast-bus';
@@ -226,6 +226,9 @@ export interface StreamOptions {
   onSession?: (sessionId: string) => void;
   onDone?: () => void;
   onError?: (msg: string) => void;
+  /** Abort the in-flight reply (the "Stop" button). An abort ends the stream
+   *  quietly — onDone, never onError: the user asked for it, it is not a fault. */
+  signal?: AbortSignal;
 }
 
 export const chatApi = {
@@ -234,7 +237,7 @@ export const chatApi = {
     history: ChatTurn[] = [],
     opts: StreamOptions,
   ): Promise<void> => {
-    const { sessionId, onToken, onSession, onDone, onError } = opts;
+    const { sessionId, onToken, onSession, onDone, onError, signal } = opts;
     let response: Response;
     try {
       // NOTE: BASE already includes the `/api` prefix (browser: '/api'), so the
@@ -247,8 +250,10 @@ export const chatApi = {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message, history, ...(sessionId ? { sessionId } : {}) }),
+        ...(signal ? { signal } : {}),
       });
     } catch {
+      if (signal?.aborted) { onDone?.(); return; }
       onError?.('The assistant is unavailable. Please try again.');
       onDone?.();
       return;
@@ -268,6 +273,7 @@ export const chatApi = {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        if (signal?.aborted) break;
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
@@ -298,6 +304,10 @@ export const chatApi = {
           }
         }
       }
+    } catch {
+      // A mid-stream abort surfaces here as a read error; anything else genuinely
+      // broke the connection and still deserves the generic message.
+      if (!signal?.aborted) onError?.('The assistant is unavailable. Please try again.');
     } finally {
       reader.releaseLock();
     }
@@ -361,4 +371,12 @@ export const saasAdminApi = {
 // cookie riding along as on every other call is the whole authorization story.
 export const dashboardApi = {
   overview: (users = false) => api.get('/ticketing/dashboard', { params: users ? { users: true } : undefined }),
+};
+
+// Analytics Agent, signed /v1 surface (server-side credential; ORG_ADMIN+ only).
+// `_skipRetry` keeps the 5xx interceptor from bouncing the whole dashboard to
+// /server-error when the agent box is down or its TLS cert is unreachable — the
+// section renders its own inline "unavailable" line instead.
+export const agentApi = {
+  topComplaints: () => api.get('/agent/top-complaints', { _skipRetry: true } as AxiosRequestConfig),
 };
