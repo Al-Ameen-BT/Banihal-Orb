@@ -347,7 +347,8 @@ Server env (Zod-validated, [env.ts](server/src/config/env.ts)):
 | `ADMIN_DOMAINS` | `''` | Comma-separated domains allowed to hold `ADMINISTRATOR`. **Empty disables admin login.** |
 | `COOKIE_SECURE` | (auto) | Force Secure cookies. |
 | `AGENT_URL` | `http://localhost:8001` | AI assistant SSE backend. |
-| `OLLAMA_URL`, `OLLAMA_MODEL` | `:11435`, `qwen2.5:3b` | Legacy; kept for deploy preflight. |
+| `REDIS_URL` | (unset) | Cache + rate-limit store + agent lock. Unset ⇒ in-process fallbacks. |
+| `TRUST_PROXY` | `loopback` | Upstream trusted for `X-Forwarded-For`. Set to the podman CIDR when containerized. Never `true`. |
 
 Client env: `NEXT_PUBLIC_API_URL` (defaults to `http://localhost:3001`).
 

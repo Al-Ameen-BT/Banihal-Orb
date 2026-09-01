@@ -1,0 +1,35 @@
+[Unit]
+Description=B2B-Site PostgreSQL
+# The volume must exist before the container mounts it; the pod before it joins.
+Requires=b2b-pgdata-volume.service b2b-postgres-pod.service
+After=b2b-pgdata-volume.service b2b-postgres-pod.service
+
+[Container]
+ContainerName=b2b-postgres
+Image=docker.io/library/postgres:16-bookworm
+Pod=b2b-postgres.pod
+
+# Credentials and the superuser password live in this file on the host, mode 0600,
+# never in the unit and never in a layer. Provision it from db/provision.sh's
+# expectations — the five databases are created by that script, not by this image.
+EnvironmentFile=/etc/b2b/postgres.env
+
+# PGDATA is set to a SUBDIRECTORY of the mount, not the mount root. Postgres
+# refuses to initialise into a directory that is not empty, and a volume mount
+# root can carry `lost+found` — initdb then fails with a message about the
+# directory not being empty, which reads like a corrupt volume.
+Environment=PGDATA=/var/lib/postgresql/data/pgdata
+Volume=b2b-pgdata.volume:/var/lib/postgresql/data:Z
+
+HealthCmd=pg_isready -U postgres
+HealthInterval=10s
+HealthRetries=5
+HealthStartPeriod=30s
+
+[Service]
+Restart=always
+# initdb on a first run takes a while; do not shoot it partway through.
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target

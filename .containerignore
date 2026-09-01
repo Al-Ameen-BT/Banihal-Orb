@@ -1,0 +1,31 @@
+# Keep the build context small and, more importantly, keep secrets and host-built
+# artifacts out of the image.
+
+# Host node_modules would shadow the image's own — and carries Prisma engines
+# built for the HOST's libc, which is the whole reason the API image pins a glibc
+# base. Letting these in reintroduces the mismatch silently.
+**/node_modules
+
+# Build output — regenerated inside the image.
+**/dist
+**/.next
+
+# Secrets. .env files are mounted at runtime via EnvironmentFile= in the Quadlet
+# units, never baked into a layer (a layer is readable by anyone who can pull it).
+**/.env
+**/.env.*
+!**/.env.example
+certs/
+*.pem
+*.key
+
+# Runtime data.
+server/uploads/
+
+# Not needed to build or run.
+.git
+.github
+.claude
+deploy/
+*.md
+**/*.test.ts

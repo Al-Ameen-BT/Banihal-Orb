@@ -11,6 +11,7 @@ import {
   TicketNumberFormatSchema,
 } from './saas-admin.schema';
 import * as saasAdminService from './saas-admin.service';
+import { cached, cacheKey, TTL } from '../../lib/cache';
 
 export async function getTicketNumberFormat(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -263,18 +264,20 @@ export async function getLoginsByOrg(req: Request, res: Response, next: NextFunc
 }
 
 // ─── SLA breach monitor ──────────────────────────────────────────────────────
+// Cached like the ticketing dashboards: an estate-wide rollup behind a polling
+// panel. Cached at the controller so what is stored is the JSON-safe response,
+// not Prisma rows carrying Date objects. Both routes are ADMINISTRATOR-only, so
+// there is no per-caller variation to fold into the key.
 export async function getSlaBreaches(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const result = await saasAdminService.getSlaBreaches();
-    res.json(result);
+    res.json(await cached(cacheKey('sla-breaches'), TTL.dashboard, () => saasAdminService.getSlaBreaches()));
   } catch (err) { next(err); }
 }
 
 // ─── Chat analytics ──────────────────────────────────────────────────────────
 export async function getChatAnalytics(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const result = await saasAdminService.getChatAnalytics();
-    res.json(result);
+    res.json(await cached(cacheKey('chat-analytics'), TTL.dashboard, () => saasAdminService.getChatAnalytics()));
   } catch (err) { next(err); }
 }
 

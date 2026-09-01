@@ -1,0 +1,51 @@
+[Unit]
+Description=B2B-Site API
+Requires=b2b-app-pod.service b2b-uploads-volume.service
+After=b2b-app-pod.service b2b-uploads-volume.service b2b-postgres.service b2b-redis.service
+# Wants, not Requires, for the backing services: the API starts and serves /health
+# with Redis down (it degrades to in-process limits), and holding it hostage to
+# another unit's state turns a cache blip into an outage.
+Wants=b2b-postgres.service b2b-redis.service
+
+[Container]
+ContainerName=b2b-api
+Image=localhost/b2b-api:latest
+Pod=b2b-app.pod
+
+# Secrets stay on the host, mode 0600, exactly as the systemd deploy does today —
+# never baked into an image layer.
+EnvironmentFile=/etc/b2b/server.env
+Environment=NODE_ENV=production
+Environment=PORT=3001
+
+# Hostnames resolved by aardvark-dns on the b2b network. Set the matching
+# DATABASE_URL / REDIS_URL in /etc/b2b/server.env, e.g.
+#   DATABASE_URL="postgresql://b2b:...@b2b-postgres:5432/b2b?schema=public"
+#   REDIS_URL="redis://b2b-redis:6379"
+#
+# TRUST_PROXY must name the b2b subnet (10.89.10.0/24, pinned in b2b.network) —
+# nginx now reaches this container from there, not from loopback, and Express
+# ignores X-Forwarded-For from an untrusted hop. Leave it at the 'loopback'
+# default and every IP-keyed rate limiter silently collapses into one bucket.
+#   TRUST_PROXY="10.89.10.0/24"
+
+Volume=b2b-uploads.volume:/app/uploads:Z
+
+# The Analytics Agent stays on the host. (Ollama used to as well; nothing has
+# called it since the agent began managing its own model, and it is now removed.)
+AddHost=host.containers.internal:host-gateway
+
+# The probe lives here rather than in the Containerfile: Podman's default OCI
+# image format silently discards a HEALTHCHECK directive. /health is the API's
+# unauthenticated probe, mounted at the root (not under /api).
+HealthCmd=curl -fsS http://127.0.0.1:3001/health
+HealthInterval=30s
+HealthRetries=3
+HealthStartPeriod=20s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

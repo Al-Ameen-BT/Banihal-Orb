@@ -1,0 +1,14 @@
+[Unit]
+Description=B2B-Site Redis pod
+
+[Pod]
+PodName=b2b-redis
+Network=b2b.network
+
+# No PublishPort. Redis is reachable only from the b2b network, by name, from the
+# app pod. An unauthenticated Redis on a published port is a remote shell waiting
+# to happen (CONFIG SET dir + SAVE writes arbitrary files) — do not add one to
+# "make debugging easier"; use `podman exec b2b-redis redis-cli`.
+
+[Install]
+WantedBy=default.target

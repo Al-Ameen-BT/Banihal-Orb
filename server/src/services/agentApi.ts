@@ -13,6 +13,7 @@
 
 import crypto from 'crypto';
 import { env } from '../config/env';
+import { redis } from '../lib/redis';
 
 // ─── Roles ───────────────────────────────────────────────────────────────────
 
@@ -225,21 +226,75 @@ async function withBusyRetry<T>(attempt: () => Promise<T>): Promise<T> {
 /**
  * The agent processes ONE /v1/chat at a time across every client and role — a
  * second concurrent call is refused instantly with 429 `server_busy`, never
- * queued. So the queue has to live on this side: model calls from this process
- * run one at a time, in arrival order, and a busy user waits instead of failing.
+ * queued. So the queue has to live on this side: model calls run one at a time,
+ * in arrival order, and a busy user waits instead of failing.
  *
  * The per-request timeout starts inside `signedFetch`, so time spent waiting for
  * the lane does not eat into the 180s model budget.
  *
- * ponytail: one in-process lane, which is the whole deployment today (systemd
- * runs a single API process). If the API is ever scaled to more than one process,
- * this needs a shared lock (Redis/advisory lock) or the cap is breached again.
+ * TWO layers, because they solve different halves of the problem:
+ *   1. `inLane` serializes calls WITHIN this process, in arrival order, with no
+ *      network round trip per waiter.
+ *   2. `withAgentLock` serializes the head of each process's queue ACROSS
+ *      processes. Required from the moment more than one API instance exists —
+ *      which containerization makes trivially easy to do by accident.
+ *
+ * With REDIS_URL unset, layer 2 is a pass-through and the behaviour is exactly
+ * the single-process lane this replaced.
  */
 let lane: Promise<unknown> = Promise.resolve();
 function inLane<T>(run: () => Promise<T>): Promise<T> {
   const next = lane.then(run, run);
   lane = next.catch(() => undefined);
   return next;
+}
+
+const LOCK_KEY = 'b2b:agent:lane';
+// Must exceed the longest a call can hold the lane, or the lock expires under a
+// running request and a second process starts one — the exact breach this
+// prevents. The +20s covers the wait for the agent's own response teardown.
+const LOCK_TTL_MS = env.AGENT_CHAT_TIMEOUT_MS + 20_000;
+const POLL_MS = 250;
+
+// Release only if we still own it. A plain DEL would let a call that overran its
+// TTL delete the NEXT holder's lock, silently allowing two concurrent requests.
+const RELEASE = `
+if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end
+`;
+
+async function withAgentLock<T>(run: () => Promise<T>): Promise<T> {
+  if (!redis) return run();
+
+  const token = crypto.randomUUID();
+  const deadline = Date.now() + env.AGENT_CHAT_TIMEOUT_MS;
+
+  for (;;) {
+    let acquired: string | null = null;
+    try {
+      acquired = await redis.set(LOCK_KEY, token, 'PX', LOCK_TTL_MS, 'NX');
+    } catch {
+      // Redis went away mid-wait. The in-process lane still holds for this
+      // instance, and refusing the request outright would be a worse failure
+      // than the cap it protects — proceed unlocked.
+      return run();
+    }
+    if (acquired) break;
+
+    if (Date.now() >= deadline) {
+      throw agentError(
+        'The assistant is busy with another request — please try again in a moment',
+        503, 'AGENT_BUSY',
+      );
+    }
+    await new Promise((r) => setTimeout(r, POLL_MS));
+  }
+
+  try {
+    return await run();
+  } finally {
+    // Best-effort: if this throws, the TTL releases the lane anyway.
+    try { await redis.eval(RELEASE, 1, LOCK_KEY, token); } catch { /* TTL covers it */ }
+  }
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -259,7 +314,8 @@ export async function agentChat(message: string, role: AgentRole): Promise<Agent
   const send = async (as: AgentRole): Promise<AgentChatReply> => {
     // Serialised once, here — this exact string is both signed and sent.
     const body = JSON.stringify({ message, role: as });
-    const data = await inLane(() => withBusyRetry(() => signedFetch(creds, '/v1/chat', body, CHAT_TIMEOUT_MS)));
+    const data = await inLane(() =>
+      withAgentLock(() => withBusyRetry(() => signedFetch(creds, '/v1/chat', body, CHAT_TIMEOUT_MS))));
     const reply = (data as { reply?: unknown } | null)?.reply;
     if (typeof reply !== 'string') throw agentError('The assistant returned an unreadable reply', 502, 'AGENT_MALFORMED');
     return { reply, role: as };

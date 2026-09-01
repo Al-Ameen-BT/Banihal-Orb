@@ -1,0 +1,15 @@
+# Ticket and comment attachments (server/src/modules/ticketing/uploads.ts).
+#
+# User-uploaded data, not build output: without this volume every attachment is
+# lost the moment the API container is replaced — which a redeploy does routinely.
+# The DB rows survive and point at files that no longer exist, so the failure
+# shows up later as broken downloads rather than at deploy time.
+
+[Unit]
+Description=B2B-Site ticket attachments
+
+[Volume]
+VolumeName=b2b-uploads
+
+[Install]
+WantedBy=default.target

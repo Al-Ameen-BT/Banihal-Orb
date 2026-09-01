@@ -4,6 +4,7 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 
 import { corsOptions } from './config/security';
+import { env } from './config/env';
 import { prisma } from './config/database';
 import { chatPrisma } from './config/chatDatabase';
 import { ticketingPrisma } from './config/ticketingDatabase';
@@ -30,11 +31,16 @@ import agentRoutes from './modules/agent/agent.routes';
 
 const app = express();
 
-// Trust the local reverse proxy (Nginx) so req.ip reflects the real client via
+// Trust the reverse proxy (Nginx) so req.ip reflects the real client via
 // X-Forwarded-For — otherwise every request appears to come from the proxy and
-// the IP-keyed rate limiters collapse into a single shared bucket. 'loopback'
-// trusts only 127.0.0.1/::1, so clients cannot spoof X-Forwarded-For.
-app.set('trust proxy', 'loopback');
+// the IP-keyed rate limiters collapse into a single shared bucket.
+//
+// Configurable because the proxy's address depends on the deployment: 'loopback'
+// (the default) is correct for nginx on the same host, but under Podman nginx
+// reaches the API from its address on the container network, which is not
+// loopback — leave it at the default there and every limiter silently degrades
+// with nothing in the logs. See TRUST_PROXY in config/env.ts.
+app.set('trust proxy', env.TRUST_PROXY);
 
 // ─── Global security middleware ──────────────────────────────────────────────
 app.use(helmet({

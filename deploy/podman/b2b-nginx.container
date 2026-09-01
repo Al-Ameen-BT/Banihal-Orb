@@ -1,0 +1,31 @@
+[Unit]
+Description=B2B-Site nginx (TLS termination + reverse proxy)
+Requires=b2b-nginx-pod.service
+After=b2b-nginx-pod.service b2b-api.service b2b-web.service
+Wants=b2b-api.service b2b-web.service
+
+[Container]
+ContainerName=b2b-nginx
+Image=docker.io/library/nginx:1.27-alpine
+Pod=b2b-nginx.pod
+
+# Config and certificates are bind-mounted READ-ONLY from the host, so
+# deploy/nginx/https-nginx.sh remains the one place certificates are generated
+# and rotated — no cert material is copied into an image.
+#
+# The cert must carry this host's IP in subjectAltName; regenerate it whenever the
+# server's address changes or browsers reject it outright.
+Volume=/etc/b2b/nginx/b2b-site.conf:/etc/nginx/conf.d/default.conf:ro,Z
+Volume=/etc/nginx/ssl:/etc/nginx/ssl:ro,Z
+
+HealthCmd=nginx -t
+HealthInterval=60s
+HealthRetries=3
+HealthStartPeriod=10s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -87,12 +87,14 @@ ok "nginx, curl and openssl present"
 NGINX_VER="$(nginx -v 2>&1 | sed 's|.*/||')"
 ok "nginx $NGINX_VER"
 
-# `http2 on;` is nginx >= 1.25.1 only. On anything older it is an UNKNOWN
-# directive and nginx refuses to start, so pick the form this build understands.
+# The template ships the `listen ... http2` form because every nginx understands
+# it — a hand-copied config must not be able to break the server. 1.25.1+ marks
+# that form deprecated in favour of a standalone `http2 on;`, so on those builds
+# we upgrade; on older ones we leave it exactly as written.
 if [[ "$(printf '%s\n1.25.1\n' "$NGINX_VER" | sort -V | head -1)" == "1.25.1" ]]; then
-    HTTP2_MODE="modern"; ok "HTTP/2: using 'http2 on;' (nginx >= 1.25.1)"
+    HTTP2_MODE="modern"; ok "HTTP/2: nginx >= 1.25.1 — upgrading to 'http2 on;'"
 else
-    HTTP2_MODE="legacy"; ok "HTTP/2: nginx < 1.25.1 — folding into 'listen 443 ssl http2;'"
+    HTTP2_MODE="legacy"; ok "HTTP/2: nginx < 1.25.1 — keeping 'listen ... http2' as written"
 fi
 
 # Layout differs by distro family. RHEL has no sites-available/sites-enabled at
@@ -213,9 +215,17 @@ if ! $CHECK_ONLY; then
         cp "$TEMPLATE" "$TARGET"
     fi
 
-    if [[ "$HTTP2_MODE" == "legacy" ]]; then
-        sed -i 's/^\(\s*\)listen      443 ssl default_server;/\1listen      443 ssl http2 default_server;/' "$TARGET"
-        sed -i '/^\s*http2\s*on;/d' "$TARGET"
+    # Strip `http2` from BOTH listen lines (IPv4 and IPv6 — the old rewrite missed
+    # the v6 one, so it silently ran without HTTP/2) and add the standalone
+    # directive once. Only on builds that support it; older nginx keeps the
+    # template's form untouched and starts fine.
+    if [[ "$HTTP2_MODE" == "modern" ]]; then
+        sed -i 's/^\(\s*listen .*443 ssl\) http2 \(default_server;\)/\1 \2/' "$TARGET"
+        # Anchored to the IPv6 :443 listen line, which appears exactly once. Do NOT
+        # anchor on `server_name _;` — the :80 redirect block has one too, and the
+        # directive would land there: valid syntax, `nginx -t` clean, and HTTP/2
+        # silently off on the HTTPS server it was meant for.
+        sed -i '/^\s*listen .*\[::\]:443 ssl default_server;/a\    http2       on;' "$TARGET"
     fi
 
     if [[ "$LAYOUT" == "debian" ]]; then

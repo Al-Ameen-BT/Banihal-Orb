@@ -11,6 +11,7 @@ import * as escalation from './services/escalation';
 import { listAdminAssignees } from './services/adminAssignees';
 import { resolveTicketActor } from './identity';
 import { aggregate } from './services/dashboardAggregate';
+import { cached, cacheKey, TTL } from '../../lib/cache';
 
 // Bridge the B2B-Site user to a ticketing staff Users row (id + mapped role).
 const actor = (req: Request) => resolveTicketActor(req.user.userId, req.user.role);
@@ -98,7 +99,9 @@ export async function updateTicket(req: Request, res: Response, next: NextFuncti
 }
 
 export async function listProjects(_req: Request, res: Response, next: NextFunction): Promise<void> {
-  try { res.json({ projects: await service.listProjects() }); } catch (err) { next(err); }
+  try {
+    res.json({ projects: await cached(cacheKey('projects'), TTL.reference, () => service.listProjects()) });
+  } catch (err) { next(err); }
 }
 
 export async function createProject(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -140,16 +143,19 @@ export async function listAssignees(req: Request, res: Response, next: NextFunct
   try {
     // Admin store's assignee pool is the platform administrators (bridged).
     if (req.user.role === 'ADMINISTRATOR') {
-      res.json({ assignees: await listAdminAssignees() });
+      res.json({ assignees: await cached(cacheKey('assignees', 'admin'), TTL.reference, () => listAdminAssignees()) });
       return;
     }
     // Org store's pool is its own staff (platform admins are excluded by listStaff).
     // ORG_ADMINs additionally get a synthetic "Escalate to Administrators" option at
-    // the top; regular users never see it.
-    const staff = await db.listStaff();
-    const assignees = req.user.role === 'ORG_ADMIN'
-      ? [{ id: ESCALATE_ADMINS_ID, name: 'Escalate to Administrators', email: '', role: 'ADMINISTRATOR' }, ...staff]
-      : staff;
+    // the top; regular users never see it — so the role is part of the cache key,
+    // or a USER would be served the org-admin list from a warm entry.
+    const assignees = await cached(cacheKey('assignees', req.user.role), TTL.reference, async () => {
+      const staff = await db.listStaff();
+      return req.user.role === 'ORG_ADMIN'
+        ? [{ id: ESCALATE_ADMINS_ID, name: 'Escalate to Administrators', email: '', role: 'ADMINISTRATOR' }, ...staff]
+        : staff;
+    });
     res.json({ assignees });
   } catch (err) { next(err); }
 }
@@ -160,8 +166,24 @@ export async function listCustomers(_req: Request, res: Response, next: NextFunc
   try { res.json({ customers: await db.listCustomers() }); } catch (err) { next(err); }
 }
 
+// ─── Cached aggregate reads ──────────────────────────────────────────────────
+// The four handlers below run full-table scans over Tickets and are polled on
+// 15-60s timers by every open dashboard, so each connected admin was triggering
+// their own scan on every tick.
+//
+// They are cached at the CONTROLLER, deliberately, rather than around the queries
+// they wrap. The queries return Prisma rows carrying `Date` objects, and the
+// aggregators do arithmetic on them — a JSON round-trip through Redis would hand
+// back ISO strings and turn that arithmetic into NaN, silently. What is cached
+// here is the value about to be `res.json()`d, so it is JSON-safe by construction.
+//
+// `cacheKey` folds in the active ticket-DB scope, which is what keeps the shared
+// and admin stores from ever serving each other's rows.
+
 export async function getStats(_req: Request, res: Response, next: NextFunction): Promise<void> {
-  try { res.json(await service.getStats()); } catch (err) { next(err); }
+  try {
+    res.json(await cached(cacheKey('stats'), TTL.dashboard, () => service.getStats()));
+  } catch (err) { next(err); }
 }
 
 // Every panel of the ops dashboard in one payload. The flat estate comes from the
@@ -171,19 +193,33 @@ export async function dashboardOverview(req: Request, res: Response, next: NextF
   try {
     // The per-user grid is a second pass over every ticket and only the ORG_ADMIN
     // view renders it, so a platform admin does not pay for a panel they never see.
+    // It also changes the payload, so it has to be part of the cache key.
     const withUsers = req.query['users'] === 'true';
-    res.json(aggregate(await db.dashboardFeed(), new Date(), withUsers));
+    res.json(await cached(
+      cacheKey('dashboard', withUsers),
+      TTL.dashboard,
+      // `new Date()` moves inside the miss path: cached under the timestamp the
+      // aggregate was computed with, which is what the TTL already bounds.
+      async () => aggregate(await db.dashboardFeed(), new Date(), withUsers),
+    ));
   } catch (err) { next(err); }
 }
 
 export async function getAnalytics(_req: Request, res: Response, next: NextFunction): Promise<void> {
-  try { res.json(await service.getAnalytics()); } catch (err) { next(err); }
+  try {
+    res.json(await cached(cacheKey('analytics'), TTL.dashboard, () => service.getAnalytics()));
+  } catch (err) { next(err); }
 }
 
 export async function getReport(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const input = ReportSchema.parse(req.query);
-    res.json(await service.getReport(input.type, input.from, input.to));
+    // The date range is part of the identity of the result, so it is part of the key.
+    res.json(await cached(
+      cacheKey('report', input.type, input.from ?? '', input.to ?? ''),
+      TTL.dashboard,
+      () => service.getReport(input.type, input.from, input.to),
+    ));
   } catch (err) { next(err); }
 }
 

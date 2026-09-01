@@ -44,4 +44,7 @@ __pycache__/
 pycache/*
 __pycache__
 
-tests
+# NOTE: a bare `tests` pattern used to live here, alongside these Python artifact
+# rules. It matched server/tests/ and quietly kept four of the suite's files out of
+# version control — which meant CI checked out a repo missing most of its tests and
+# reported green. Do not reintroduce it: server/tests/ is source, not build output.

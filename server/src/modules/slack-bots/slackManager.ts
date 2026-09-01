@@ -7,7 +7,7 @@ import { agentChat } from '../../services/agentApi';
 // ─── Slack bot manager (singleton) ───────────────────────────────────────────
 // Owns the live connections for every enabled SlackBot. Uses the Slack Web API to
 // validate/health-check (auth.test) and, when an app-level token is present, opens a
-// Socket Mode connection to bridge inbound Slack messages to the Ollama assistant and
+// Socket Mode connection to bridge inbound Slack messages to the Analytics Agent and
 // post the reply back. Live status is persisted to the SlackBot row; a poll loop keeps
 // it fresh. No public URL is required (Socket Mode is an outbound WebSocket).
 

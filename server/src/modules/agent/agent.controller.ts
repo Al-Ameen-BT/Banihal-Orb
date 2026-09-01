@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { AgentChatSchema } from './agent.schema';
 import { agentChat, topComplaints, agentRoleFor } from '../../services/agentApi';
+import { cached, cacheKey, TTL } from '../../lib/cache';
 
 // One question, one answer, from the agent's signed /v1/chat.
 //
@@ -17,6 +18,12 @@ export async function chat(req: Request, res: Response, next: NextFunction): Pro
 }
 
 // Highest-volume complaint categories plus their summed total.
+//
+// Cached: this is a cross-network call to the agent box on every dashboard tick,
+// and the categories move on the order of hours, not seconds. Caching it also
+// keeps a slow or down agent from stalling the panel on every poll.
 export async function complaints(_req: Request, res: Response, next: NextFunction): Promise<void> {
-  try { res.json(await topComplaints()); } catch (err) { next(err); }
+  try {
+    res.json(await cached(cacheKey('top-complaints'), TTL.dashboard, () => topComplaints()));
+  } catch (err) { next(err); }
 }

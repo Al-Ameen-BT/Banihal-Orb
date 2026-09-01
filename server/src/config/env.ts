@@ -78,9 +78,6 @@ const EnvSchema = z.object({
   // detection silently degrades until users next set a password. Falls back to
   // JWT_ACCESS_SECRET so no extra config is required in dev.
   PASSWORD_PEPPER: z.string().optional(),
-  // Legacy Ollama settings (the agent manages its own model now; kept for the deploy preflight)
-  OLLAMA_URL: z.string().url().default('http://localhost:11435'),
-  OLLAMA_MODEL: z.string().default('qwen2.5:3b'),
   // SMTP settings for mailing system
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.coerce.number().optional(),
@@ -99,6 +96,28 @@ const EnvSchema = z.object({
   VAPID_PUBLIC_KEY: z.string().optional(),
   VAPID_PRIVATE_KEY: z.string().optional(),
   VAPID_SUBJECT: z.string().default('mailto:admin@banihal.in'),
+
+  // ─── Redis (lib/redis.ts) ─────────────────────────────────────────────────
+  // Backs three things: the aggregate-read cache, the rate-limit store, and the
+  // agent's one-call-at-a-time lock. OPTIONAL by design — when unset, all three
+  // fall back to their in-process behaviour (call straight through, memory store,
+  // in-process lane), so dev and the test suite need no Redis and a Redis outage
+  // degrades the app instead of stopping it.
+  REDIS_URL: z.string().url().optional(),
+
+  // Which upstream addresses Express may believe an `X-Forwarded-For` from.
+  // Passed straight to `app.set('trust proxy', …)`, so it takes any value that
+  // setting takes: 'loopback', a CIDR, or a comma-separated list.
+  //
+  // Default 'loopback' is today's bare-metal deployment (nginx on the same host).
+  // Containerized, nginx reaches the API from its address on the podman network,
+  // which is NOT loopback — leave this at the default there and Express stops
+  // trusting the header, collapsing every IP-keyed rate limiter into ONE bucket
+  // keyed on nginx's container IP. Set it to the podman network's CIDR.
+  //
+  // Never set this to 'true'. That trusts a client-supplied X-Forwarded-For and
+  // makes the limiters bypassable by anyone who sends the header.
+  TRUST_PROXY: z.string().default('loopback'),
 });
 
 const result = EnvSchema.safeParse(process.env);

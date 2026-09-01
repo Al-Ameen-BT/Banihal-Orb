@@ -1,6 +1,5 @@
-name: CI
+name: CI/CD
 
-# Syntax / compile checks only — no tests, no deployment.
 on:
   push:
     branches: [main]
@@ -14,10 +13,10 @@ concurrency:
 
 jobs:
   # ──────────────────────────────────────────────────────────────────────────
-  # Server — TypeScript type-check (needs the generated Prisma clients for types)
+  # Server — TypeScript type-check + unit tests
   # ──────────────────────────────────────────────────────────────────────────
   server-check:
-    name: Server — typecheck
+    name: Server — typecheck & test
     runs-on: ubuntu-latest
 
     defaults:
@@ -43,6 +42,18 @@ jobs:
 
       - name: TypeScript check
         run: npx tsc --noEmit
+
+      # The suite has always existed but was never run here. Note that most of it
+      # needs a live PostgreSQL and is expected to fail without one — this step
+      # runs the tests that do not, so a broken pure function (cache keys, the
+      # dashboard aggregation, request signing) stops a merge.
+      #
+      # To run the whole suite, add a postgres service container and provision the
+      # five databases with db/provision.sh. Until then, do NOT widen this pattern
+      # and let the DB-dependent failures turn the pipeline permanently red —
+      # a red pipeline nobody trusts is worse than a narrow green one.
+      - name: Unit tests
+        run: npx vitest run tests/cache.test.ts tests/dashboard-aggregate.test.ts tests/agent-signing.test.ts tests/uploads.test.ts
 
   # ──────────────────────────────────────────────────────────────────────────
   # Client — TypeScript type-check + production build
@@ -73,4 +84,100 @@ jobs:
       - name: Build
         run: npm run build
         env:
+          # Placeholder only — this build is a compile check, never shipped. The
+          # real value is inlined at image build time from /etc/b2b/client.env.
           NEXT_PUBLIC_API_URL: http://localhost:3001
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Images — prove the Containerfiles still build
+  # ──────────────────────────────────────────────────────────────────────────
+  # A hosted runner, deliberately: this job only has to catch a broken
+  # Containerfile, and doing that on GitHub's infrastructure keeps the failure
+  # visible on pull requests, before anything reaches the deploy runner.
+  images:
+    name: Container images — build
+    runs-on: ubuntu-latest
+    needs: [server-check, client-check]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build API image
+        run: podman build -f Containerfile.api -t b2b-api:ci .
+
+      - name: Build web image
+        run: |
+          podman build -f Containerfile.web \
+            --build-arg NEXT_PUBLIC_API_URL=http://localhost:3001 \
+            -t b2b-web:ci .
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Deploy — main only, on the LAN
+  # ──────────────────────────────────────────────────────────────────────────
+  # SELF-HOSTED, and it has to be. The target sits on a private LAN with no public
+  # DNS and no inbound route (which is also why its TLS certificate is
+  # self-signed) — a GitHub-hosted runner cannot reach it at all. The runner lives
+  # on the LAN and needs rights to run the Quadlet units:
+  #
+  #   sudo tee /etc/sudoers.d/b2b-deploy <<'EOF'
+  #   github-runner ALL=(root) NOPASSWD: /usr/bin/systemctl restart b2b-api b2b-web, \
+  #                                      /usr/bin/systemctl is-active b2b-api b2b-web
+  #   EOF
+  #
+  # Scoped to exactly those commands: a runner that can run any systemctl is a
+  # runner that can be talked into running anything.
+  deploy:
+    name: Deploy to internal server
+    runs-on: [self-hosted, b2b]
+    needs: [images]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # Attach a GitHub Environment so the deploy can require a manual approval.
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Recorded BEFORE the build so the rollback target is known even if a later
+      # step dies partway through.
+      #
+      # The two images are always built and tagged together, so one sha identifies
+      # the pair. Rolling back only the API would leave the web bundle on new code
+      # talking to an old API — a mismatch that is worse than either version alone.
+      - name: Record current release for rollback
+        id: current
+        run: |
+          prev=$(podman image inspect localhost/b2b-api:latest \
+                   --format '{{range .RepoTags}}{{println .}}{{end}}' 2>/dev/null \
+                   | grep -v ':latest$' | head -1 | sed 's/.*://' || echo '')
+          echo "previous=$prev" >> "$GITHUB_OUTPUT"
+          echo "Rollback target: ${prev:-<none, first deploy>}"
+
+      - name: Build images
+        run: ./deploy/podman/build.sh "${GITHUB_SHA::7}"
+
+      - name: Restart services
+        run: sudo systemctl restart b2b-api b2b-web
+
+      # The real gate. `systemctl restart` returning 0 only means the container
+      # started, not that the app inside it works — a bad DATABASE_URL exits
+      # seconds later and systemd cheerfully restarts it forever.
+      - name: Health check
+        id: health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsSk https://localhost/health >/dev/null 2>&1; then
+              echo "✅ Healthy after ${i}0s"; exit 0
+            fi
+            sleep 10
+          done
+          echo "❌ Unhealthy after 300s"; exit 1
+
+      - name: Roll back on failure
+        if: failure() && steps.health.outcome == 'failure' && steps.current.outputs.previous != ''
+        run: |
+          prev='${{ steps.current.outputs.previous }}'
+          echo "↩️  Rolling back both images to $prev"
+          podman tag "localhost/b2b-api:$prev" localhost/b2b-api:latest
+          podman tag "localhost/b2b-web:$prev" localhost/b2b-web:latest
+          sudo systemctl restart b2b-api b2b-web
+          echo "⚠️  Rolled back. The bad images are still tagged :${GITHUB_SHA::7} for inspection."

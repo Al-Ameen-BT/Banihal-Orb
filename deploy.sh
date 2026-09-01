@@ -118,13 +118,11 @@ if [ "$IS_DEV" = false ]; then
     run_as_owner "npm run build" "$CLIENT_DIR"
 fi
 
-# --- 7. Ollama / Chatbot Preflight Checks ---
+# --- 7. Chatbot Backend Preflight Check ---
+# The Analytics Agent is the ONLY chat backend. (Ollama used to be checked here too;
+# nothing has called it since the agent took over managing its own model, so the
+# warning only ever sent people chasing a dependency that no longer exists.)
 echo "🔍 Running chatbot backend preflight checks..."
-if curl -s --connect-timeout 2 http://localhost:11435/api/tags >/dev/null; then
-    echo "  ✨ Ollama is active."
-else
-    echo "  ⚠️ Warning: Ollama chatbot backend (http://localhost:11435) is unreachable. Chat may fail."
-fi
 if curl -s --connect-timeout 2 http://localhost:8001 >/dev/null; then
     echo "  ✨ Analytics Agent is active."
 else

@@ -1,370 +1,471 @@
 # Production Deployment Guide
 
-This guide deploys the B2B SaaS platform: an **Express + TypeScript** API (`/server`) and a
-**Next.js 14** frontend (`/client`), backed by **PostgreSQL** (five databases), with an optional
-**Ollama assistant** and **Slack bot** integrations.
+Deploys the B2B SaaS platform: an **Express + TypeScript** API (`/server`) and a **Next.js 14**
+frontend (`/client`), backed by **PostgreSQL** (five databases) and **Redis**, with the
+**Analytics Agent** and **Slack bot** integrations optional.
 
-> Database schemas are provisioned by **idempotent SQL DDL** in `server/db/` (see §3) — this
-> replaced `prisma db push`. Re-running is safe and never drops data. Prisma _clients_ are still
-> generated (`npm run db:generate`). **Always back up before a schema change** regardless.
+Two supported topologies:
+
+| | **Podman** (recommended) | **Bare-metal systemd** (legacy) |
+|---|---|---|
+| Runs as | Four pods, Quadlet units | One `b2b.service`, two Node processes |
+| Rollback | Retag the previous image, restart | Redeploy the previous commit |
+| Install | `deploy/podman/install.sh` | `deploy.sh` |
+
+Deploy bare-metal only if you are not ready to containerize. **Keep it installed but stopped
+through the container cutover** — it is the rollback.
+
+> Database schemas are provisioned by **idempotent SQL DDL** in `server/db/`. Re-running is safe
+> and never drops data. Prisma _clients_ are still generated (`npm run db:generate`).
+> **Always back up before a schema change.**
 
 ---
 
-## What changed recently
+## What changed in this release
 
-Deploying an existing install? These landed in the latest updates — review before upgrading:
+Upgrading an existing install? Read this section before anything else.
 
-- **SQL-first DB provisioning** (replaces `prisma db push`). Schemas live as idempotent SQL DDL in
-  `server/db/`; provision with `npm run db:provision` and gate the deploy with `npm run db:verify`.
-  `db:push` is deprecated (now forwards to `db:provision`). See §3.
-- **MFA is now opt-in (default off).** Email MFA is a per-user profile toggle — or org-enforced via
-  `Customer.mfaRequired` — so a normal login no longer sends a code. SMTP is only needed for users
-  who enable 2FA and for password resets.
-- **Admin ticket store is required, no fallback.** `ADMIN_TICKETING_DATABASE_URL` must be set and
-  reachable (`b2b_ticketing_admin`); the API fails loudly instead of using the shared store.
-- **SSO toggle removed** from the UI — it was a non-functional stub (no real SSO auth exists).
-- **Login routing fixes.** The Next `middleware.ts` matcher now excludes `/api` (page-auth no longer
-  redirects API calls) and exempts `/sw.js`; the browser calls the API same-origin via `/api`, so
-  `NEXT_PUBLIC_API_URL` must point at an API address the **Next.js server** can reach.
-- **Web Push notifications.** Adds a `PushSubscription` table to the **main** DB and requires `VAPID_*`
-  on the server + `NEXT_PUBLIC_VAPID_PUBLIC_KEY` on the client. Files: `server/src/lib/webpush.ts`,
-  `server/src/modules/push/*`, `client/public/sw.js`, `client/src/lib/push-client.ts`.
-- **Ticketing tenant isolation.** Ticket reads/attachments/comments are scoped to the caller's org
-  (closed a cross-org IDOR). No config change.
-- **Rate limiting behind Nginx.** The API sets `trust proxy = loopback`, so limits key on the real
-  client IP behind Nginx.
-- **Single systemd unit.** `deploy.sh` now installs one `b2b.service` (API + Web supervised in one
-  unit) instead of separate `b2b-api`/`b2b-web` units, and removes the old pair on upgrade.
-- **Non-root deploy.** The systemd unit runs as a dedicated non-root user with a hardened sandbox.
-- **Admin-domain hardening.** `ADMIN_DOMAINS` must be private work domains; public mailbox domains
-  are a privilege-escalation risk (any signup → `ADMINISTRATOR`).
+- **Redis is now a component.** It backs three things: a read-through cache on the polled dashboard
+  aggregates, the rate-limit store, and the Analytics Agent's one-call-at-a-time lock. It is
+  **optional** — with `REDIS_URL` unset all three fall back to in-process behaviour and the app
+  runs exactly as before. See §5.
+- **`TRUST_PROXY` is new and it matters.** The API used to hardcode `trust proxy = loopback`, which
+  is only correct while nginx shares a host with the API. **Containerized, you must set it to the
+  podman network CIDR** or Express ignores `X-Forwarded-For` and every IP-keyed rate limiter
+  silently collapses into one bucket. No error, nothing in the logs. See §4.
+- **Ollama is removed.** Nothing has called it since the Analytics Agent began managing its own
+  model. `OLLAMA_URL` / `OLLAMA_MODEL` are gone from `env.ts`, the deploy preflight no longer probes
+  `:11435`, and `b2b.service` no longer carries `Wants=ollama.service` (which was *starting* it at
+  boot). You can uninstall Ollama from the host after redeploying.
+- **Podman deployment.** Containerfiles, four pods, and Quadlet units under `deploy/podman/`. See §6.
+- **CI now runs tests and builds images.** `.github/workflows/ci-cd.yml` gained a unit-test step, an
+  image-build job, and an optional self-hosted deploy job. See §9.
+- **`server/.gitignore` no longer excludes `tests`.** A bare `tests` pattern was keeping four test
+  files out of version control, so CI checked out a repo missing most of its suite and reported
+  green. If you have a fork, check for the same line.
+
+Still current from earlier releases: SQL-first DB provisioning; MFA opt-in (default off); admin
+ticket store required with no fallback; Web Push (`VAPID_*`); ticketing tenant isolation.
 
 ---
 
 ## 1. Architecture & ports
 
+### Containerized (recommended)
+
 ```
-                         ┌──────────── Nginx (443, TLS) ────────────┐
-   Browser ───────────►  │  /            → Next.js  (127.0.0.1:3000)│
-                         │  /api, /health→ API      (127.0.0.1:3001)│
-                         └──────────────────────────────────────────┘
-                                   │                     │
-                                   ▼                     ▼
-                        PostgreSQL (5 DBs)      Ollama agent (127.0.0.1:8001) — optional
-                                                Slack (outbound WebSocket/HTTPS) — optional
+                       ┌──────── b2b-nginx pod (:80, :443 TLS) ────────┐
+   Browser ─────────►  │  /             → b2b-app:3000  (Next.js)      │
+                       │  /api, /health → b2b-app:3001  (API)          │
+                       └───────────────────────────────────────────────┘
+                                        │ podman network "b2b" 10.89.10.0/24
+              ┌─────────────────────────┼─────────────────────────┐
+              ▼                         ▼                         ▼
+      b2b-app pod                b2b-postgres pod          b2b-redis pod
+   ┌──────────────────┐        ┌──────────────────┐      ┌───────────────┐
+   │ b2b-api   :3001  │        │ postgres:16      │      │ redis:7       │
+   │ b2b-web   :3000  │        │ 127.0.0.1:5432   │      │ (no publish)  │
+   └──────────────────┘        └──────────────────┘      └───────────────┘
+              │
+              └──► host.containers.internal:8001  Analytics Agent (host, optional)
+                   Slack (outbound WebSocket/HTTPS, optional)
 ```
 
-Serving **both apps behind one origin** (Next at `/`, API at `/api`) is strongly recommended: it
-makes requests same-origin, so the `SameSite=Lax` auth cookies "just work" and CORS is trivial.
+**`b2b-api` and `b2b-web` share one pod on purpose.** Containers in a pod share a network
+namespace, so Next reaches the API on `localhost:3001` exactly as under systemd — which is what the
+`next.config.js` rewrite and the nginx SSE bypass both assume. Splitting them breaks both, and the
+rewrite breaks *quietly*.
 
-| Component | Port (bind localhost) | Public? |
+| Component | Port | Public? |
 |---|---|---|
-| API (`node dist/server.js`) | 3001 | via Nginx `/api` + `/health` |
-| Frontend (`next start`) | 3000 | via Nginx `/` |
-| PostgreSQL | 5432 | **no** (localhost/VPC only) |
-| Ollama agent / Ollama | 8001 / 11435 | **no** (localhost only) |
+| nginx | 80, 443 | **yes** — the only exposed pod |
+| API | 3001 | no — via nginx `/api` + `/health` |
+| Next.js | 3000 | no — via nginx `/` |
+| PostgreSQL | 127.0.0.1:5432 | **no** — loopback only, for host `psql`/`pg_dump` |
+| Redis | none | **no** — network-internal only |
+| Analytics Agent | 8001 (host) | no |
+
+> **Never publish Redis.** An unauthenticated Redis on a reachable port is a remote shell waiting to
+> happen (`CONFIG SET dir` + `SAVE` writes arbitrary files). Debug with
+> `podman exec b2b-redis redis-cli`.
+
+### Bare-metal (legacy)
+
+nginx on the host proxies to `127.0.0.1:3000` / `127.0.0.1:3001`, both supervised by one
+`b2b.service`. PostgreSQL and (optionally) Redis run on the host.
 
 ---
 
 ## 2. Prerequisites
 
-- **Node.js 20 LTS** and npm (both apps target Node 20).
-- **PostgreSQL 14+**. `gen_random_uuid()` is built into core (PG 13+), so **no `pgcrypto` extension or
-  `*-contrib` package is required** — the ticket-store DDL tries `pgcrypto` but tolerates its absence.
-- **Nginx** (reverse proxy + TLS termination) and **certbot** (Let's Encrypt), or your own certs.
-- A working **SMTP account** — needed for **email MFA** (opt-in per user, default off) and
-  **password resets**. MFA is off by default, so mail isn't required just to log in — but any user
-  who enables 2FA (or an org that sets `mfaRequired`) can't complete login without working mail.
-- (Optional) **Ollama** + the Analytics Agent for the in-app assistant / Slack chat bridge.
+**Both topologies:** PostgreSQL 13+ · a TLS certificate (`deploy/nginx/https-nginx.sh` generates a
+self-signed one for internal/no-DNS deployments) · SMTP credentials (password reset, and MFA for
+users who enable it).
+
+**Containerized:** **Podman 5.0+** (`.pod` Quadlet units need 5.0; on 4.x drop the `.pod` files and
+create pods from an `ExecStartPre`). Verify with `podman --version`.
+
+**Bare-metal:** Node 20 · nginx on the host.
+
+**Optional:** the Analytics Agent on `:8001` (chat degrades to 503 without it) · a Slack app with
+`xoxb-` and, for the chat bridge, `xapp-` tokens.
 
 ---
 
-## 3. Databases (four SQL-provisioned + the admin ticket store)
+## 3. Databases
 
-Four databases' schemas are provisioned by **idempotent SQL DDL** in `server/db/`
-— this replaces `prisma db push` as the schema source of truth (safe to re-run;
-never wipes data). Prisma _clients_ are still generated with `npm run db:generate`.
-The fifth, the Administrators' isolated ticket store, is **required** and loaded
-from the custom-format pg dump `ticketingDB` (repo root) — **not** from a `.sql`
-file.
-
-| Database | Env var | Created / schema | Notes |
-|---|---|---|---|
-| `b2b` (main) | `DATABASE_URL` | `db/b2b.sql` | Users, tenants, bots, MFA, audit, AD secrets |
-| `b2b_chat` | `CHAT_DATABASE_URL` | `db/b2b_chat.sql` | Assistant chat history |
-| `b2b_ticketing` | `TICKETING_DATABASE_URL` | `db/b2b_ticketing.sql` | Internal 2-table fallback store |
-| `b2b_ticket` | `TICKET_DATABASE_URL` | `db/b2b_ticket.sql` | 14-table external ticket platform |
-| `b2b_ticketing_admin` | `ADMIN_TICKETING_DATABASE_URL` | `pg_restore` of `ticketingDB` | Administrators' isolated store — **required, no fallback** |
-
-Provision the four SQL databases in one step (reads the DB URLs from `server/.env`):
+Five databases: `b2b`, `b2b_chat`, `b2b_ticketing`, `b2b_ticketing_admin`, `b2b_ticket`.
 
 ```bash
-cd server && npm run db:provision      # = bash db/provision.sh
+cd server
+npm run db:provision   # idempotent SQL DDL — safe to re-run, never drops data
+npm run db:verify      # fail-fast preflight; gate every deploy on this
 ```
 
-Or manually:
+`b2b_ticketing_admin` is created by `00_databases.sql`, but its **schema is loaded separately** from
+the `ticketingDB` pg dump — and only on a fresh, empty database. The dump is schema-only, so a
+`--clean` restore would drop existing tickets.
 
-```bash
-sudo -u postgres psql -f server/db/00_databases.sql        # create the 5 databases
-psql "$DATABASE_URL"           -f server/db/b2b.sql
-psql "$CHAT_DATABASE_URL"      -f server/db/b2b_chat.sql
-psql "$TICKETING_DATABASE_URL" -f server/db/b2b_ticketing.sql
-psql "$TICKET_DATABASE_URL"    -f server/db/b2b_ticket.sql
-
-# Admin ticket store — load the schema from the dump (ONLY on a fresh, empty DB;
-# the dump is schema-only, so a --clean restore would drop existing tickets):
-pg_restore -d "$ADMIN_TICKETING_DATABASE_URL" ticketingDB
-```
-
-> ⚠️ `ADMIN_TICKETING_DATABASE_URL` is **required** and has **no fallback**. The
-> admin ticketing store always uses its own `b2b_ticketing_admin` database; if it
-> is unset or unreachable the API fails loudly rather than reading/writing the
-> shared `b2b_ticket` store. `npm run db:verify` checks it alongside the others.
-
-> ℹ️ `npm run db:push` is **deprecated** and now just forwards to `db:provision`
-> (the old Prisma push could wipe/recreate `b2b_ticketing`). See
-> `server/db/README.md` for details.
+**Containerized:** the pod publishes on `127.0.0.1:5432`, so both commands work unchanged from the
+host. Migrate existing data with `deploy/podman/migrate-db.sh` (§6.4).
 
 ---
 
 ## 4. Environment variables
 
-Copy `server/.env.example` → `server/.env` and fill in. **Generate every secret** with
-`openssl rand -hex 32`. Beyond the example file, set these (added by recent features):
+Copy `server/.env.example` → `server/.env`. **Generate every secret** with `openssl rand -hex 32`.
 
 | Var | Required | Purpose |
 |---|---|---|
 | `DATABASE_URL`, `CHAT_DATABASE_URL`, `TICKETING_DATABASE_URL`, `TICKET_DATABASE_URL` | ✅ | The four core DBs |
-| `ADMIN_TICKETING_DATABASE_URL` | ✅ | Administrators' isolated ticket store (`b2b_ticketing_admin`) — **required, no fallback**; the API won't start without it |
+| `ADMIN_TICKETING_DATABASE_URL` | ✅ | Administrators' isolated store (`b2b_ticketing_admin`) — **no fallback**; the API won't start without it |
 | `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `IMPERSONATION_SECRET` | ✅ (≥32 chars) | Token signing |
-| `SLACK_TOKEN_SECRET` | ✅ if using bots | **Encrypts Slack bot tokens, webhook URLs, and AD temp-passwords at rest.** Falls back to `JWT_ACCESS_SECRET`. **Back it up — if lost, all encrypted secrets become unrecoverable; if changed, existing ones stop decrypting.** |
-| `PASSWORD_PEPPER` | Optional | Keys the one-way fingerprint used to detect **shared passwords across accounts**. Falls back to `JWT_ACCESS_SECRET`. **Keep it stable** — changing it invalidates every stored fingerprint, so existing duplicates go undetected until those users next set a password. |
-| `NODE_ENV` | ✅ | Set to `production` |
+| `TRUST_PROXY` | ✅ | Which upstream may be believed for `X-Forwarded-For`. `loopback` when nginx shares the host; **the podman CIDR (`10.89.10.0/24`) when containerized**. ⚠ **Never `true`** — that trusts a client-supplied header and makes every rate limiter bypassable |
+| `REDIS_URL` | Optional | Cache + rate-limit store + agent lock. Unset ⇒ in-process fallbacks. Containerized: `redis://b2b-redis:6379` |
+| `SLACK_TOKEN_SECRET` | ✅ if using bots | Encrypts Slack tokens, webhook URLs and AD temp-passwords at rest. Falls back to `JWT_ACCESS_SECRET`. **Back it up** — lost ⇒ unrecoverable; changed ⇒ existing secrets stop decrypting |
+| `PASSWORD_PEPPER` | Optional | Keys the shared-password fingerprint. Falls back to `JWT_ACCESS_SECRET`. **Keep stable** — changing it invalidates every stored fingerprint |
+| `NODE_ENV` | ✅ | `production` |
 | `PORT` | ✅ | `3001` |
 | `COOKIE_SECURE` | ✅ | `true` under HTTPS (else the browser drops the auth cookie) |
-| `ALLOWED_ORIGINS` | ✅ | Exact public origin(s) of the frontend, comma-separated (e.g. `https://app.example.com`) |
-| `FRONTEND_URL` | ✅ | Public app URL — used to build password-reset links in emails |
-| `ADMIN_DOMAINS` | ✅ | Comma-separated email domains allowed to hold `ADMINISTRATOR`. **Empty = admin login disabled.** ⚠ **Use only PRIVATE work domains you control** — registration grants `ADMINISTRATOR` from the email domain, so listing a public mailbox domain (`gmail.com`, `outlook.com`, …) lets ANY signup on that domain become a platform super-admin. |
-| `SMTP_HOST/PORT/USER/PASS`, `MAIL_FROM` | ✅ | MFA + password-reset email. **`MAIL_FROM` must be an address the SMTP account is authorized to send as** (e.g. Outlook/Gmail reject a mismatched From), or MFA codes silently fail to send. |
-| `SESSION_INACTIVITY_MINUTES` | optional | One active session per account is **always enforced**; this is the idle window (default 30 min) after which a stale session can be taken over by a new login. |
-| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | optional | **Web Push notifications.** Generate with `npx web-push generate-vapid-keys`. `VAPID_PRIVATE_KEY` is a **secret** — never expose/log it. `VAPID_SUBJECT` is a `mailto:`/`https:` contact URI. When unset, push sending is disabled (503). |
-| `MFA_CODE_TTL_MINUTES`, `MFA_MAX_ATTEMPTS`, `MFA_RESEND_COOLDOWN_SECONDS` | optional | MFA tuning (defaults 10 / 5 / 30) |
-| `AGENT_URL`, `OLLAMA_URL`, `OLLAMA_MODEL` | optional | Assistant backend; chat degrades gracefully (503) if absent |
-| `UPLOAD_DIR` | optional | Ticket/comment attachment dir (default `uploads`) — **must be on a persistent volume** |
-| `TICKETING_API_URL`, `TICKETING_API_KEY` | optional | External ticketing mirror (disabled if unset) |
+| `ALLOWED_ORIGINS` | ✅ | Exact public origin(s), comma-separated — **not** `*` |
+| `FRONTEND_URL` | ✅ | Public app URL — builds password-reset links |
+| `ADMIN_DOMAINS` | ✅ | Domains allowed to hold `ADMINISTRATOR`. Empty = admin login disabled. ⚠ **PRIVATE work domains only** — listing a public mailbox domain lets any signup self-grant super-admin |
+| `SMTP_HOST/PORT/USER/PASS`, `MAIL_FROM` | ✅ | MFA + password reset. `MAIL_FROM` must be an address the SMTP account may send as, or mail silently fails |
+| `SESSION_INACTIVITY_MINUTES` | Optional | Idle window before a stale session can be taken over (default 30) |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | Optional | Web Push. `npx web-push generate-vapid-keys`. The private key is a **secret** |
+| `MFA_CODE_TTL_MINUTES`, `MFA_MAX_ATTEMPTS`, `MFA_RESEND_COOLDOWN_SECONDS` | Optional | MFA tuning (10 / 5 / 30) |
+| `AGENT_URL`, `AGENT_BASE_URL`, `AGENT_CHAT_*`, `AGENT_COMPLAINTS_*` | Optional | Assistant backend; chat degrades to 503 if absent |
+| `UPLOAD_DIR` | Optional | Attachment directory — **must be a persistent volume** |
+| `TICKETING_API_URL`, `TICKETING_API_KEY` | Optional | External ticketing mirror (disabled if unset) |
 
-**Frontend env** — set in `client/.env` (or the build environment). `NEXT_PUBLIC_*` is **inlined at
-build time**, so it must be present *before* `next build`:
+**Frontend env** — `client/.env`. `NEXT_PUBLIC_*` is **inlined at build time**, so it must be set
+*before* `next build` (containerized: passed as a build arg by `build.sh`; setting it in the
+Quadlet unit does nothing):
 
 ```bash
-# client/.env
-NEXT_PUBLIC_API_URL="https://app.example.com"   # same origin as the app when proxied under /api
-NEXT_PUBLIC_VAPID_PUBLIC_KEY="<same value as server VAPID_PUBLIC_KEY>"  # Web Push; safe to expose
+NEXT_PUBLIC_API_URL="https://app.example.com"          # the app's own origin when proxied under /api
+NEXT_PUBLIC_VAPID_PUBLIC_KEY="<same as server VAPID_PUBLIC_KEY>"
 ```
 
-> **API base URL / auth cookies:** the browser calls the API **same-origin** via the relative
-> `/api` path (proxied by `next.config.js` `rewrites()` to `NEXT_PUBLIC_API_URL`), so the httpOnly
-> auth cookie stays **first-party** to the page and the login flow works regardless of host. Keep
-> `NEXT_PUBLIC_API_URL` pointed at an address the **Next.js server process** can reach the API at.
-> Behind Nginx (everything under one origin) this is automatic.
+**Containerized secrets** live in `/etc/b2b/{server.env,client.env,postgres.env}`, mode `0600`,
+mounted via `EnvironmentFile=`. They are never baked into an image layer — a layer is readable by
+anyone who can pull it. `install.sh` seeds them from `server/.env` / `client/.env` if present.
 
 ---
 
-## 5. Build & run
+## 5. Redis
 
-### API (`/server`)
+Optional, but recommended in production. Three jobs:
 
-```bash
-cd server
-npm ci
-npm run db:generate          # generate all 4 Prisma clients (REQUIRED before build)
-npm run build                # tsc → dist/
-npm run db:provision         # create + apply schema for the 4 SQL DBs (idempotent DDL)
-pg_restore -d "$ADMIN_TICKETING_DATABASE_URL" ../ticketingDB   # admin store — FRESH/empty DB only (see §3)
-npm run db:verify            # fail-fast: confirm all 5 required DBs are reachable + provisioned
-npm run db:seed              # first deploy only — creates the initial administrator; review prisma/seed.ts
-node dist/server.js          # or run under systemd (below)
-```
+1. **Cache** — read-through on `dashboard`, `stats`, `analytics`, `reports`, `sla-breaches`,
+   `chat-analytics`, `top-complaints`, `projects`, `assignees`. 30s TTL for dashboards, 60s for
+   reference data. These endpoints run full-table scans and are polled every 15–60s by every open
+   dashboard, so each connected admin was triggering their own scan on every tick.
+2. **Rate-limit store** — limits now survive a restart and hold across instances. Without it,
+   "restart the API" is a way to clear an attacker's login counter.
+3. **Agent lock** — the Analytics Agent processes one `/v1/chat` at a time across all clients. The
+   in-process queue only holds while exactly one API process exists.
 
-### Frontend (`/client`)
+**Cache keys include the ticket-DB scope** (`default` vs `admin`), which is what stops the shared and
+platform-admin stores from ever serving each other's rows.
 
-```bash
-cd client
-npm ci
-npm run build                # next build (reads NEXT_PUBLIC_API_URL)
-npm run start                # next start → 127.0.0.1:3000
-```
-
-### systemd (single `b2b.service`)
-
-The app runs under **one** systemd unit — `b2b.service` (repo root). It supervises **both**
-node processes (API on `:3001`, Next.js on `:3000`) from one wrapper: each runs in its own
-subshell with its own `PORT`, and if **either** exits, the unit restarts the pair. It loads
-both `server/.env` and `client/.env`, sets `NODE_ENV=production`, and runs under the
-unprivileged `b2bapp` user with a hardened sandbox.
-
-`sudo ./deploy.sh` installs and starts it automatically (and removes any legacy
-`b2b-api`/`b2b-web` units from a previous release). To install it **manually**:
-
-```bash
-# from the repo root — if your path/user differ from /opt/B2B-Site and b2bapp, edit
-# b2b.service first (or let deploy.sh substitute them for you)
-sudo cp b2b.service /etc/systemd/system/b2b.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now b2b
-sudo systemctl status b2b
-journalctl -u b2b -f                     # combined API + Web logs
-curl -s http://127.0.0.1:3001/health     # {"status":"ok","databases":{...}}
-```
-
-> One unit means `systemctl restart b2b` restarts **both** processes — you can't bounce the
-> API or the web independently. If you need that, run them as two units instead and group
-> them with a `b2b.target`.
+**Degradation is tested, not assumed.** Redis down at boot, dying mid-flight, and returning without
+an app restart are all verified: the app serves throughout, limits fall back to in-process, and Redis
+resumes being authoritative on its own. Persistence is deliberately **off** — everything Redis holds
+here is reconstructible.
 
 ---
 
-## 6. Nginx reverse proxy + HTTPS
+## 6. Containerized deployment
 
-Single origin serving the app and proxying the API (recommended):
+### 6.1 Install
 
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name app.example.com;
-
-    ssl_certificate     /etc/letsencrypt/live/app.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/app.example.com/privkey.pem;
-
-    client_max_body_size 20m;                 # ticket attachments (multer, 5 files)
-
-    location /api/ { proxy_pass http://127.0.0.1:3001; }
-    location /health { proxy_pass http://127.0.0.1:3001; }
-
-    location / { proxy_pass http://127.0.0.1:3000; }
-
-    # shared proxy headers
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;    # SSE (chat stream) + keep-alive
-    proxy_set_header Connection "";
-    proxy_read_timeout 120s;                   # assistant SSE can stream up to 90s
-}
+```bash
+sudo ./deploy/podman/install.sh     # units → /etc/containers/systemd/, nginx conf → /etc/b2b/
 ```
 
-Then: `NEXT_PUBLIC_API_URL=https://app.example.com`, `ALLOWED_ORIGINS=https://app.example.com`,
-`FRONTEND_URL=https://app.example.com`, `COOKIE_SECURE=true`. Obtain certs with
-`sudo certbot --nginx -d app.example.com` and redirect `:80 → :443`.
+Installs units and seeds env files. **Starts nothing** and does not touch a running `b2b.service`,
+so it is safe on a live host.
+
+### 6.2 Configure
+
+Edit `/etc/b2b/postgres.env`, `server.env`, `client.env`. In `server.env`:
+
+```bash
+DATABASE_URL="postgresql://postgres:...@b2b-postgres:5432/b2b?schema=public"
+REDIS_URL="redis://b2b-redis:6379"
+TRUST_PROXY="10.89.10.0/24"     # NOT loopback — see §4
+```
+
+### 6.3 Build
+
+```bash
+./deploy/podman/build.sh                # tags :latest and :<git-sha>
+```
+
+The `:<git-sha>` tag is the rollback artifact. `build.sh` **refuses to build** if
+`NEXT_PUBLIC_API_URL` is unset — it is baked into the browser bundle and cannot be fixed at runtime.
+
+### 6.4 Migrate data
+
+```bash
+systemctl start b2b-postgres b2b-redis
+./deploy/podman/migrate-db.sh           # dumps all five DBs, restores, compares row counts
+cd server && npm run db:verify
+```
+
+**Stop the application first.** A dump taken while the app writes loses those writes at cutover.
+The host cluster is only read — it stays intact as the rollback.
+
+### 6.5 Parallel run
+
+Publish the app pod on `127.0.0.1:3010`/`3011` (see the note in `b2b-app.pod`) and smoke-test
+against the container databases while `b2b.service` still serves live traffic. Verify login, ticket
+creation with an image attachment, the chat SSE stream, and the notification bell.
+
+### 6.6 Cutover
+
+```bash
+systemctl stop nginx                    # host nginx releases :80/:443
+systemctl start b2b-app b2b-nginx
+curl -sk https://localhost/health
+systemctl disable --now b2b.service
+systemctl enable b2b-postgres b2b-redis b2b-api b2b-web b2b-nginx
+```
+
+Keep the host PostgreSQL cluster stopped-but-intact for at least one backup cycle.
 
 ---
 
-## 7. Integrations
-
-### Assistant (Analytics Agent, signed API)
-Chat goes through the agent's **HMAC-signed `/v1/chat`** on port 8001 (`AGENT_BASE_URL` +
-`AGENT_CHAT_CLIENT_ID`/`AGENT_CHAT_SECRET`). The agent serves a self-signed certificate, so the
-API process needs `NODE_EXTRA_CA_CERTS=/opt/B2B-Site/server/certs/agent.pem` — without it every
-call fails in ~25ms and looks like the agent is down.
-
-Check the whole path in one command:
+## 7. Bare-metal deployment (legacy / rollback)
 
 ```bash
-cd server && npm run chat:doctor   # config → TCP → TLS/health → signed round trip → granted roles → concurrency
-```
-
-Step 4 is the one that bites silently: a credential that is not granted `l1`/`l3` still answers,
-but as `end_user`, so administrators get click-paths instead of commands. If the agent is down,
-chat returns a clean 503 and the rest of the platform is unaffected.
-
-> A direct, unauthenticated connection to the model server on `:8010` was used between 2026-08-31
-> and 2026-09-01 (see `chat-ip.txt`). That port is closed; the signed API is the supported path.
-
-### Slack bots — optional
-- No inbound ports required: **Socket Mode** is an outbound WebSocket and **Incoming Webhooks** are
-  outbound HTTPS. Administrators paste the `xoxb-`/`xapp-`/webhook values in the UI; they're stored
-  **encrypted** with `SLACK_TOKEN_SECRET`.
-- **AD credential ingest** (`POST /api/ad-ingest/deliver`) is authenticated by a per-bot API key,
-  **not** a session. If your AD automation runs off-host, ensure it can reach `/api/ad-ingest`
-  (and restrict that path at the firewall/WAF to the automation's source if possible).
-
----
-
-## 8. Security checklist
-
-- [ ] `NODE_ENV=production`, `COOKIE_SECURE=true`, served only over **HTTPS** (HSTS at Nginx).
-- [ ] All secrets are unique 32+ char random values; **`SLACK_TOKEN_SECRET` and the JWT secrets are
-      backed up** in a secrets manager (losing them logs everyone out / bricks encrypted bot & AD data).
-- [ ] `ADMIN_DOMAINS` lists only the provider's real **private** admin domain(s) — **never** a public
-      mailbox domain (`gmail.com`, etc.), which would let any signup self-grant `ADMINISTRATOR`.
-- [ ] One-session-per-account is always enforced; `SESSION_INACTIVITY_MINUTES` is set to a sane idle window (default 30).
-- [ ] `ALLOWED_ORIGINS` is the exact public origin — **not** `*`.
-- [ ] The service runs under a **dedicated non-root user** (the `b2b.service` unit defaults to `b2bapp`
-      with a hardened sandbox). Do **not** deploy as root.
-- [ ] `VAPID_PRIVATE_KEY` is set as a secret and never exposed client-side or logged (only the public
-      key reaches the browser).
-- [ ] PostgreSQL is **not** exposed publicly; strong DB passwords; least-privilege DB roles.
-- [ ] SMTP verified end-to-end (do a real login — you must receive the MFA code); `MAIL_FROM` matches
-      an address the SMTP account may send as.
-- [ ] `UPLOAD_DIR` on a persistent, backed-up volume; Nginx `client_max_body_size` set.
-- [ ] Rate limiting is on (global + AD-ingest). **The API sets `trust proxy` so limits key on the real
-      client IP behind Nginx** — front with a WAF if internet-facing.
-- [ ] Review `prisma/seed.ts` before seeding in production — remove/replace demo accounts.
-
----
-
-## 9. Backups & upgrades
-
-**Backups (nightly):**
-```bash
-for db in b2b b2b_chat b2b_ticketing b2b_ticketing_admin b2b_ticket; do
-  pg_dump -Fc "$db" > "/backups/${db}-$(date +%F).dump"
-done
-tar czf /backups/uploads-$(date +%F).tgz /opt/b2b/server/uploads
-# also back up: server/.env  (contains SLACK_TOKEN_SECRET + JWT secrets)
-```
-
-**Upgrade / redeploy:**
-```bash
-git pull
-# API
-cd server && npm ci && npm run db:generate && npm run build
-#   BACK UP DBs, then apply any schema change (idempotent — safe to re-run):
-npm run db:provision && npm run db:verify
-# Frontend
-cd ../client && npm ci && npm run build
-# restart (single unit runs both API + Web)
+sudo ./deploy.sh                        # builds, provisions, verifies, installs b2b.service
 sudo systemctl restart b2b
 curl -s https://app.example.com/health
 ```
-CI (`.github/workflows/ci-cd.yml`) runs **checks only** (typecheck/lint) — it does not deploy.
+
+Runs as a dedicated non-root user with a hardened systemd sandbox. `deploy.sh` removes the older
+split `b2b-api` / `b2b-web` units on upgrade.
 
 ---
 
-## 10. Troubleshooting
+## 8. Nginx reverse proxy + HTTPS
 
-| Symptom | Likely cause |
+```bash
+sudo ./deploy/nginx/https-nginx.sh              # auto-detects the LAN IP
+sudo ./deploy/nginx/https-nginx.sh 172.17.121.200
+```
+
+Generates a self-signed certificate with the server's IPs/hostnames in `subjectAltName` (a matching
+Common Name has not been accepted since Chrome 58) and prints the per-OS trust steps.
+
+Two configs, both current:
+
+- `deploy/nginx/b2b-site.conf` — host nginx → `127.0.0.1:3000/3001`. Bare-metal and rollback.
+- `deploy/nginx/b2b-site.container.conf` — nginx container → `b2b-app:3000/3001`. Installed to
+  `/etc/b2b/nginx/b2b-site.conf`.
+
+Both serve **everything from one origin** so the auth cookie stays first-party and CORS never
+enters the picture. Do not split the app and API across two addresses — the login flow depends on it.
+
+**HSTS is deliberately off.** It does nothing on an IP-literal host (RFC 6797), and on an internal
+hostname it removes the browser's "proceed anyway" escape hatch before the self-signed certificate
+is trusted — turning a warning into a hard lockout. Enable it only once the certificate is in every
+client's trust store *and* you reach the app by hostname.
+
+---
+
+## 9. CI/CD
+
+`.github/workflows/ci-cd.yml`:
+
+| Job | Runner | Runs on |
+|---|---|---|
+| `server-check` | hosted | typecheck + unit tests |
+| `client-check` | hosted | typecheck + production build |
+| `images` | hosted | builds both Containerfiles |
+| `deploy` | **self-hosted** | `main` pushes only; build → restart → health gate → auto-rollback |
+
+**The deploy job must be self-hosted.** The target has no public DNS and no inbound route, so
+GitHub-hosted runners cannot reach it. Give the runner narrowly scoped sudo:
+
+```bash
+sudo tee /etc/sudoers.d/b2b-deploy <<'EOF'
+github-runner ALL=(root) NOPASSWD: /usr/bin/systemctl restart b2b-api b2b-web, \
+                                   /usr/bin/systemctl is-active b2b-api b2b-web
+EOF
+```
+
+A runner that can run *any* `systemctl` is a runner that can be talked into running anything.
+
+Unit tests run a **narrow selection** — most of the suite needs a live PostgreSQL. Widening it
+without adding a `postgres` service container turns the pipeline permanently red, which is worse
+than a narrow green one. Secrets stay on the server and never enter CI.
+
+---
+
+## 10. Production readiness checklist
+
+### Before you deploy
+
+**Secrets & identity**
+- [ ] Every secret is a unique 32+ char random value (`openssl rand -hex 32`).
+- [ ] `JWT_*`, `IMPERSONATION_SECRET`, `SLACK_TOKEN_SECRET`, `PASSWORD_PEPPER` are **backed up in a
+      secrets manager**. Losing `SLACK_TOKEN_SECRET` permanently bricks encrypted bot and AD data.
+- [ ] `ADMIN_DOMAINS` lists only **private** domains you control — never a public mailbox domain.
+- [ ] `VAPID_PRIVATE_KEY` is set as a secret and never logged.
+- [ ] `/etc/b2b/*.env` are mode `0600`, owned by root. No secret is in an image layer or in CI.
+
+**Config**
+- [ ] `NODE_ENV=production`, `COOKIE_SECURE=true`, HTTPS only.
+- [ ] `ALLOWED_ORIGINS` is the exact public origin, not `*`.
+- [ ] **`TRUST_PROXY` matches the topology** — `loopback` bare-metal, the podman CIDR containerized.
+      Getting this wrong is silent.
+- [ ] `NEXT_PUBLIC_API_URL` is the app's public origin and was set **before** the image build.
+- [ ] `UPLOAD_DIR` points at a persistent volume; nginx `client_max_body_size` ≥ 55m.
+- [ ] `SESSION_INACTIVITY_MINUTES` set to a sane idle window.
+
+**Data**
+- [ ] All five databases provisioned; `npm run db:verify` passes.
+- [ ] PostgreSQL is not reachable from the LAN (`127.0.0.1` bind only).
+- [ ] Strong DB passwords, least-privilege roles.
+- [ ] A **fresh dump exists, taken immediately before cutover**.
+- [ ] Container Postgres tuning compared against the host's `postgresql.conf`
+      (`shared_buffers`, `work_mem`, `max_connections` — the image ships upstream defaults).
+- [ ] `prisma/seed.ts` reviewed — demo accounts removed.
+
+**Infrastructure**
+- [ ] Podman 5.0+ (`.pod` units).
+- [ ] TLS certificate carries the server's current IP in `subjectAltName`.
+- [ ] `host.containers.internal` resolves from a container, and the Agent `:8001` answers through it.
+- [ ] Redis is **not** published on any host port.
+
+### Deploy
+
+- [ ] Application stopped before `migrate-db.sh`.
+- [ ] Row counts match host vs container for all five databases.
+- [ ] Parallel run smoke-tested on `3010`/`3011` before touching nginx.
+- [ ] Host nginx stopped before starting `b2b-nginx` (port conflict).
+- [ ] Images tagged with the git sha, not only `:latest`.
+
+### After cutover — verify, do not assume
+
+- [ ] `systemctl status b2b-postgres b2b-redis b2b-api b2b-web b2b-nginx` — all active.
+- [ ] `curl -sk https://<host>/health` → `200` with every database `connected`.
+- [ ] **Login end to end**, including a password reset email.
+- [ ] **Rate limiting keys on the real client IP** — exceed the auth cap from one IP and confirm a
+      second IP is still allowed. If both throttle together, `TRUST_PROXY` is wrong.
+- [ ] `podman exec b2b-redis redis-cli keys '*'` shows `rl:*` keys, and the counter increments.
+- [ ] **Cache is scope-correct** — load the ops dashboard as an ORG_ADMIN and as an ADMINISTRATOR.
+      They read different stores; if the second sees the first's data, the cache key is wrong.
+- [ ] **Attachment persistence** — upload an image, `systemctl restart b2b-api`, download it again.
+- [ ] **Chat SSE streams incrementally** rather than arriving in one block.
+- [ ] **Redis-down drill** — stop `b2b-redis`, confirm the app still serves, then start it and
+      confirm `rl:*` keys reappear without an app restart.
+- [ ] **Reboot the host** and confirm all pods return unattended.
+- [ ] **Backups repointed at the container database.** A cron still dumping the host cluster will
+      silently back up an empty database — the most common way a container migration loses data
+      weeks later.
+- [ ] `b2b.service` disabled but still installed, and the host cluster stopped but intact.
+
+---
+
+## 11. Backups, upgrades & rollback
+
+**Nightly:**
+```bash
+for db in b2b b2b_chat b2b_ticketing b2b_ticketing_admin b2b_ticket; do
+  podman exec b2b-postgres pg_dump -U postgres -Fc "$db" > "/backups/${db}-$(date +%F).dump"
+done
+podman volume export b2b-uploads > "/backups/uploads-$(date +%F).tar"
+# also back up /etc/b2b/server.env — it holds SLACK_TOKEN_SECRET and the JWT secrets
+```
+
+**Upgrade:**
+```bash
+git pull
+cd server && npm run db:provision && npm run db:verify   # back up FIRST
+cd .. && ./deploy/podman/build.sh
+systemctl restart b2b-api b2b-web
+curl -sk https://localhost/health
+```
+
+**Rollback:**
+```bash
+podman tag localhost/b2b-api:<previous-sha> localhost/b2b-api:latest
+podman tag localhost/b2b-web:<previous-sha> localhost/b2b-web:latest
+systemctl restart b2b-api b2b-web
+```
+
+Roll back **both** images together — a new web bundle against an old API is worse than either alone.
+
+**Full revert to bare-metal:** stop `b2b-nginx` and `b2b-app`, restore the host nginx config, start
+host PostgreSQL, `systemctl start b2b.service`. Anything written to the container database after
+cutover must be dumped back — keep the cutover window short.
+
+---
+
+## 12. Troubleshooting
+
+### Containers
+
+| Symptom | Cause |
 |---|---|
-| Login "fails" / cookie never sticks | `COOKIE_SECURE=true` on plain HTTP; or the Next `/api` rewrite target (`NEXT_PUBLIC_API_URL`) unreachable from the Next server |
-| Login OK but every page bounces to `/login` | ensure `next.config.js` `rewrites()` is present and the `middleware.ts` matcher **excludes `/api`** (and exempts `/sw.js`) — otherwise page-auth redirects the login API call itself; also confirm `NEXT_PUBLIC_API_URL` is reachable from the Next server |
-| Verify screen shows "sent to **undefined**" / login can't complete | the `/api` proxy target is unreachable (wrong/stale `NEXT_PUBLIC_API_URL`) or the API is down — the client renders a broken code screen when it can't get a `mfaRequired:false` response |
-| "You're already signed in on another device" blocks login | single-session lock (always on); sign out the other device or wait `SESSION_INACTIVITY_MINUTES` for the stale session to expire |
-| MFA code never arrives (2FA-enabled users only) | SMTP misconfigured, or `MAIL_FROM` not authorized by the SMTP account (send silently fails); check `SMTP_*`, `MAIL_FROM`, provider logs. MFA is opt-in, so this only blocks accounts that enabled 2FA |
-| Push notifications never arrive | `VAPID_*` unset (send returns 503); `NEXT_PUBLIC_VAPID_PUBLIC_KEY` missing/mismatched; not served over HTTPS (push needs a secure context — `localhost` is exempt); browser blocked notifications |
-| Admin can't log in | admin's email domain not in `ADMIN_DOMAINS` (public domains excluded by design) |
-| `/health` shows a DB `down` | that database's URL is wrong or the DB isn't created/loaded |
-| `db:provision` fails: `invalid URI query parameter: "schema"` | a `*_DATABASE_URL` carries Prisma's `?schema=public` suffix, which `psql` rejects. `provision.sh` strips it automatically; on an older copy, remove `?schema=…` from the URLs in `server/.env` (Prisma and node-`pg` don't need it) |
-| `db:provision` fails: `extension "pgcrypto" is not available` | the `*-contrib` package isn't installed — but it isn't needed: `gen_random_uuid()` is core (PG 13+). Delete the `CREATE EXTENSION pgcrypto` line from `db/b2b_ticket.sql`, or `dnf/yum install postgresql<N>-contrib` to keep it |
-| `db:provision`/`db:verify`: `password authentication failed for user "user"` | a placeholder credential from `.env.example` was left in a `*_DATABASE_URL`; set the real Postgres user/password (match the other DB URLs — only the database name should differ) |
-| Slack bot won't connect | bad `xoxb-` token (status shows **Error**), or missing Socket Mode/`xapp-` for the chat bridge |
-| Bot tokens/AD secrets won't decrypt after a redeploy | `SLACK_TOKEN_SECRET` changed or was missing (it fell back to `JWT_ACCESS_SECRET`, which then changed) |
-| Assistant returns 503 / "unavailable" | run `npm run chat:doctor`. It names the layer: closed port, untrusted self-signed cert (`NODE_EXTRA_CA_CERTS`), clock skew (`stale_timestamp` — run NTP), a credential the agent doesn't know, or a role it isn't granted |
-| Administrators get end-user answers | the `ext-*` credential isn't granted `l3`; `chat:doctor` step 4 flags it. Ask the agent administrator to widen the allowed-roles list — no redeploy needed |
-| Uploads vanish after redeploy | `UPLOAD_DIR` not on a persistent volume |
-| Build fails with missing `@prisma/*-client` types | ran `npm run build` before `npm run db:generate` |
+| API exits at boot: `MaxRetriesPerRequestError` | `rate-limit-redis` issues a command from its constructor before ioredis connects. `lib/redis.ts` must keep `enableOfflineQueue: true` |
+| `Prisma Client could not locate the Query Engine for debian-openssl-3.0.x` | openssl missing from the **build** stage, so Prisma's platform sniff at generate time picked the 1.1.x engine. It must be installed in `deps`, not only in runtime |
+| Every request returns 500 while Redis is down | the rate-limit store error is propagating. `rateLimiter.ts` must fall back to the in-memory limiter |
+| Limits stay per-process after Redis returns | the store cached a script hash against a dead server. The limiter must be built lazily while the client is `ready` and discarded on error |
+| Healthcheck never runs | `HEALTHCHECK` in a Containerfile is **discarded** by Podman's default OCI format. Use `HealthCmd=` in the Quadlet unit |
+| Rate limits collapse into one bucket | `TRUST_PROXY` still `loopback` behind the nginx container |
+| `Invalid url` for every `*_DATABASE_URL` | quoted values via `podman --env-file`, which does not strip quotes (systemd's `EnvironmentFile=` does) |
+| Static assets 404 but pages render | `.next/static` not copied alongside `.next/standalone` |
+| Browser API calls fail after deploy | `NEXT_PUBLIC_API_URL` wrong at **build** time — rebuild, runtime env cannot fix it |
+| Attachments vanish on redeploy | `b2b-uploads` volume not mounted |
+| Pod won't bind :80/:443 rootless | needs `net.ipv4.ip_unprivileged_port_start=80`, or run rootful |
+
+### Application
+
+| Symptom | Cause |
+|---|---|
+| Login "fails" / cookie never sticks | `COOKIE_SECURE=true` on plain HTTP, or the `/api` rewrite target unreachable from the Next server |
+| Login OK but every page bounces to `/login` | `middleware.ts` matcher must exclude `/api` and exempt `/sw.js` |
+| "sent to **undefined**" on the verify screen | the `/api` proxy target is unreachable or the API is down |
+| "You're already signed in on another device" | single-session lock; wait `SESSION_INACTIVITY_MINUTES` |
+| MFA code never arrives | SMTP misconfigured, or `MAIL_FROM` not authorized by the SMTP account |
+| Push never arrives | `VAPID_*` unset (503), key mismatch, or not served over HTTPS |
+| Admin can't log in | email domain not in `ADMIN_DOMAINS` |
+| `/health` shows a DB `down` | that URL is wrong, or the database isn't created/loaded |
+| `db:provision`: `invalid URI query parameter: "schema"` | a `*_DATABASE_URL` carries `?schema=public`, which `psql` rejects — `provision.sh` strips it; remove it manually on an older copy |
+| `db:provision`: `extension "pgcrypto" is not available` | not needed — `gen_random_uuid()` is core in PG 13+. Delete the `CREATE EXTENSION` line |
+| `password authentication failed for user "user"` | a placeholder from `.env.example` left in a `*_DATABASE_URL` |
+| Slack bot won't connect | bad `xoxb-`, or missing Socket Mode / `xapp-` for the chat bridge |
+| Bot tokens won't decrypt after redeploy | `SLACK_TOKEN_SECRET` changed or fell back to a changed `JWT_ACCESS_SECRET` |
+| Assistant returns 503 | run `npm run chat:doctor` — it names the layer (closed port, untrusted cert, clock skew, unknown credential, ungranted role) |
+| Administrators get end-user answers | the `ext-*` credential isn't granted `l3`; ask the agent admin to widen it — no redeploy needed |
+| Build fails on missing `@prisma/*-client` | ran `npm run build` before `npm run db:generate` |
 
 ---
 
-Health endpoint for monitoring/uptime checks: **`GET /health`** → `200` with per-database status,
-`503` if any database is down.
+Health endpoint for monitoring: **`GET /health`** → `200` with per-database status, `503` if any
+database is down.
