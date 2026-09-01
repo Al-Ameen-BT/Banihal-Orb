@@ -161,7 +161,16 @@ interface TopComplaints {
 // folds into "Other" rather than reusing slot 1.
 const COMPLAINT_HUES = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
 
-const shortLabel = (s: string) => (s.length > 22 ? `${s.slice(0, 21)}…` : s);
+// Axis headings, not full names: the agent's categories run to 31 characters
+// ("Endpoint Security / CrowdStrike"), which the old flat truncation cut
+// mid-word. Keep the leading segment, drop the generic tail noun, and only then
+// truncate — the untouched category still shows in full on hover.
+const CATEGORY_NOISE = /\s+(issues?|problems?|requests?|tickets?|management|support|services?)$/i;
+
+const shortLabel = (s: string) => {
+  const head = (s.split(/\s*[&/·|,]\s*/)[0] ?? s).trim().replace(CATEGORY_NOISE, '').trim() || s;
+  return head.length > 22 ? `${head.slice(0, 21)}…` : head;
+};
 
 const chartTooltip = {
   borderRadius: 10, border: '1px solid #e2e8f0', fontSize: 12,
@@ -204,7 +213,7 @@ function TopComplaintsChart() {
             <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 34, left: 0, bottom: 0 }}>
               <XAxis type="number" hide />
               <YAxis type="category" dataKey="category" tickFormatter={shortLabel} width={140}
-                tick={{ fontSize: 11, fill: '#475569' }} axisLine={false} tickLine={false} />
+                tick={{ fontSize: 11, fontWeight: 600, fill: '#334155' }} axisLine={false} tickLine={false} />
               <Tooltip cursor={{ fill: '#f8fafc' }} formatter={(v: number) => [`${v} tickets`, 'Volume']} contentStyle={chartTooltip} />
               <Bar dataKey="count" barSize={14} radius={[0, 4, 4, 0]}>
                 {rows.map((c, i) => <Cell key={c.category} fill={COMPLAINT_HUES[i]} />)}

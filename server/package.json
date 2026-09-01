@@ -19,7 +19,7 @@
     "db:seed:tickets": "tsx prisma/seed-tickets.ts",
     "test": "vitest run --reporter=verbose",
     "test:watch": "vitest",
-    "agent:check": "NODE_EXTRA_CA_CERTS=certs/agent.pem tsx scripts/agent-check.ts"
+    "chat:doctor": "NODE_EXTRA_CA_CERTS=certs/agent.pem tsx scripts/chat-doctor.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.10.2",

@@ -262,10 +262,24 @@ Then: `NEXT_PUBLIC_API_URL=https://app.example.com`, `ALLOWED_ORIGINS=https://ap
 
 ## 7. Integrations
 
-### Assistant (Ollama) — optional
-Run Ollama + the Analytics Agent on the host, bound to localhost, and point `AGENT_URL` at it.
-The `/api/chat` route proxies the SSE stream. If the agent is down the chat returns a clean 503 —
-the rest of the platform is unaffected.
+### Assistant (Analytics Agent, signed API)
+Chat goes through the agent's **HMAC-signed `/v1/chat`** on port 8001 (`AGENT_BASE_URL` +
+`AGENT_CHAT_CLIENT_ID`/`AGENT_CHAT_SECRET`). The agent serves a self-signed certificate, so the
+API process needs `NODE_EXTRA_CA_CERTS=/opt/B2B-Site/server/certs/agent.pem` — without it every
+call fails in ~25ms and looks like the agent is down.
+
+Check the whole path in one command:
+
+```bash
+cd server && npm run chat:doctor   # config → TCP → TLS/health → signed round trip → granted roles → concurrency
+```
+
+Step 4 is the one that bites silently: a credential that is not granted `l1`/`l3` still answers,
+but as `end_user`, so administrators get click-paths instead of commands. If the agent is down,
+chat returns a clean 503 and the rest of the platform is unaffected.
+
+> A direct, unauthenticated connection to the model server on `:8010` was used between 2026-08-31
+> and 2026-09-01 (see `chat-ip.txt`). That port is closed; the signed API is the supported path.
 
 ### Slack bots — optional
 - No inbound ports required: **Socket Mode** is an outbound WebSocket and **Incoming Webhooks** are
@@ -345,7 +359,8 @@ CI (`.github/workflows/ci-cd.yml`) runs **checks only** (typecheck/lint) — it 
 | `db:provision`/`db:verify`: `password authentication failed for user "user"` | a placeholder credential from `.env.example` was left in a `*_DATABASE_URL`; set the real Postgres user/password (match the other DB URLs — only the database name should differ) |
 | Slack bot won't connect | bad `xoxb-` token (status shows **Error**), or missing Socket Mode/`xapp-` for the chat bridge |
 | Bot tokens/AD secrets won't decrypt after a redeploy | `SLACK_TOKEN_SECRET` changed or was missing (it fell back to `JWT_ACCESS_SECRET`, which then changed) |
-| Assistant returns 503 | `AGENT_URL` unreachable — start Ollama/agent or ignore if unused |
+| Assistant returns 503 / "unavailable" | run `npm run chat:doctor`. It names the layer: closed port, untrusted self-signed cert (`NODE_EXTRA_CA_CERTS`), clock skew (`stale_timestamp` — run NTP), a credential the agent doesn't know, or a role it isn't granted |
+| Administrators get end-user answers | the `ext-*` credential isn't granted `l3`; `chat:doctor` step 4 flags it. Ask the agent administrator to widen the allowed-roles list — no redeploy needed |
 | Uploads vanish after redeploy | `UPLOAD_DIR` not on a persistent volume |
 | Build fails with missing `@prisma/*-client` types | ran `npm run build` before `npm run db:generate` |
 

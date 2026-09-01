@@ -1,0 +1,258 @@
+
+--------------------------------------------------------------------------------
+0. WHAT CHANGED, IN ONE LINE
+--------------------------------------------------------------------------------
+  The signed, role-scoped /v1/chat + /v1/graphql API (analytics_agent/v1_api.py)
+  was removed. B2B-Site now talks to the underlying llama-server model process
+  directly, over plain HTTP, with no authentication.
+
+  This was a deliberate choice to eliminate the wrapper layer, made after being
+  shown (and rejecting) the tradeoffs below — recorded here so it isn't
+  mistaken for an oversight or a security regression discovered later.
+
+--------------------------------------------------------------------------------
+1. WHAT WAS REMOVED
+--------------------------------------------------------------------------------
+  Routes:
+    POST /v1/chat              — gone. 401/404 depending on path, no longer routed.
+    POST /v1/graphql           — gone, including the chat mutation and GraphiQL.
+
+  Removed along with them:
+    - HMAC-SHA256 request signing (X-Client-Id / X-Timestamp / X-Signature)
+      for chat. No auth of any kind protects the new connection.
+    - The five audience roles (end_user/l1/l2/l3/security) and their baked-in
+      response guidance (click-path-only for end users, full command detail
+      for L3, etc.). The raw model has no per-audience behavior now — every
+      caller gets the same unscoped model, however they prompt it.
+    - The global concurrency gate (was 1 request in flight at a time,
+      429 server_busy otherwise). No backpressure exists now; the only limit
+      left is llama-server's own --parallel 2 slot count, with no queuing
+      logic or error shape wrapping it.
+    - The max_tokens ceiling that bounded worst-case reply length/latency.
+      Nothing stops an unbounded generation now except what the CALLER sets.
+    - Per-request usage logging (api_usage_log table) and the dashboard's
+      "API Monitor" page, which was built entirely on that data. Removed
+      together since the page had nothing left to show.
+    - The ext-* chat credential system (issue/list/revoke UI on the
+      dashboard's Settings page, the api_clients table's chat role). Existing
+      credential rows are still in Postgres but nothing checks them anymore —
+      harmless, orphaned data, not cleaned up.
+
+  UNCHANGED — do not confuse these with what was removed:
+    GET /v1/health           — still on :8001, still HMAC-free, still works.
+    GET /v1/top-complaints   — still on :8001, still HMAC-signed, its own
+                               separate dc-* credential set, completely
+                               untouched by any of this.
+    The dashboard's own internal AI chat panel — a different code path
+                               entirely, never went through /v1/chat, not
+                               affected.
+
+--------------------------------------------------------------------------------
+2. THE NEW CONNECTION — WHAT B2B-SITE ACTUALLY TALKS TO
+--------------------------------------------------------------------------------
+  Host:     172.17.122.10
+  Port:     8010
+  Protocol: plain HTTP (no TLS — this is not the same port/cert as the old
+            :8001 dashboard/API surface)
+  Endpoint: POST /v1/chat/completions   (OpenAI-compatible, llama.cpp's own
+                                          native server API, not anything
+                                          this repo wrote)
+  Model name to send: google/gemma-4-E2B-it-qat-q4_0-gguf
+
+  Network access is SUPPOSED to be restricted at the firewall to ONE source
+  IP: 172.17.121.200/32 (B2B-Site's server) — a firewalld rich rule on this
+  box, port 8010/tcp.
+    >>> As of 2026-09-01, firewalld also has a second, unrestricted
+        "8010/tcp" port rule alongside that rich rule, opening the port to
+        everyone, not just B2B-Site. Cause not yet identified (it reappeared
+        after having been removed once). This needs fixing — until it is,
+        do not rely on the IP restriction actually being enforced. <<<
+    >>> If B2B-Site's outbound IP ever changes, the rich rule must be
+        updated on this box too, or the connection breaks with no other
+        symptom than connection timeouts. <<<
+  Even when working as intended, this IP restriction is the ONLY access
+  control on this connection. It is not authentication — see section 4.
+
+--------------------------------------------------------------------------------
+3. REQUEST / RESPONSE FORMAT
+--------------------------------------------------------------------------------
+  Standard OpenAI chat-completions shape. No signing, no special headers,
+  just Content-Type: application/json.
+
+  Non-streaming:
+    curl -X POST http://172.17.122.10:8010/v1/chat/completions \
+      -H 'Content-Type: application/json' \
+      -d '{
+            "model": "google/gemma-4-E2B-it-qat-q4_0-gguf",
+            "messages": [{"role": "user", "content": "how do I reset my VPN?"}],
+            "max_tokens": 500
+          }'
+
+    -> { "choices": [{"message": {"role":"assistant","content":"..."}, ...}], ... }
+
+  Streaming (real token-by-token SSE — this is NEW, the old /v1/chat wrapper
+  never supported it; verified working against this server 2026-08-31):
+    curl -N -X POST http://172.17.122.10:8010/v1/chat/completions \
+      -H 'Content-Type: application/json' \
+      -d '{
+            "model": "google/gemma-4-E2B-it-qat-q4_0-gguf",
+            "messages": [{"role": "user", "content": "how do I reset my VPN?"}],
+            "max_tokens": 500,
+            "stream": true
+          }'
+
+    -> a stream of `data: {...}` chunks, each with a `delta.content` piece,
+       terminated by `data: [DONE]`. If B2B-Site wants a real "typing"
+       experience instead of waiting for the full reply, this is the way —
+       it was not possible before this change.
+
+  You may also pass a "system" role message in `messages` to steer tone/
+  behavior per audience (the equivalent of the old end_user/l1/l2/l3/security
+  guidance) — that logic no longer exists server-side, so if audience-scoped
+  behavior is still wanted, B2B-Site has to build and send it itself as a
+  system message on every request.
+
+--------------------------------------------------------------------------------
+4. WHAT B2B-SITE IS NOW RESPONSIBLE FOR (nothing enforces these anymore)
+--------------------------------------------------------------------------------
+  - Auth: there is none. Anything that can reach 172.17.121.200 -> 172.17.122.10:8010
+    (i.e., anything running on or routed through that box) can call the model
+    with no credential and no audit trail. If B2B-Site itself has multiple
+    trust levels of caller, that separation has to happen on B2B-Site's side
+    before the request ever leaves for this box.
+  - Output length / cost control: set `max_tokens` on every request. Nothing
+    here caps it for you; an unbounded generation is now possible.
+  - Concurrency: llama-server has --parallel 2 (2 KV-cache slots) and 8 CPU
+    threads shared across BOTH those slots (see agent.service's threading
+    benchmark comments — this box's 8-thread setting is deliberately tuned,
+    do not assume more slots means more real throughput). A 3rd simultaneous
+    request either queues inside llama-server or errors, with none of the
+    clean 429/Retry-After shape the old API gave you. Serialize or cap
+    concurrent requests from B2B-Site's side.
+  - Latency expectations unchanged from before: this is the same CPU-bound
+    model on the same hardware. Short replies: a few seconds. Long replies:
+    up to the low tens of seconds, scaling with output length. Removing the
+    API wrapper did not and could not change this — it was never the
+    bottleneck (measured overhead was ~1-2ms; see prior session notes).
+  - Retry/error handling: llama-server's own error responses, not this
+    repo's `{"error": "<code>"}` shape. Expect plain HTTP error codes from
+    the llama.cpp server itself (a 500-class response, a dropped connection
+    under overload) rather than a documented contract.
+  - There is no more usage visibility on this box's dashboard. If B2B-Site
+    needs to know request volume, error rates, or latency for its own chat
+    feature, it now has to log that on its own side — nothing here does it
+    anymore.
+
+--------------------------------------------------------------------------------
+5. CLIENT-SIDE SETUP — drop-in code for B2B-Site's chat.service.ts / route.ts
+--------------------------------------------------------------------------------
+  Test connectivity FIRST, before touching any code, from the B2B-Site box
+  itself (not from here):
+
+    curl -v http://172.17.122.10:8010/health
+
+  Expect {"status":"ok"}. If this hangs or times out, stop — no code change
+  below will fix a network path that doesn't work; come back to section 2.
+
+  --- .env changes ---
+
+    # OLD — delete these, they no longer apply to anything
+    # AGENT_CHAT_CLIENT_ID=ext-...
+    # AGENT_CHAT_SECRET=...
+    # NODE_EXTRA_CA_CERTS=/opt/B2B-Site/server/certs/agent.pem   (only needed for :8001)
+
+    # NEW
+    AGENT_LLAMA_URL=http://172.17.122.10:8010/v1/chat/completions
+    AGENT_MODEL=google/gemma-4-E2B-it-qat-q4_0-gguf
+
+  Scheme is http://, not https:// — port 8010 has no TLS. Reusing the old
+  https://...:8001 value and only swapping the port is the single most
+  likely way this "silently doesn't work" after the code change.
+
+  --- Non-streaming call (replaces the whole HMAC-signing block: no more
+      X-Client-Id / X-Timestamp / X-Signature, no `role` field, no
+      retry-on-server_busy logic — none of that exists anymore) ---
+
+    const AGENT_LLAMA_URL = process.env.AGENT_LLAMA_URL!;
+    const AGENT_MODEL = process.env.AGENT_MODEL!;
+
+    export async function askAgent(message: string): Promise<string> {
+      const res = await fetch(AGENT_LLAMA_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: AGENT_MODEL,
+          messages: [{ role: "user", content: message }],
+          max_tokens: 500,          // nothing server-side caps this now — you must
+        }),
+        signal: AbortSignal.timeout(180_000),  // still a CPU model; keep the long timeout
+      });
+
+      if (!res.ok) {
+        throw new Error(`agent call failed: ${res.status} ${await res.text()}`);
+      }
+      const data = await res.json();
+      return data.choices[0].message.content;
+    }
+
+  --- Streaming call (NEW capability — real token-by-token SSE, wasn't
+      possible through the old /v1/chat wrapper). Your existing
+      chat.service.ts already builds a fake SSE stream (session id -> one
+      lump reply -> [DONE], per the 2026-08-31 test report); this replaces
+      the lump with llama-server's real stream: ---
+
+    export async function askAgentStreaming(message: string): Promise<ReadableStream<Uint8Array>> {
+      const res = await fetch(AGENT_LLAMA_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: AGENT_MODEL,
+          messages: [{ role: "user", content: message }],
+          max_tokens: 500,
+          stream: true,
+        }),
+      });
+      if (!res.ok || !res.body) throw new Error(`agent call failed: ${res.status}`);
+      return res.body;  // already SSE: "data: {...}\n\n" chunks, ending "data: [DONE]"
+    }
+
+  Each chunk's choices[0].delta.content is the next piece of text — pipe it
+  straight into the existing SSE response to the browser instead of waiting
+  for the full reply.
+
+  --- Rebuilding role-scoped guidance (end_user/l1/l2/l3/security), if still
+      wanted — this logic was server-side before and is gone now; it has to
+      be sent as a system message on every call: ---
+
+    const ROLE_GUIDANCE: Record<string, string> = {
+      end_user: "Give the GUI click-path only, numbered steps, plain language. Never give commands.",
+      l1:       "Give the GUI click-path first, then the equivalent command, known-safe tools only.",
+      l2:       "Full command detail plus the diagnostic sequence. Skip basic hand-holding.",
+      l3:       "Assume deep technical background. Lead with the most likely root cause and its direct fix.",
+      security: "Lead with containment and evidence preservation before remediation.",
+    };
+
+    messages: [
+      { role: "system", content: ROLE_GUIDANCE[userRole] ?? "" },
+      { role: "user", content: message },
+    ],
+
+  After deploying: re-run the curl at the top of this section, then a real
+  chat call, and confirm the exact result (success, or the specific error)
+  before considering this done.
+
+--------------------------------------------------------------------------------
+6. IF THIS NEEDS TO BE REVISITED
+--------------------------------------------------------------------------------
+  Nothing about this is version-controlled cleanly: the firewall rule and
+  the llama-server bind address were changed directly on the running system
+  (`/etc/systemd/system/agent.service` — note this deployed unit file had
+  already drifted from the repo's own `agent.service` before this change;
+  both were updated in parallel here but were not identical to start with).
+  If this connection is ever removed or re-secured, the reverse of section 2
+  (rebind llama-server to 127.0.0.1, drop the firewalld rich rule) restores
+  the prior isolation; re-adding the signed API means restoring the removed
+  code from git history (2026-08-31 commit removing v1_api.py's chat surface)
+  rather than rewriting it from scratch.
+
+================================================================================

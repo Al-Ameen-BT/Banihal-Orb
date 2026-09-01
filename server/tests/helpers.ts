@@ -43,7 +43,22 @@ export async function registerAndLogin(orgName: string, email: string) {
   return res.headers['set-cookie'] as string[];
 }
 
+/**
+ * cleanDb deletes every user and org, so it must never see a production URL.
+ * vitest loads the same .env the server uses, which is exactly how the live
+ * b2b_saas database was once emptied by a test run — the database name has to
+ * end in `_test` or nothing runs.
+ */
+function assertTestDatabase(): void {
+  const url = process.env.DATABASE_URL ?? '';
+  const name = url.split('/').pop()?.split('?')[0] ?? '';
+  if (!name.endsWith('_test')) {
+    throw new Error(`Refusing to run destructive tests against "${name || url}" — point DATABASE_URL at a *_test database.`);
+  }
+}
+
 export async function cleanDb() {
+  assertTestDatabase();
   await prisma.auditLog.deleteMany();
   await prisma.refreshToken.deleteMany();
   await prisma.user.deleteMany();

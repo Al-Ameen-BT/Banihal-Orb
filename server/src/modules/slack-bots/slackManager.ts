@@ -2,7 +2,7 @@ import { WebClient } from '@slack/web-api';
 import { SocketModeClient } from '@slack/socket-mode';
 import { prisma } from '../../config/database';
 import { decryptSecret } from '../../config/slackCrypto';
-import { askAgent } from '../../services/agentClient';
+import { agentChat } from '../../services/agentApi';
 
 // ─── Slack bot manager (singleton) ───────────────────────────────────────────
 // Owns the live connections for every enabled SlackBot. Uses the Slack Web API to
@@ -96,7 +96,8 @@ class SlackManager {
     if (event.type === 'message' && event.channel_type !== 'im') return; // only DMs (mentions handled via app_mention)
     const text = stripMention(event.text ?? '', conn.botUserId).trim();
     if (!text) return;
-    const reply = await askAgent(text);
+    // Slack users are not authenticated to us, so end_user guidance is the floor.
+    const { reply } = await agentChat(text, 'end_user');
     if (reply) await conn.web.chat.postMessage({ channel: event.channel, text: reply, thread_ts: event.thread_ts });
   }
 }
