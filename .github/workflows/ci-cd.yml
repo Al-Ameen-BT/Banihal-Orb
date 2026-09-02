@@ -24,7 +24,7 @@ jobs:
         working-directory: server
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -67,7 +67,7 @@ jobs:
         working-directory: client
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -100,7 +100,7 @@ jobs:
     needs: [server-check, client-check]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build API image
         run: podman build -f Containerfile.api -t b2b-api:ci .
@@ -135,7 +135,7 @@ jobs:
     environment: production
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Recorded BEFORE the build so the rollback target is known even if a later
       # step dies partway through.
