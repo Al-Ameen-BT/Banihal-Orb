@@ -44,6 +44,18 @@ export interface User {
   customerId: string;
   lastLoginAt: string | null;
   createdAt: string;
+  emailVerifiedAt: string | null;
+  /** Vendor-staff role. Null for customer accounts (USER / ORG_ADMIN). */
+  platformRole: { key: string; name: string } | null;
+  /**
+   * Platform permission keys, expanded server-side (Administration arrives as
+   * the full list). Empty for customer accounts.
+   *
+   * These drive what the UI OFFERS, never what it permits — every route is
+   * independently enforced on the server. Hiding a control here is a courtesy,
+   * not a boundary.
+   */
+  permissions: string[];
 }
 
 export interface Customer {

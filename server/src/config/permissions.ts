@@ -18,6 +18,12 @@ export const PERMISSIONS = [
   { key: 'customer_services.manage', group: 'Platform',    label: 'Customer Services' },
   { key: 'orgs.manage',              group: 'Platform',    label: 'Organizations, flags & impersonation' },
   { key: 'platform_audit.view',      group: 'Platform',    label: 'Audit log, logins & staff directory' },
+  // Financial figures (platform MRR). Deliberately its OWN key rather than
+  // riding on nav.control_plane: revenue visibility is a separate decision from
+  // control-plane access, and in an editable matrix the two must be togglable
+  // independently — otherwise granting someone the control plane silently hands
+  // them the finances too.
+  { key: 'revenue.view',             group: 'Platform',    label: 'Revenue figures' },
 
   // Identity.
   { key: 'users.manage',             group: 'Identity',    label: 'Users' },

@@ -24,6 +24,8 @@ interface AuthContextValue {
   resendMfa: (challengeId: string) => Promise<string>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
+  /** Does the signed-in user hold this platform permission? */
+  can: (permission: string) => boolean;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -77,6 +79,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Step 1: exchange credentials for an MFA challenge (a code is emailed) — or,
   // on a trusted device, a completed session (cookies already set).
+  // A UX affordance, not a security boundary: it decides what the interface
+  // offers, while every route stays independently enforced on the server. Falls
+  // closed — an unresolved user or a customer account (whose `permissions` is
+  // always empty) holds nothing.
+  const can = (permission: string): boolean => user?.permissions?.includes(permission) ?? false;
+
   const login = async (email: string, password: string): Promise<LoginResult> => {
     const res = await authApi.login({ email, password });
     const data = res.data as { mfaRequired: boolean; challengeId?: string; email?: string };
@@ -105,7 +113,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, verifyMfa, resendMfa, logout, refresh }}>
+    <AuthContext.Provider value={{ user, loading, login, verifyMfa, resendMfa, logout, refresh, can }}>
       {children}
     </AuthContext.Provider>
   );

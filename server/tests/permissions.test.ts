@@ -15,7 +15,7 @@ import { PERMISSIONS, ALL_PERMISSION_KEYS, isPermissionKey, type PermissionKey }
 const SEEDED: Record<string, string[]> = {
   hr_admin: [
     'nav.control_plane', 'catalog.manage', 'customer_services.manage', 'orgs.manage',
-    'platform_audit.view', 'users.manage', 'staff.invite', 'roles.manage',
+    'platform_audit.view', 'revenue.view', 'users.manage', 'staff.invite', 'roles.manage',
     'services.view', 'nav.chat', 'tickets.view', 'tickets.write', 'ticket.store.admin',
   ],
   employee: [
@@ -119,6 +119,15 @@ describe('can() — seeded platform roles', () => {
     expect(can(req, 'services.view')).toBe(true);
     expect(can(req, 'bots.view')).toBe(false);
     expect(can(req, 'credentials.view')).toBe(false);
+  });
+
+  it('shows revenue to Administration and HR Admin only', () => {
+    // The platform dashboard's Monthly Revenue KPI. Withheld server-side in
+    // saas-admin.controller.getMetrics, not merely hidden in the UI.
+    expect(can(reqAs('ADMINISTRATOR', [...ALL_PERMISSION_KEYS]), 'revenue.view')).toBe(true);
+    expect(can(reqAs('ADMINISTRATOR', SEEDED['hr_admin']!), 'revenue.view')).toBe(true);
+    expect(can(reqAs('ADMINISTRATOR', SEEDED['employee']!), 'revenue.view')).toBe(false);
+    expect(can(reqAs('ADMINISTRATOR', SEEDED['intern']!), 'revenue.view')).toBe(false);
   });
 
   it('all four platform roles reach the isolated ticket store', () => {

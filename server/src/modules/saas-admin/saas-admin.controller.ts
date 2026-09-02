@@ -12,6 +12,7 @@ import {
 } from './saas-admin.schema';
 import * as platformRoles from '../platform-roles/platformRoles.service';
 import { PERMISSIONS } from '../../config/permissions';
+import { can } from '../../middleware/rbac.middleware';
 import * as saasAdminService from './saas-admin.service';
 import { cached, cacheKey, TTL } from '../../lib/cache';
 
@@ -51,10 +52,17 @@ export async function impersonateUser(req: Request, res: Response, next: NextFun
   } catch (err) { next(err); }
 }
 
-export async function getMetrics(_req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function getMetrics(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const metrics = await saasAdminService.getPlatformMetrics();
-    res.json(metrics);
+    const { mrr, ...metrics } = await saasAdminService.getPlatformMetrics();
+    // Revenue is field-level authorized, not route-level: Employee and Intern
+    // legitimately see the rest of this payload on their dashboard (org count,
+    // open tickets), so the endpoint stays open and only `mrr` is withheld.
+    //
+    // Withheld HERE, not just hidden in the UI — the whole /api/saas-admin
+    // router is gated by requireRole('ADMINISTRATOR'), which every platform role
+    // satisfies, so any staff member can call this endpoint directly.
+    res.json(can(req, 'revenue.view') ? { ...metrics, mrr } : metrics);
   } catch (err) { next(err); }
 }
 

@@ -21,7 +21,9 @@ import type {
 interface PlatformMetrics {
   totalOrgs: number; totalUsers: number; totalAdmins: number;
   openRequests: number; criticalRequests: number;
-  mrr: number; arr: number;
+  // Withheld entirely (not zeroed) for callers without `revenue.view` — see
+  // saas-admin.controller.getMetrics. Optional so the type matches the wire.
+  mrr?: number; arr?: number;
   servicesActive: number; servicesExpiring: number; servicesExpired: number;
 }
 interface OrgOverview {
@@ -520,7 +522,7 @@ function AuditLogSection({ orgs }: { orgs: OrgOverview[] }) {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 export default function AdminPlatformDashboard() {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const qc = useQueryClient();
   const [showApproaching, setShowApproaching] = useState(false);
 
@@ -605,13 +607,23 @@ export default function AdminPlatformDashboard() {
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.03 }} className="space-y-6">
               <GroupHeader index={1} title="Overview" caption="Platform health at a glance" />
               {metricsLoading ? (
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">{Array.from({ length: 4 }).map((_, i) => <ShimmerCard key={i} />)}</div>
+                <div className={`grid grid-cols-2 gap-4 ${can('revenue.view') ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
+                  {Array.from({ length: can('revenue.view') ? 4 : 3 }).map((_, i) => <ShimmerCard key={i} />)}
+                </div>
               ) : (
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                // Revenue is Administration/HR Admin only, so the row is 4 tiles
+                // for them and 3 for everyone else — the column count follows,
+                // otherwise the grid leaves a hole where the card was.
+                <div className={`grid grid-cols-2 gap-4 ${can('revenue.view') ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
                   <KpiCard title="Client Orgs"   value={metrics?.totalOrgs ?? 0} tone="brand" />
                   <KpiCard title="SLA Breaches"  value={breaches.length} tone="rose"
                     subtitle={approaching.length ? `${approaching.length} approaching` : 'all within SLA'} />
-                  <KpiCard title="Monthly Revenue" value={`₹${(metrics?.mrr ?? 0).toLocaleString()}`} tone="emerald" />
+                  {/* The server withholds `mrr` from callers without this
+                      permission (saas-admin.controller.getMetrics), so this only
+                      hides a value that would already be absent. */}
+                  {can('revenue.view') && (
+                    <KpiCard title="Monthly Revenue" value={`₹${(metrics?.mrr ?? 0).toLocaleString()}`} tone="emerald" />
+                  )}
                   <KpiCard title="Open Tickets"  value={metrics?.openRequests ?? 0} tone="amber"
                     subtitle={metrics?.criticalRequests ? `${metrics.criticalRequests} critical` : undefined} />
                 </div>

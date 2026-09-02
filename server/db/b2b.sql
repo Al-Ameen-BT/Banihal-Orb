@@ -97,7 +97,7 @@ INSERT INTO "PlatformRole" ("id","key","name","description","system","permission
   ('plr_hr_admin','hr_admin','HR Admin',
    'Business operations: organizations, users, services and the catalog.', true,
    '["nav.control_plane","catalog.manage","customer_services.manage","orgs.manage",
-     "platform_audit.view","users.manage","staff.invite","roles.manage",
+     "platform_audit.view","revenue.view","users.manage","staff.invite","roles.manage",
      "services.view","nav.chat","tickets.view","tickets.write","ticket.store.admin"]'::jsonb),
 
   ('plr_employee','employee','Employee',
@@ -109,6 +109,19 @@ INSERT INTO "PlatformRole" ("id","key","name","description","system","permission
    'Same surfaces as Employee, read-only: no ticket edits, no secret reveal, no bot changes.', true,
    '["nav.chat","tickets.view","ticket.store.admin","credentials.view","bots.view"]'::jsonb)
 ON CONFLICT ("key") DO NOTHING;
+
+-- Additive grants for keys introduced AFTER a role row already existed. The
+-- INSERT above is ON CONFLICT DO NOTHING, so it only shapes fresh installs —
+-- an upgraded database keeps whatever its hr_admin row already had, and would
+-- otherwise never receive a newly-shipped key.
+--
+-- Idempotent and non-destructive: appends only when absent, and touches nothing
+-- an administrator has changed in the roles matrix. `administration` needs no
+-- entry here — its permissions are computed, never stored.
+UPDATE "PlatformRole"
+   SET "permissions" = "permissions" || '["revenue.view"]'::jsonb
+ WHERE "key" = 'hr_admin'
+   AND NOT ("permissions" @> '["revenue.view"]'::jsonb);
 
 -- ─── User ────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS "User" (
