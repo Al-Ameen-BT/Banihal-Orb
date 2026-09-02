@@ -37,8 +37,8 @@
     "ioredis": "^6.0.0",
     "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.1",
-    "nodemailer": "^9.0.2",
-    "pg": "^8.22.0",
+    "nodemailer": "^9.0.6",
+    "pg": "^8.23.0",
     "rate-limit-redis": "^4.3.1",
     "web-push": "^3.6.7",
     "winston": "^3.11.0",
@@ -53,12 +53,12 @@
     "@types/multer": "^2.1.0",
     "@types/node": "^20.11.24",
     "@types/nodemailer": "^8.0.1",
-    "@types/pg": "^8.20.0",
+    "@types/pg": "^8.23.1",
     "@types/supertest": "^6.0.2",
     "prisma": "^5.10.2",
     "supertest": "^6.3.4",
-    "tsx": "^4.7.1",
+    "tsx": "^4.23.13",
     "typescript": "^5.4.2",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.11"
   }
 }
