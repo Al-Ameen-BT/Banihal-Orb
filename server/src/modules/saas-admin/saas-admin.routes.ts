@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import * as saasAdminController from './saas-admin.controller';
-import * as platformRolesController from '../platform-roles/platformRoles.controller';
 import { requireRole, requirePermission } from '../../middleware/rbac.middleware';
 
 const router = Router();
@@ -8,8 +7,8 @@ const onlyAdministrator = requireRole('ADMINISTRATOR');
 
 // ─── Platform roles (read-only for now; the matrix editor lands in P6) ───────
 // Both are needed by the roles UI and by the staff-invite role picker.
-router.get('/roles', requirePermission('roles.manage'), platformRolesController.listRoles);
-router.get('/roles/catalog', requirePermission('roles.manage'), platformRolesController.permissionCatalog);
+router.get('/roles', requirePermission('roles.manage'), saasAdminController.listPlatformRoles);
+router.get('/roles/catalog', requirePermission('roles.manage'), saasAdminController.permissionCatalog);
 
 // Organizations
 router.get('/orgs', saasAdminController.listOrgs);

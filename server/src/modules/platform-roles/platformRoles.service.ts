@@ -12,17 +12,19 @@ import {
 // map rather than a query: the table has at most a handful of rows and changes
 // only when an administrator edits the matrix.
 //
-// Staleness is bounded two ways — a 60s TTL so a second API instance converges on
-// its own, and an explicit bust() on every write in this process. A role
-// REASSIGNMENT is separately bounded by the 15-minute access-token lifetime,
-// exactly as the `role` claim already is; where that matters the caller deletes
-// the target's refresh tokens, which kills the session on the next request.
+// Staleness is bounded by a 60s TTL, so an edit on one API instance reaches the
+// others within a minute. A role REASSIGNMENT is separately bounded by the
+// 15-minute access-token lifetime, exactly as the `role` claim already is; where
+// that matters the caller deletes the target's refresh tokens, which kills the
+// session on the next request.
+//
+// The role-editor writes land in P6 and will want an explicit cache bust; add it
+// then, next to the code that writes.
 
 const TTL_MS = 60_000;
 
-interface Snapshot { byId: Map<string, Set<PermissionKey>>; keyById: Map<string, string>; at: number }
+interface Snapshot { byId: Map<string, Set<PermissionKey>>; at: number }
 let snapshot: Snapshot | null = null;
-let inflight: Promise<Snapshot> | null = null;
 
 async function load(): Promise<Snapshot> {
   const rows = await prisma.platformRole.findMany({
@@ -30,10 +32,8 @@ async function load(): Promise<Snapshot> {
   });
 
   const byId = new Map<string, Set<PermissionKey>>();
-  const keyById = new Map<string, string>();
 
   for (const row of rows) {
-    keyById.set(row.id, row.key);
     // Administration's permissions are NEVER read from the column. Computing them
     // is what makes the role impossible to strip, and what makes a newly-shipped
     // key automatically held rather than needing a data migration.
@@ -47,23 +47,12 @@ async function load(): Promise<Snapshot> {
     byId.set(row.id, new Set(stored.filter((k): k is PermissionKey => typeof k === 'string' && isPermissionKey(k))));
   }
 
-  return { byId, keyById, at: Date.now() };
+  return { byId, at: Date.now() };
 }
 
-/** Collapse concurrent misses onto one query rather than a thundering herd. */
 async function current(): Promise<Snapshot> {
-  if (snapshot && Date.now() - snapshot.at < TTL_MS) return snapshot;
-  if (!inflight) {
-    inflight = load()
-      .then((s) => { snapshot = s; return s; })
-      .finally(() => { inflight = null; });
-  }
-  return inflight;
-}
-
-/** Drop the cache after a write so this process sees the change immediately. */
-export function bustRoleCache(): void {
-  snapshot = null;
+  if (!snapshot || Date.now() - snapshot.at >= TTL_MS) snapshot = await load();
+  return snapshot;
 }
 
 /**
@@ -76,13 +65,6 @@ export async function permissionsFor(platformRoleId: string | null): Promise<Set
   return byId.get(platformRoleId) ?? new Set();
 }
 
-/** The role's stable key (`administration`, `intern`, …), or null. */
-export async function roleKeyFor(platformRoleId: string | null): Promise<string | null> {
-  if (!platformRoleId) return null;
-  const { keyById } = await current();
-  return keyById.get(platformRoleId) ?? null;
-}
-
 // ─── Reads for the roles matrix ──────────────────────────────────────────────
 
 export async function listRoles() {
@@ -90,13 +72,6 @@ export async function listRoles() {
     orderBy: [{ system: 'desc' }, { name: 'asc' }],
     select: { id: true, key: true, name: true, description: true, system: true, permissions: true, createdAt: true },
   });
-
-  const counts = await prisma.user.groupBy({
-    by: ['platformRoleId'],
-    _count: { _all: true },
-    where: { platformRoleId: { not: null } },
-  });
-  const memberCount = new Map(counts.map((c) => [c.platformRoleId, c._count._all]));
 
   return rows.map((r) => ({
     id: r.id,
@@ -109,9 +84,6 @@ export async function listRoles() {
     permissions: r.key === ADMINISTRATION_ROLE_KEY
       ? [...ALL_PERMISSION_KEYS]
       : (Array.isArray(r.permissions) ? r.permissions.filter((k): k is string => typeof k === 'string') : []),
-    // Administration's column is rendered locked in the UI; this says why.
-    locked: r.key === ADMINISTRATION_ROLE_KEY,
-    members: memberCount.get(r.id) ?? 0,
     createdAt: r.createdAt,
   }));
 }

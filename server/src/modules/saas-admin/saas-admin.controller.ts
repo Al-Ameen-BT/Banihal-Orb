@@ -10,6 +10,8 @@ import {
   ListEscalationsSchema, UpdateEscalationSchema,
   TicketNumberFormatSchema,
 } from './saas-admin.schema';
+import * as platformRoles from '../platform-roles/platformRoles.service';
+import { PERMISSIONS } from '../../config/permissions';
 import * as saasAdminService from './saas-admin.service';
 import { cached, cacheKey, TTL } from '../../lib/cache';
 
@@ -332,4 +334,17 @@ export async function getPasswordReuse(_req: Request, res: Response, next: NextF
   try {
     res.json(await saasAdminService.getPasswordReuseReport());
   } catch (err) { next(err); }
+}
+
+// ─── Platform roles ──────────────────────────────────────────────────────────
+// The roles matrix needs both halves: the catalogue of permission keys that
+// exist (code) and which keys each role currently holds (data).
+export async function listPlatformRoles(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    res.json({ roles: await platformRoles.listRoles() });
+  } catch (err) { next(err); }
+}
+
+export function permissionCatalog(_req: Request, res: Response): void {
+  res.json({ permissions: PERMISSIONS });
 }

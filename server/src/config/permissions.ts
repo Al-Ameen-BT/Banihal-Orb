@@ -11,13 +11,6 @@
 // db/b2b.sql. `administration` needs no edit — it is computed as "everything", so
 // a new key is automatically held by administrators and can never lock them out.
 
-export interface PermissionDef {
-  key: string;
-  /** Section heading in the roles matrix. */
-  group: string;
-  label: string;
-}
-
 export const PERMISSIONS = [
   // Platform surfaces — the vendor's cross-tenant control surfaces.
   { key: 'nav.control_plane',        group: 'Platform',    label: 'Control Plane' },
@@ -49,7 +42,7 @@ export const PERMISSIONS = [
 
   { key: 'bots.view',                group: 'Slack Bots',  label: 'View Slack bots' },
   { key: 'bots.manage',              group: 'Slack Bots',  label: 'Connect, disconnect & generate keys' },
-] as const satisfies readonly PermissionDef[];
+] as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[number]['key'];
 

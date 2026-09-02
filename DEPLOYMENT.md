@@ -15,11 +15,9 @@ Two supported topologies:
 Deploy bare-metal only if you are not ready to containerize. **Keep it installed but stopped
 through the container cutover** — it is the rollback.
 
-> 📦 **Deploying with Podman? Follow [`deploy/podman/README.md`](deploy/podman/README.md).**
-> That is the step-by-step runbook — prerequisites through cutover, plus day-2 upgrade,
-> rollback, backup and troubleshooting. This document remains the wider reference:
-> architecture rationale, the full environment-variable table (§4), Redis (§5), CI/CD (§9)
-> and the production readiness checklist (§10).
+> 📦 **Deploying with Podman? The runbook is [`deploy/podman/README.md`](deploy/podman/README.md)** (§6).
+> This document is the wider reference: architecture, the environment-variable table (§4),
+> Redis (§5), CI/CD (§9) and the readiness checklist (§10).
 
 > Database schemas are provisioned by **idempotent SQL DDL** in `server/db/`. Re-running is safe
 > and never drops data. Prisma _clients_ are still generated (`npm run db:generate`).
@@ -204,62 +202,22 @@ here is reconstructible.
 
 ## 6. Containerized deployment
 
-### 6.1 Install
+**→ [`deploy/podman/README.md`](deploy/podman/README.md)** is the runbook: prerequisites,
+install, configure, provision, build, cutover, day-2 upgrade/rollback/backup, and
+troubleshooting. It is kept in step with the Quadlet units it sits beside.
 
-```bash
-sudo ./deploy/podman/install.sh     # units → /etc/containers/systemd/, nginx conf → /etc/b2b/
-```
+The two values that most often go wrong, repeated here because they are also referenced
+from §4 and §8:
 
-Installs units and seeds env files. **Starts nothing** and does not touch a running `b2b.service`,
-so it is safe on a live host.
+- `TRUST_PROXY="10.89.10.0/24"` — **not** `loopback`. nginx now reaches the API from the
+  container network, so Express discards `X-Forwarded-For` and every IP-keyed rate limiter
+  collapses into one bucket, silently.
+- `NEXT_PUBLIC_API_URL` is **build-time**. It is inlined into the browser bundle by
+  `next build`; setting it in a Quadlet unit does nothing. To change it, rebuild.
 
-### 6.2 Configure
-
-Edit `/etc/b2b/postgres.env`, `server.env`, `client.env`. In `server.env`:
-
-```bash
-DATABASE_URL="postgresql://postgres:...@b2b-postgres:5432/b2b?schema=public"
-REDIS_URL="redis://b2b-redis:6379"
-TRUST_PROXY="10.89.10.0/24"     # NOT loopback — see §4
-```
-
-### 6.3 Build
-
-```bash
-./deploy/podman/build.sh                # tags :latest and :<git-sha>
-```
-
-The `:<git-sha>` tag is the rollback artifact. `build.sh` **refuses to build** if
-`NEXT_PUBLIC_API_URL` is unset — it is baked into the browser bundle and cannot be fixed at runtime.
-
-### 6.4 Migrate data
-
-```bash
-systemctl start b2b-postgres b2b-redis
-./deploy/podman/migrate-db.sh           # dumps all five DBs, restores, compares row counts
-cd server && npm run db:verify
-```
-
-**Stop the application first.** A dump taken while the app writes loses those writes at cutover.
-The host cluster is only read — it stays intact as the rollback.
-
-### 6.5 Parallel run
-
-Publish the app pod on `127.0.0.1:3010`/`3011` (see the note in `b2b-app.pod`) and smoke-test
-against the container databases while `b2b.service` still serves live traffic. Verify login, ticket
-creation with an image attachment, the chat SSE stream, and the notification bell.
-
-### 6.6 Cutover
-
-```bash
-systemctl stop nginx                    # host nginx releases :80/:443
-systemctl start b2b-app b2b-nginx
-curl -sk https://localhost/health
-systemctl disable --now b2b.service
-systemctl enable b2b-postgres b2b-redis b2b-api b2b-web b2b-nginx
-```
-
-Keep the host PostgreSQL cluster stopped-but-intact for at least one backup cycle.
+Migrating off an existing bare-metal install? Run `deploy/podman/migrate-db.sh` with the
+application **stopped** — a dump taken while it writes loses those writes at cutover — and
+keep the host cluster stopped-but-intact for at least one backup cycle as the rollback.
 
 ---
 
