@@ -53,7 +53,25 @@ jobs:
       # and let the DB-dependent failures turn the pipeline permanently red —
       # a red pipeline nobody trusts is worse than a narrow green one.
       - name: Unit tests
-        run: npx vitest run tests/cache.test.ts tests/dashboard-aggregate.test.ts tests/agent-signing.test.ts tests/uploads.test.ts tests/permissions.test.ts
+        run: npx vitest run tests/cache.test.ts tests/dashboard-aggregate.test.ts tests/agent-signing.test.ts tests/uploads.test.ts tests/permissions.test.ts tests/security-headers.test.ts
+        # config/env.ts validates the whole environment at IMPORT and calls
+        # process.exit(1) when it fails. `.env` is gitignored, so on a runner every
+        # test file that transitively imports it dies before a single assertion
+        # runs — which is why this step was red from the day it was added.
+        #
+        # These are placeholders, never connected to. The failure is at import
+        # time, not connection time: no test in this list opens a socket. They only
+        # have to satisfy the zod schema — .url() for the five DSNs, min(32) for the
+        # three secrets.
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/b2b_test
+          CHAT_DATABASE_URL: postgresql://ci:ci@localhost:5432/b2b_chat_test
+          TICKETING_DATABASE_URL: postgresql://ci:ci@localhost:5432/b2b_ticketing_test
+          TICKET_DATABASE_URL: postgresql://ci:ci@localhost:5432/b2b_ticket_test
+          ADMIN_TICKETING_DATABASE_URL: postgresql://ci:ci@localhost:5432/b2b_ticketing_admin_test
+          JWT_ACCESS_SECRET: ci-placeholder-not-a-real-secret-000000000000
+          JWT_REFRESH_SECRET: ci-placeholder-not-a-real-secret-111111111111
+          IMPERSONATION_SECRET: ci-placeholder-not-a-real-secret-222222222222
 
   # ──────────────────────────────────────────────────────────────────────────
   # Client — TypeScript type-check + production build
