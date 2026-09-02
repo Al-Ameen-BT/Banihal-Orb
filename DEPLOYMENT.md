@@ -15,6 +15,12 @@ Two supported topologies:
 Deploy bare-metal only if you are not ready to containerize. **Keep it installed but stopped
 through the container cutover** — it is the rollback.
 
+> 📦 **Deploying with Podman? Follow [`deploy/podman/README.md`](deploy/podman/README.md).**
+> That is the step-by-step runbook — prerequisites through cutover, plus day-2 upgrade,
+> rollback, backup and troubleshooting. This document remains the wider reference:
+> architecture rationale, the full environment-variable table (§4), Redis (§5), CI/CD (§9)
+> and the production readiness checklist (§10).
+
 > Database schemas are provisioned by **idempotent SQL DDL** in `server/db/`. Re-running is safe
 > and never drops data. Prisma _clients_ are still generated (`npm run db:generate`).
 > **Always back up before a schema change.**

@@ -32,7 +32,9 @@ function buildPrisma() {
           // stay tenant-scoped so org reads auto-filter (admin routes carry no tenant context).
           // PushSubscription scopes by its own `tenantId` field (set explicitly in the
           // push controllers/lib), so it must not receive the auto-injected `customerId`.
-          const globalModels = ['FeatureFlag', 'Customer', 'RefreshToken', 'Announcement', 'TicketNumberSetting', 'SlackBot', 'SlackBotFormField', 'TrustedDevice', 'PushSubscription'];
+          // PlatformRole is the vendor's own staff-role catalogue — platform-wide,
+          // with no customerId, so it must never receive the tenant filter.
+          const globalModels = ['FeatureFlag', 'Customer', 'RefreshToken', 'Announcement', 'TicketNumberSetting', 'SlackBot', 'SlackBotFormField', 'TrustedDevice', 'PushSubscription', 'PlatformRole'];
 
           if (store?.customerId && scopedOps.includes(operation) && !globalModels.includes(model)) {
             const existingWhere = (args['where'] as Record<string, unknown>) ?? {};

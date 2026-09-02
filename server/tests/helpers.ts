@@ -17,10 +17,40 @@ export async function createTestOrg(name: string) {
   });
 }
 
-export async function createTestUser(orgId: string, email: string, role: Role = 'USER') {
+/**
+ * `platformRoleKey` names the vendor-staff role (administration | hr_admin |
+ * employee | intern) and is REQUIRED when role is ADMINISTRATOR — a DB CHECK
+ * constraint rejects platform staff without one. Defaults to administration so
+ * existing tests that pass only 'ADMINISTRATOR' keep their old behaviour.
+ *
+ * `emailVerifiedAt` is stamped because login is blocked while it is null; tests
+ * that exercise the verification gate itself should clear it explicitly.
+ */
+export async function createTestUser(
+  orgId: string,
+  email: string,
+  role: Role = 'USER',
+  platformRoleKey?: string,
+) {
   const passwordHash = await bcrypt.hash('TestPassword1!', 12);
+  const key = role === 'ADMINISTRATOR' ? (platformRoleKey ?? 'administration') : platformRoleKey;
+  const platformRole = key
+    ? await prisma.platformRole.findUnique({ where: { key }, select: { id: true } })
+    : null;
+  if (key && !platformRole) {
+    throw new Error(`Platform role "${key}" is missing — run db/b2b.sql against the test database.`);
+  }
+
   return prisma.user.create({
-    data: { email, name: 'Test User', passwordHash, role, customerId: orgId },
+    data: {
+      email,
+      name: 'Test User',
+      passwordHash,
+      role,
+      customerId: orgId,
+      emailVerifiedAt: new Date(),
+      ...(platformRole ? { platformRoleId: platformRole.id } : {}),
+    },
   });
 }
 
@@ -61,9 +91,12 @@ export async function cleanDb() {
   assertTestDatabase();
   await prisma.auditLog.deleteMany();
   await prisma.refreshToken.deleteMany();
+  await prisma.emailVerificationToken.deleteMany();
   await prisma.user.deleteMany();
   await prisma.customer.deleteMany();
   await prisma.featureFlag.deleteMany();
+  // PlatformRole is deliberately NOT deleted: the four system roles come from
+  // db/b2b.sql, not from any test, and createTestUser looks them up by key.
 }
 
 export { app, request };

@@ -6,6 +6,7 @@ import { prisma } from '../../config/database';
 import { assertPasswordNotReused, passwordFingerprint } from './passwordReuse';
 import { env } from '../../config/env';
 import { uniqueOrgCode } from '../../utils/orgCode';
+import { ADMINISTRATION_ROLE_KEY } from '../../config/permissions';
 import * as mailService from '../mail/mail.service';
 import type { RegisterInput, RegisterUserInput, LoginInput, ForgotPasswordInput, ResetPasswordInput } from './auth.schema';
 
@@ -24,10 +25,23 @@ function generateSlug(name: string): string {
     .slice(0, 50) + '-' + crypto.randomBytes(3).toString('hex');
 }
 
-function signAccessToken(userId: string, customerId: string, role: Role, sessionId: string): string {
-  return jwt.sign({ userId, customerId, role, sid: sessionId, type: 'access' }, env.JWT_ACCESS_SECRET, {
-    expiresIn: env.JWT_ACCESS_EXPIRES_IN as jwt.SignOptions['expiresIn'],
-  });
+// `prid` is the platform-staff role id, carried so auth.middleware can resolve the
+// caller's permissions from a process-local map instead of a per-request query.
+// Null for customer accounts. Like `role`, it is only as fresh as the token: a
+// role REASSIGNMENT takes effect within the 15-minute access lifetime, or
+// immediately if the caller also deletes the target's refresh tokens.
+function signAccessToken(
+  userId: string,
+  customerId: string,
+  role: Role,
+  sessionId: string,
+  platformRoleId: string | null = null,
+): string {
+  return jwt.sign(
+    { userId, customerId, role, prid: platformRoleId, sid: sessionId, type: 'access' },
+    env.JWT_ACCESS_SECRET,
+    { expiresIn: env.JWT_ACCESS_EXPIRES_IN as jwt.SignOptions['expiresIn'] },
+  );
 }
 
 // Stable per-login session identity — survives refresh-token rotation and is
@@ -66,10 +80,37 @@ async function createRefreshToken(userId: string, sessionId: string): Promise<st
   return raw;
 }
 
+// Platform staff must always carry a platform role — a DB CHECK constraint
+// enforces it, so assigning ADMINISTRATOR without one is a failed INSERT, not a
+// degraded account. Resolved by key rather than by the seeded id so a renamed or
+// re-seeded row still matches.
+//
+// Returns null when the role is missing, which is only possible on a database
+// that has not had db/b2b.sql applied. Callers treat null as "cannot mint staff".
+async function administrationRoleId(): Promise<string | null> {
+  const row = await prisma.platformRole.findUnique({
+    where: { key: ADMINISTRATION_ROLE_KEY },
+    select: { id: true },
+  });
+  return row?.id ?? null;
+}
+
 export async function register(input: RegisterInput): Promise<TokenPair> {
   await assertPasswordNotReused(input.password);
   const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
   const slug = generateSlug(input.organizationName);
+
+  // Self-service platform-admin creation is a hole that P3 closes outright. Until
+  // then it must at least produce a VALID row: ADMINISTRATOR paired with the
+  // Administration platform role.
+  const isProviderAdmin = isProviderAdminEmail(input.email);
+  const platformRoleId = isProviderAdmin ? await administrationRoleId() : null;
+  if (isProviderAdmin && !platformRoleId) {
+    throw Object.assign(
+      new Error('Platform roles are not provisioned. Run db/provision.sh before registering staff.'),
+      { status: 503, code: 'PLATFORM_ROLES_MISSING' },
+    );
+  }
 
   const customer = await prisma.customer.create({
     data: {
@@ -86,7 +127,8 @@ export async function register(input: RegisterInput): Promise<TokenPair> {
           passwordHash,
           passwordFingerprint: passwordFingerprint(input.password),
           name: input.name,
-          role: isProviderAdminEmail(input.email) ? 'ADMINISTRATOR' : 'ORG_ADMIN',
+          role: isProviderAdmin ? 'ADMINISTRATOR' : 'ORG_ADMIN',
+          ...(platformRoleId ? { platformRoleId } : {}),
         },
       },
     },
@@ -149,13 +191,25 @@ export async function registerUser(input: RegisterUserInput): Promise<TokenPair>
 
   await assertPasswordNotReused(input.password);
   const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
+
+  // Same pairing rule as register(): ADMINISTRATOR is invalid without a platform role.
+  const isProviderAdmin = isProviderAdminEmail(input.email);
+  const platformRoleId = isProviderAdmin ? await administrationRoleId() : null;
+  if (isProviderAdmin && !platformRoleId) {
+    throw Object.assign(
+      new Error('Platform roles are not provisioned. Run db/provision.sh before registering staff.'),
+      { status: 503, code: 'PLATFORM_ROLES_MISSING' },
+    );
+  }
+
   const user = await prisma.user.create({
     data: {
       email: input.email,
       passwordHash,
       passwordFingerprint: passwordFingerprint(input.password),
       name: input.name,
-      role: isProviderAdminEmail(input.email) ? 'ADMINISTRATOR' : 'USER',
+      role: isProviderAdmin ? 'ADMINISTRATOR' : 'USER',
+      ...(platformRoleId ? { platformRoleId } : {}),
       customerId: customer.id,
     },
   });
@@ -233,7 +287,7 @@ async function assertNoActiveOtherSession(
 
 // Issue session tokens for a user whose identity is already proven (password +
 // email code). Replaces any existing session — at most one row survives.
-async function finalizeLogin(user: { id: string; customerId: string; role: Role }): Promise<TokenPair> {
+async function finalizeLogin(user: { id: string; customerId: string; role: Role; platformRoleId?: string | null }): Promise<TokenPair> {
   await prisma.refreshToken.deleteMany({ where: { userId: user.id } });
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
   await prisma.auditLog.create({
@@ -241,7 +295,7 @@ async function finalizeLogin(user: { id: string; customerId: string; role: Role 
   }).catch(() => {});
 
   const sessionId = newSessionId();
-  const accessToken = signAccessToken(user.id, user.customerId, user.role, sessionId);
+  const accessToken = signAccessToken(user.id, user.customerId, user.role, sessionId, user.platformRoleId ?? null);
   const refreshToken = await createRefreshToken(user.id, sessionId);
   return { accessToken, refreshToken };
 }
@@ -325,7 +379,7 @@ export async function initiateLogin(
 ): Promise<LoginOutcome> {
   const user = await prisma.user.findUnique({
     where: { email: input.email },
-    select: { id: true, email: true, customerId: true, role: true, passwordHash: true, mfaEnabled: true, customer: { select: { mfaRequired: true } } },
+    select: { id: true, email: true, customerId: true, role: true, platformRoleId: true, passwordHash: true, mfaEnabled: true, customer: { select: { mfaRequired: true } } },
   });
   if (!user) throw invalidCredentials();
 
@@ -372,7 +426,7 @@ export async function initiateLogin(
 export async function verifyMfa(challengeId: string, code: string): Promise<TokenPair & { userId: string }> {
   const challenge = await prisma.emailMfaChallenge.findUnique({
     where: { id: challengeId },
-    include: { user: { select: { id: true, customerId: true, role: true } } },
+    include: { user: { select: { id: true, customerId: true, role: true, platformRoleId: true } } },
   });
 
   if (!challenge || challenge.consumedAt || challenge.expiresAt < new Date()) throw challengeInvalid();
@@ -432,7 +486,7 @@ export async function refreshTokens(rawRefreshToken: string): Promise<TokenPair>
   // Find all non-expired tokens and check against each
   const tokens = await prisma.refreshToken.findMany({
     where: { expiresAt: { gt: new Date() } },
-    include: { user: { select: { id: true, customerId: true, role: true } } },
+    include: { user: { select: { id: true, customerId: true, role: true, platformRoleId: true } } },
     orderBy: { createdAt: 'desc' },
     take: 500,
   });
@@ -452,7 +506,7 @@ export async function refreshTokens(rawRefreshToken: string): Promise<TokenPair>
   await prisma.refreshToken.delete({ where: { id: matched.id } });
 
   const { user } = matched;
-  const accessToken = signAccessToken(user.id, user.customerId, user.role, matched.sessionId);
+  const accessToken = signAccessToken(user.id, user.customerId, user.role, matched.sessionId, user.platformRoleId);
   const refreshToken = await createRefreshToken(user.id, matched.sessionId);
   return { accessToken, refreshToken };
 }
@@ -475,7 +529,7 @@ export async function logoutByUser(userId: string): Promise<void> {
 export async function logout(rawRefreshToken: string): Promise<void> {
   const tokens = await prisma.refreshToken.findMany({
     where: { expiresAt: { gt: new Date() } },
-    include: { user: { select: { id: true, customerId: true, role: true } } },
+    include: { user: { select: { id: true, customerId: true, role: true, platformRoleId: true } } },
     take: 500,
   });
 

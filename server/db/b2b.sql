@@ -63,6 +63,53 @@ CREATE TABLE IF NOT EXISTS "TicketNumberSetting" (
   "updatedAt"      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- ─── PlatformRole ────────────────────────────────────────────────────────────
+-- Vendor-staff roles. Declared BEFORE "User" because User.platformRoleId
+-- references it. `permissions` is a jsonb string[] of keys from
+-- src/config/permissions.ts.
+CREATE TABLE IF NOT EXISTS "PlatformRole" (
+  "id"          TEXT PRIMARY KEY,
+  "key"         TEXT    NOT NULL,
+  "name"        TEXT    NOT NULL,
+  "description" TEXT,
+  "system"      BOOLEAN NOT NULL DEFAULT false,
+  "permissions" JSONB   NOT NULL DEFAULT '[]'::jsonb,
+  "createdAt"   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  "updatedAt"   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS "PlatformRole_key_key" ON "PlatformRole" ("key");
+
+-- The four seeded roles.
+--
+-- ON CONFLICT DO NOTHING is load-bearing: provision.sh is re-run on every deploy,
+-- and a DO UPDATE here would silently revert whatever an administrator has since
+-- changed in the roles matrix. Editing a seeded role's defaults in this file
+-- therefore only affects FRESH installs — that is intended.
+--
+-- 'administration' is seeded with an EMPTY array on purpose. Its permissions are
+-- never read from this column; platformRoles.service returns the whole registry
+-- for it. That is what makes the role impossible to strip and what makes every
+-- newly-shipped key automatically held by administrators.
+INSERT INTO "PlatformRole" ("id","key","name","description","system","permissions") VALUES
+  ('plr_administration','administration','Administration',
+   'Full access to every platform feature.', true, '[]'::jsonb),
+
+  ('plr_hr_admin','hr_admin','HR Admin',
+   'Business operations: organizations, users, services and the catalog.', true,
+   '["nav.control_plane","catalog.manage","customer_services.manage","orgs.manage",
+     "platform_audit.view","users.manage","staff.invite","roles.manage",
+     "services.view","nav.chat","tickets.view","tickets.write","ticket.store.admin"]'::jsonb),
+
+  ('plr_employee','employee','Employee',
+   'Support staff: the internal ticket queue, credentials and Slack bots.', true,
+   '["nav.chat","tickets.view","tickets.write","ticket.store.admin",
+     "credentials.view","credentials.reveal","bots.view","bots.manage"]'::jsonb),
+
+  ('plr_intern','intern','Intern',
+   'Same surfaces as Employee, read-only: no ticket edits, no secret reveal, no bot changes.', true,
+   '["nav.chat","tickets.view","ticket.store.admin","credentials.view","bots.view"]'::jsonb)
+ON CONFLICT ("key") DO NOTHING;
+
 -- ─── User ────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS "User" (
   "id"           TEXT PRIMARY KEY,
@@ -86,6 +133,40 @@ ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "passwordFingerprint" TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS "User_email_key"        ON "User" ("email");
 CREATE INDEX        IF NOT EXISTS "User_customerId_idx"   ON "User" ("customerId");
 CREATE INDEX        IF NOT EXISTS "User_passwordFingerprint_idx" ON "User" ("passwordFingerprint");
+
+-- ─── User: platform role (IAM) ───────────────────────────────────────────────
+ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "platformRoleId" TEXT
+  REFERENCES "PlatformRole" ("id");
+CREATE INDEX IF NOT EXISTS "User_platformRoleId_idx" ON "User" ("platformRoleId");
+
+-- Every pre-existing ADMINISTRATOR becomes Administration, so nobody loses access
+-- on deploy. Idempotent, and it is ALSO the guard that stops the first-user
+-- bootstrap in auth.service from ever firing on an upgraded database.
+UPDATE "User" SET "platformRoleId" = 'plr_administration'
+  WHERE "role" = 'ADMINISTRATOR' AND "platformRoleId" IS NULL;
+
+-- role=ADMINISTRATOR with no platform role is an invalid state: it would mean
+-- "vendor staff with no permission set". NOT VALID skips a scan of existing rows
+-- (the UPDATE above just fixed them all) while still enforcing on every write.
+DO $$ BEGIN
+  ALTER TABLE "User" ADD CONSTRAINT "User_platform_role_ck"
+    CHECK (("role" <> 'ADMINISTRATOR') OR ("platformRoleId" IS NOT NULL)) NOT VALID;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- ─── User: email verification ────────────────────────────────────────────────
+-- ⚠ The backfill MUST run ONLY when the column is first added. The obvious
+-- unconditional form —
+--     UPDATE "User" SET "emailVerifiedAt" = now() WHERE "emailVerifiedAt" IS NULL
+-- — would silently verify every pending signup on the NEXT provision.sh run,
+-- defeating the whole feature. Hence the information_schema guard.
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_name = 'User' AND column_name = 'emailVerifiedAt') THEN
+    ALTER TABLE "User" ADD COLUMN "emailVerifiedAt" TIMESTAMPTZ;
+    -- Grandfather every account that existed before verification was introduced.
+    UPDATE "User" SET "emailVerifiedAt" = "createdAt";
+  END IF;
+END $$;
 
 -- ─── PushSubscription ────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS "PushSubscription" (
@@ -128,6 +209,21 @@ CREATE TABLE IF NOT EXISTS "PasswordResetToken" (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS "PasswordResetToken_tokenHash_key" ON "PasswordResetToken" ("tokenHash");
 CREATE INDEX        IF NOT EXISTS "PasswordResetToken_userId_idx"    ON "PasswordResetToken" ("userId");
+
+-- ─── EmailVerificationToken ──────────────────────────────────────────────────
+-- Proof-of-ownership token emailed at signup. SHA-256 rather than bcrypt (unlike
+-- PasswordResetToken): the token is 32 CSPRNG bytes, so a KDF adds nothing and
+-- bcrypt would force the same scan-every-row compare loop.
+CREATE TABLE IF NOT EXISTS "EmailVerificationToken" (
+  "id"         TEXT PRIMARY KEY,
+  "tokenHash"  TEXT NOT NULL,
+  "userId"     TEXT NOT NULL REFERENCES "User" ("id") ON DELETE CASCADE,
+  "expiresAt"  TIMESTAMPTZ NOT NULL,
+  "lastSentAt" TIMESTAMPTZ NOT NULL DEFAULT now(),
+  "createdAt"  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS "EmailVerificationToken_tokenHash_key" ON "EmailVerificationToken" ("tokenHash");
+CREATE INDEX        IF NOT EXISTS "EmailVerificationToken_userId_idx"    ON "EmailVerificationToken" ("userId");
 
 -- ─── EmailMfaChallenge ───────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS "EmailMfaChallenge" (

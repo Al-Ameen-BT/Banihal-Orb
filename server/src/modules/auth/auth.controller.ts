@@ -12,7 +12,9 @@ function maskEmail(email: string): string {
   return `${visible}@${domain}`;
 }
 
-const COOKIE_OPTS = {
+// Exported for tests/security-headers.test.ts — these three flags are the
+// session's security posture and should not change silently.
+export const COOKIE_OPTS = {
   httpOnly: true,
   secure: env.COOKIE_SECURE ?? (env.NODE_ENV === 'production'),
   sameSite: 'lax' as const,

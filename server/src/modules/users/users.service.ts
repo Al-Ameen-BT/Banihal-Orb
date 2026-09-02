@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { prisma } from '../../config/database';
 import { assertPasswordNotReused, passwordFingerprint } from '../auth/passwordReuse';
 import { chatPrisma } from '../../config/chatDatabase';
+import { permissionsFor } from '../platform-roles/platformRoles.service';
 import type { UpdateMeInput, InviteUserInput, ChangeRoleInput, PaginationInput, ChangePasswordInput } from './users.schema';
 
 const userSelect = {
@@ -14,13 +15,25 @@ const userSelect = {
   lastLoginAt: true,
   createdAt: true,
   customerId: true,
+  emailVerifiedAt: true,
+  platformRole: { select: { key: true, name: true } },
   // passwordHash intentionally omitted
 } as const;
 
 export async function getMe(userId: string) {
-  const user = await prisma.user.findUnique({ where: { id: userId }, select: userSelect });
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { ...userSelect, platformRoleId: true },
+  });
   if (!user) throw Object.assign(new Error('User not found'), { status: 404, code: 'NOT_FOUND' });
-  return user;
+
+  // The client gates nav and controls on these. Expanded server-side, so
+  // `administration` arrives as the full key list and the browser needs no
+  // special case. Empty for customer accounts — the client's can() is a UX
+  // affordance; every route is independently enforced server-side.
+  const { platformRoleId, ...rest } = user;
+  const permissions = user.role === 'ADMINISTRATOR' ? [...(await permissionsFor(platformRoleId))] : [];
+  return { ...rest, permissions };
 }
 
 export async function updateMe(userId: string, input: UpdateMeInput) {

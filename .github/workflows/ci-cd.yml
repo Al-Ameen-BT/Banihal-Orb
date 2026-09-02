@@ -53,7 +53,7 @@ jobs:
       # and let the DB-dependent failures turn the pipeline permanently red —
       # a red pipeline nobody trusts is worse than a narrow green one.
       - name: Unit tests
-        run: npx vitest run tests/cache.test.ts tests/dashboard-aggregate.test.ts tests/agent-signing.test.ts tests/uploads.test.ts
+        run: npx vitest run tests/cache.test.ts tests/dashboard-aggregate.test.ts tests/agent-signing.test.ts tests/uploads.test.ts tests/permissions.test.ts
 
   # ──────────────────────────────────────────────────────────────────────────
   # Client — TypeScript type-check + production build

@@ -1,0 +1,59 @@
+version: 2
+
+# Automated dependency updates. This is GitHub's own scheduler — no cron job, no
+# custom workflow, no bot token to rotate. It opens PRs; ci-cd.yml (typecheck +
+# tests + build + image build) is what decides whether they are safe to merge.
+#
+# Deliberately NOT auto-merged. A green pipeline proves the app compiles, not that
+# a minor bump behaves the same in production — and this deploys to a LAN box with
+# no staging. A human reads the changelog. Security PRs are labelled so they are
+# easy to find first.
+
+updates:
+  # ── Application dependencies ────────────────────────────────────────────────
+  # Grouped so a week of patch bumps is ONE reviewable PR, not fifteen. Ungrouped
+  # Dependabot on two lockfiles is the fastest way to teach a team to ignore it.
+  #
+  # Majors are excluded from the groups on purpose: a major is a migration, not an
+  # update, and it belongs in its own PR with its own testing. Dependabot still
+  # opens those separately.
+  - package-ecosystem: npm
+    directory: /server
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: [dependencies, server]
+    groups:
+      server-patch-minor:
+        patterns: ['*']
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /client
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: [dependencies, client]
+    groups:
+      client-patch-minor:
+        patterns: ['*']
+        update-types: [minor, patch]
+
+  # ── CI actions ──────────────────────────────────────────────────────────────
+  # A stale third-party action is a supply-chain risk with commit access to the
+  # deploy runner. Keep them current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    labels: [dependencies, ci]
+
+  # ── Base images ─────────────────────────────────────────────────────────────
+  # postgres/redis/nginx/node tags in the Containerfiles and Quadlet units.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly
+    labels: [dependencies, images]

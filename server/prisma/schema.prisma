@@ -70,14 +70,23 @@ model User {
   passwordFingerprint String?
   name          String
   role          Role           @default(USER)
+  // Fine-grained platform-staff role. Set ONLY when role = ADMINISTRATOR, which is
+  // now the coarse "this account works for the vendor" marker; this says which kind.
+  // A DB CHECK constraint (db/b2b.sql) enforces that pairing — `role=ADMINISTRATOR`
+  // with no platformRoleId is an invalid state, and can() fails closed on it anyway.
+  platformRoleId String?
+  // Null until the mailbox is proven. Login is blocked while null (initiateLogin).
+  emailVerifiedAt DateTime?
   mfaEnabled    Boolean        @default(false)
   lastLoginAt   DateTime?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   customerId    String
+  platformRole        PlatformRole?  @relation(fields: [platformRoleId], references: [id])
   auditLogs           AuditLog[]
   refreshTokens       RefreshToken[]
   passwordResetTokens PasswordResetToken[]
+  emailVerificationTokens EmailVerificationToken[]
   emailMfaChallenges  EmailMfaChallenge[]
   trustedDevices      TrustedDevice[]
   requests            ServiceRequest[] @relation("UserRequests")
@@ -89,6 +98,53 @@ model User {
   @@index([customerId])
   @@index([email])
   @@index([passwordFingerprint])
+  @@index([platformRoleId])
+}
+
+// ─── Platform staff roles (IAM) ──────────────────────────────────────────────
+// The vendor's own staff: Administration / HR Admin / Employee / Intern, plus any
+// custom role an administrator creates. Which FEATURES a role can reach is data
+// (`permissions`), so it is editable from the roles matrix at runtime; which KEYS
+// exist is code (src/config/permissions.ts) and is validated on write.
+//
+// `permissions` is a jsonb string[] rather than a join table on purpose: the set is
+// always read whole for one role, and the only "which roles hold key X" query is the
+// matrix UI, which loads all ≤10 rows anyway. One column, no join, no cascade.
+//
+// The `administration` role's permissions are NEVER read from this column — the
+// service returns the whole registry for it. That is what makes it impossible to
+// strip, and what makes a newly-shipped key automatically held by administrators.
+model PlatformRole {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  name        String
+  description String?
+  // The four seeded roles. Blocks deletion; the matrix UI may still edit the
+  // permissions of hr_admin / employee / intern (but never administration).
+  system      Boolean  @default(false)
+  permissions Json     @default("[]")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  users       User[]
+
+  @@index([key])
+}
+
+// Proof-of-ownership token emailed at signup. SHA-256, not bcrypt: the token is
+// 32 CSPRNG bytes, so a KDF buys nothing and bcrypt would force the same O(n)
+// scan-and-compare loop PasswordResetToken needs. Hashed so a database read
+// cannot be replayed into an account takeover.
+model EmailVerificationToken {
+  id         String   @id @default(cuid())
+  tokenHash  String   @unique
+  userId     String
+  expiresAt  DateTime
+  // Resend cooldown, same mechanism as EmailMfaChallenge.lastSentAt.
+  lastSentAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 // Web Push (RFC 8030 / VAPID) subscription endpoints, one row per browser/device.

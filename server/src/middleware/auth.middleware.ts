@@ -3,11 +3,16 @@ import jwt from 'jsonwebtoken';
 import { Role } from '@prisma/client';
 import { env } from '../config/env';
 import { prisma } from '../config/database';
+import { permissionsFor } from '../modules/platform-roles/platformRoles.service';
 
 interface AccessTokenPayload {
   userId: string;
   customerId: string;
   role: Role;
+  /** Platform-staff role id; absent on customer tokens and on tokens minted
+   *  before this claim existed (those resolve to no permissions, which is the
+   *  safe direction — a stale token loses access rather than gaining it). */
+  prid?: string | null;
   sid?: string;
   type: 'access' | 'impersonation';
 }
@@ -67,6 +72,19 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     return;
   }
 
-  req.user = { userId: payload.userId, customerId: payload.customerId, role: payload.role };
+  // Resolve the platform permission set. No DB round trip: permissionsFor() reads
+  // a process-local map over the tiny PlatformRole table (60s TTL, busted on write).
+  // Only vendor staff get one — can() ignores this for customer roles anyway, but
+  // keeping it empty means a corrupted `prid` on a customer token grants nothing.
+  const platformRoleId = payload.role === 'ADMINISTRATOR' ? (payload.prid ?? null) : null;
+  const permissions = await permissionsFor(platformRoleId);
+
+  req.user = {
+    userId: payload.userId,
+    customerId: payload.customerId,
+    role: payload.role,
+    platformRoleId,
+    permissions,
+  };
   next();
 }

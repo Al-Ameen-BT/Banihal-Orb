@@ -163,6 +163,10 @@ async function main() {
       name: 'Alex Chen', email: adminEmail,
       passwordHash: await hash('SaasAdmin1!'),
       role: 'ADMINISTRATOR', mfaEnabled: false, // 2FA off by default; enable from profile
+      // Seeded staff are Administration. The row is created by db/b2b.sql, which
+      // provision.sh runs before this seed.
+      platformRoleId: 'plr_administration',
+      emailVerifiedAt: now, // seeded accounts skip the verification round-trip
       customerId: techOrg.id, lastLoginAt: now,
     },
   });
@@ -171,6 +175,10 @@ async function main() {
       name: 'Super Admin', email: superAdminEmail,
       passwordHash: await hash('SuperAdmin1!'),
       role: 'ADMINISTRATOR', mfaEnabled: false, // 2FA off by default; enable from profile
+      // Seeded staff are Administration. The row is created by db/b2b.sql, which
+      // provision.sh runs before this seed.
+      platformRoleId: 'plr_administration',
+      emailVerifiedAt: now, // seeded accounts skip the verification round-trip
       customerId: techOrg.id, lastLoginAt: now,
     },
   });
@@ -396,6 +404,7 @@ async function main() {
         name: spec.adminName, email: spec.adminEmail,
         passwordHash: await hash('Admin1234!'),
         role: 'ORG_ADMIN', mfaEnabled: false, // 2FA off by default; enable from profile
+        emailVerifiedAt: now, // demo accounts must be able to log in without a real inbox
         customerId: org.id,
         lastLoginAt: hoursAgo(Math.floor(Math.random() * 48) + 1),
       },
@@ -408,6 +417,7 @@ async function main() {
           name: u.name, email: u.email,
           passwordHash: await hash('User1234!'),
           role: 'USER', mfaEnabled: false, // 2FA off by default; enable from profile
+          emailVerifiedAt: now, // demo accounts must be able to log in without a real inbox
           customerId: org.id,
         },
       });
