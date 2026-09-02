@@ -7,7 +7,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ─── deps ────────────────────────────────────────────────────────────────────
-FROM docker.io/library/node:20-bookworm-slim AS deps
+FROM docker.io/library/node:26-bookworm-slim AS deps
 WORKDIR /app
 COPY client/package.json client/package-lock.json ./
 RUN npm ci
@@ -30,7 +30,7 @@ COPY client/ ./
 RUN npm run build
 
 # ─── runtime ─────────────────────────────────────────────────────────────────
-FROM docker.io/library/node:20-bookworm-slim AS runtime
+FROM docker.io/library/node:26-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
