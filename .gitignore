@@ -12,5 +12,3 @@ Thumbs.db
 # Point UPLOAD_DIR at a persistent path OUTSIDE the deploy tree in production.
 server/uploads/
 ./claude
-
-server/tests
