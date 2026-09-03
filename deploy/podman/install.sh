@@ -41,36 +41,16 @@ echo "📦 Installing container nginx config to $CONF_DIR/nginx"
 mkdir -p "$CONF_DIR/nginx"
 install -m 0644 "$ROOT/deploy/nginx/b2b-site.container.conf" "$CONF_DIR/nginx/b2b-site.conf"
 
-# ── Env files ────────────────────────────────────────────────────────────────
-# Secrets live here, on the host, mode 0600 — never in a unit file and never in
-# an image layer (a layer is readable by anyone who can pull it). Seeded from the
-# existing deploy so the containers inherit the values already in use.
-mkdir -p "$CONF_DIR"
-chmod 0755 "$CONF_DIR"
-for pair in "server/.env:server.env" "client/.env:client.env"; do
-    src="$ROOT/${pair%%:*}"; dst="$CONF_DIR/${pair##*:}"
-    if [ ! -f "$dst" ]; then
-        if [ -f "$src" ]; then
-            echo "  Seeding $dst from ${pair%%:*}"
-            install -m 0600 "$src" "$dst"
-        else
-            echo "  ⚠️  $dst missing and no $src to seed it from — create it before starting."
-        fi
-    else
-        echo "  Keeping existing $dst"
-    fi
-done
-
-if [ ! -f "$CONF_DIR/postgres.env" ]; then
-    cat > "$CONF_DIR/postgres.env" <<'EOF'
-# Superuser for the containerized cluster. The five application databases are
-# created by server/db/provision.sh, not by the image's POSTGRES_DB.
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=CHANGE_ME
-EOF
-    chmod 0600 "$CONF_DIR/postgres.env"
-    echo "  ⚠️  Wrote $CONF_DIR/postgres.env with a placeholder password — set it before starting."
-fi
+# ── Env files are NOT written here ───────────────────────────────────────────
+# build.sh owns /etc/b2b/{server,client,postgres}.env. This script used to seed
+# them by copying the repo's server/.env, and that is precisely how the
+# deployment broke: those files are quoted (KEY="value") because every .env is,
+# but Quadlet's EnvironmentFile= becomes `podman run --env-file`, which reads the
+# value VERBATIM — quotes included. The API then failed config/env.ts validation
+# and restart-looped, visible only as "systemctl restart b2b-api failed".
+#
+# build.sh generates the secrets, derives the container-topology values, and
+# strips quotes from anything hand-edited, so there is one owner and one format.
 
 echo "🔄 Reloading systemd (regenerates units from the Quadlet files)"
 systemctl daemon-reload
@@ -79,16 +59,20 @@ cat <<'EOF'
 
 ✅ Units installed. Nothing has been started; b2b.service is untouched.
 
-Next, in order:
-  1. Edit /etc/b2b/postgres.env, server.env and client.env.
-     In server.env, point the URLs at the containers and set the proxy subnet:
-       DATABASE_URL="postgresql://postgres:...@b2b-postgres:5432/b2b?schema=public"
-       REDIS_URL="redis://b2b-redis:6379"
-       TRUST_PROXY="10.89.10.0/24"     # NOT 'loopback' once nginx is a container
-  2. systemctl start b2b-postgres b2b-redis
-  3. ./deploy/podman/migrate-db.sh          # copies the five DBs off the host cluster
-  4. ./deploy/podman/build.sh
-  5. systemctl start b2b-api b2b-web        # parallel-run and smoke-test first
-  6. systemctl start b2b-nginx              # cutover: stop host nginx first
-  7. systemctl enable b2b-postgres b2b-redis b2b-api b2b-web b2b-nginx
+Next:
+  1. sudo ./deploy/podman/build.sh
+     Writes /etc/b2b/{server,client,postgres}.env (generating the JWT, VAPID and
+     Postgres secrets), builds both images, then creates and verifies the five
+     databases. Asks once for this host's public origin, admin email domains and
+     SMTP; a re-run prompts for nothing and regenerates nothing.
+
+  2. systemctl start b2b-api b2b-web        # parallel-run and smoke-test first
+  3. systemctl start b2b-nginx              # cutover: stop host nginx first
+  4. systemctl enable b2b-postgres b2b-redis b2b-api b2b-web b2b-nginx
+
+Migrating from an existing bare-metal cluster? Run ./deploy/podman/migrate-db.sh
+with the application STOPPED, between steps 1 and 2.
+
+To tear it all down: ./deploy/podman/drop.sh  (add --all-gone to destroy the
+databases and uploads too).
 EOF

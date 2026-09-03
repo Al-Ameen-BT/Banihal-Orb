@@ -139,6 +139,11 @@ host. Migrate existing data with `deploy/podman/migrate-db.sh` (§6.4).
 
 Copy `server/.env.example` → `server/.env`. **Generate every secret** with `openssl rand -hex 32`.
 
+> Containerized (§6)? Skip this section — `deploy/podman/build.sh` writes
+> `/etc/b2b/{server,client,postgres}.env` for you, secrets and all. The table below still
+> describes what each value means, but **do not hand-write those files**: they are read by
+> `podman --env-file`, which does not strip quotes.
+
 | Var | Required | Purpose |
 |---|---|---|
 | `DATABASE_URL`, `CHAT_DATABASE_URL`, `TICKETING_DATABASE_URL`, `TICKET_DATABASE_URL` | ✅ | The four core DBs |
@@ -206,12 +211,33 @@ here is reconstructible.
 install, configure, provision, build, cutover, day-2 upgrade/rollback/backup, and
 troubleshooting. It is kept in step with the Quadlet units it sits beside.
 
-The two values that most often go wrong, repeated here because they are also referenced
+Two commands on a clean host:
+
+```bash
+sudo ./deploy/podman/install.sh    # Quadlet units + nginx conf
+sudo ./deploy/podman/build.sh      # env files, secrets, images, databases
+```
+
+`build.sh` generates every secret in §3 (`openssl rand -hex 32`, plus the VAPID pair),
+derives the container-topology values including `TRUST_PROXY`, builds both images, and
+provisions and verifies the five databases. It asks once for this host's public origin,
+`ADMIN_DOMAINS` and SMTP, then remembers them; a re-run prompts for nothing and regenerates
+nothing. **Do not hand-write `/etc/b2b/*.env`** — see the quoting rule below.
+`deploy/podman/drop.sh` tears it all back down (`--all-gone` also destroys the volumes).
+
+The three things that most often go wrong, repeated here because they are also referenced
 from §4 and §8:
 
+- **Never quote a value in `/etc/b2b/*.env`.** Quadlet's `EnvironmentFile=` is not systemd's
+  — it becomes `podman run --env-file`, which takes the value **verbatim**, quotes included.
+  `DATABASE_URL="postgresql://…"` reaches the API with the quotes attached, `config/env.ts`
+  rejects it as `Invalid url`, the process exits 1, and `Restart=always` turns that into a
+  restart loop whose only symptom is `systemctl restart b2b-api` failing. `build.sh` writes
+  these files unquoted and strips quotes from anything hand-edited.
 - `TRUST_PROXY="10.89.10.0/24"` — **not** `loopback`. nginx now reaches the API from the
   container network, so Express discards `X-Forwarded-For` and every IP-keyed rate limiter
-  collapses into one bucket, silently.
+  collapses into one bucket, silently. `build.sh` reads it from `Subnet=` in `b2b.network`
+  so the two cannot drift apart.
 - `NEXT_PUBLIC_API_URL` is **build-time**. It is inlined into the browser bundle by
   `next build`; setting it in a Quadlet unit does nothing. To change it, rebuild.
 
@@ -302,6 +328,9 @@ than a narrow green one. Secrets stay on the server and never enter CI.
 - [ ] `/etc/b2b/*.env` are mode `0600`, owned by root. No secret is in an image layer or in CI.
 
 **Config**
+- [ ] **No value in `/etc/b2b/*.env` is quoted.** `podman --env-file` keeps the quotes and the API
+      dies on validation. `grep '"' /etc/b2b/server.env` should match only comments. Re-running
+      `build.sh` strips them.
 - [ ] `NODE_ENV=production`, `COOKIE_SECURE=true`, HTTPS only.
 - [ ] `ALLOWED_ORIGINS` is the exact public origin, not `*`.
 - [ ] **`TRUST_PROXY` matches the topology** — `loopback` bare-metal, the podman CIDR containerized.
@@ -311,7 +340,8 @@ than a narrow green one. Secrets stay on the server and never enter CI.
 - [ ] `SESSION_INACTIVITY_MINUTES` set to a sane idle window.
 
 **Data**
-- [ ] All five databases provisioned; `npm run db:verify` passes.
+- [ ] All five databases provisioned; `npm run db:verify` passes. Containerized, `build.sh`
+      phase 6 runs this for you — through `--env-file`, so it also proves the quoting is right.
 - [ ] PostgreSQL is not reachable from the LAN (`127.0.0.1` bind only).
 - [ ] Strong DB passwords, least-privilege roles.
 - [ ] A **fresh dump exists, taken immediately before cutover**.
@@ -402,7 +432,7 @@ cutover must be dumped back — keep the cutover window short.
 | Limits stay per-process after Redis returns | the store cached a script hash against a dead server. The limiter must be built lazily while the client is `ready` and discarded on error |
 | Healthcheck never runs | `HEALTHCHECK` in a Containerfile is **discarded** by Podman's default OCI format. Use `HealthCmd=` in the Quadlet unit |
 | Rate limits collapse into one bucket | `TRUST_PROXY` still `loopback` behind the nginx container |
-| `Invalid url` for every `*_DATABASE_URL` | quoted values via `podman --env-file`, which does not strip quotes (systemd's `EnvironmentFile=` does) |
+| `systemctl restart b2b-api` fails; logs show `Invalid url` for every `*_DATABASE_URL` | quoted values via `podman --env-file`, which does not strip quotes (systemd's `EnvironmentFile=` does). Re-run `build.sh` — it writes them unquoted and strips any that were hand-added |
 | Static assets 404 but pages render | `.next/static` not copied alongside `.next/standalone` |
 | Browser API calls fail after deploy | `NEXT_PUBLIC_API_URL` wrong at **build** time — rebuild, runtime env cannot fix it |
 | Attachments vanish on redeploy | `b2b-uploads` volume not mounted |

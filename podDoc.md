@@ -90,171 +90,110 @@ sudo ./deploy/podman/install.sh
 ```
 
 Copies the Quadlet units to `/etc/containers/systemd`, installs the container
-nginx config to `/etc/b2b/nginx/b2b-site.conf`, creates `/etc/b2b/*.env` stubs at
-mode 0600, and reloads systemd. **It starts nothing.**
+nginx config to `/etc/b2b/nginx/b2b-site.conf`, and reloads systemd. **It starts
+nothing and writes no env files** — `build.sh` owns those (step 3).
 
 **✅ Check:** `ls /etc/containers/systemd/` shows the `.pod`, `.container`,
 `.network` and `.volume` units.
 
 ---
 
-## 3. Generate secrets
+## 3. Configure, build and provision
 
-Three secrets are **required** and must each be ≥32 characters. The API refuses to
-start without them.
-
-```bash
-for k in JWT_ACCESS_SECRET JWT_REFRESH_SECRET IMPERSONATION_SECRET \
-         SLACK_TOKEN_SECRET PASSWORD_PEPPER; do
-  echo "$k=\"$(openssl rand -hex 32)\""
-done
-POSTGRES_PASSWORD=$(openssl rand -hex 24); echo "POSTGRES_PASSWORD=$POSTGRES_PASSWORD"
-```
-
-Keep these somewhere durable now.
-
-- `SLACK_TOKEN_SECRET` encrypts Slack tokens and AD passwords at rest. **Lose it
-  and that data is unrecoverable; change it and existing secrets stop decrypting.**
-- `PASSWORD_PEPPER` keys the password-reuse fingerprint. Changing it invalidates
-  every stored fingerprint.
-
-Both fall back to `JWT_ACCESS_SECRET` if unset, which couples them together —
-set them explicitly.
-
----
-
-## 4. Configure
-
-Three files, all root-owned, mode 0600, on the host — never in an image layer,
-which is readable by anyone who can pull it.
-
-### `/etc/b2b/postgres.env`
-
-```ini
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=<from step 3>
-```
-
-### `/etc/b2b/server.env`
-
-Start from `server/.env.example`. The **9 required** values:
-
-```ini
-DATABASE_URL="postgresql://postgres:<pw>@b2b-postgres:5432/b2b?schema=public"
-CHAT_DATABASE_URL="postgresql://postgres:<pw>@b2b-postgres:5432/b2b_chat"
-TICKETING_DATABASE_URL="postgresql://postgres:<pw>@b2b-postgres:5432/b2b_ticketing"
-TICKET_DATABASE_URL="postgresql://postgres:<pw>@b2b-postgres:5432/b2b_ticket"
-ADMIN_TICKETING_DATABASE_URL="postgresql://postgres:<pw>@b2b-postgres:5432/b2b_ticketing_admin"
-
-JWT_ACCESS_SECRET="<from step 3>"
-JWT_REFRESH_SECRET="<from step 3>"
-IMPERSONATION_SECRET="<from step 3>"
-COOKIE_SECURE="true"
-```
-
-Then these, which are technically optional but wrong-by-default in production:
-
-```ini
-NODE_ENV="production"
-PORT="3001"
-TRUST_PROXY="10.89.10.0/24"          # ⚠ see below
-ALLOWED_ORIGINS="https://<host>"      # exact origin, never *
-FRONTEND_URL="https://<host>"         # builds password-reset links
-ADMIN_DOMAINS="yourcompany.com"       # ⚠ see step 7
-SLACK_TOKEN_SECRET="<from step 3>"
-PASSWORD_PEPPER="<from step 3>"
-REDIS_URL="redis://b2b-redis:6379"
-UPLOAD_DIR="/app/uploads"
-
-SMTP_HOST="..."                       # required in practice — MFA and
-SMTP_PORT="587"                       # password reset both send mail
-SMTP_USER="..."
-SMTP_PASS="..."
-MAIL_FROM="no-reply@yourcompany.com"  # must be an address SMTP may send as
-```
-
-> **`TRUST_PROXY` must be the subnet, not `loopback`.** nginx reaches the API from
-> its address on the `b2b` network, and Express ignores `X-Forwarded-For` from an
-> untrusted hop. Leave the default and every IP-keyed rate limiter collapses into
-> one bucket keyed on nginx's container IP — with nothing in the logs. Never set
-> it to `true`: that trusts a client-supplied header and makes the limiters
-> bypassable by anyone who sends one.
-
-### `/etc/b2b/client.env`
-
-```ini
-NEXT_PUBLIC_API_URL="https://<host>"
-NEXT_PUBLIC_VAPID_PUBLIC_KEY=""        # optional, web push
-```
-
-> **`NEXT_PUBLIC_*` are build-time.** `next build` inlines them into the browser
-> bundle; `build.sh` reads this file and passes them as build args. Setting them
-> in a Quadlet unit does nothing. **To change one, rebuild the image.**
-
-Because everything is served from one origin behind nginx, this is the site's own
-`https://` address — which keeps the auth cookie first-party and CORS out of the
-picture. Do not split the app and API across two addresses.
-
-**✅ Check:** `sudo ls -l /etc/b2b/*.env` — all three, mode `-rw-------`.
-
----
-
-## 5. Start the data tier and provision
-
-```bash
-sudo systemctl start b2b-postgres b2b-redis
-sleep 10 && podman ps --format '{{.Names}}\t{{.Status}}'
-```
-
-Both must read `healthy`. Now create the five databases and their schemas.
-
-> The container hostname `b2b-postgres` **does not resolve from the host**, so the
-> URLs in `server.env` will not work here. Postgres publishes on `127.0.0.1:5432`,
-> so override them for this one command.
-
-```bash
-cd /opt/B2B-Site/server
-PW='<POSTGRES_PASSWORD>'
-SUPERUSER_PSQL="psql postgresql://postgres:$PW@localhost:5432/postgres" \
-DATABASE_URL="postgresql://postgres:$PW@localhost:5432/b2b" \
-CHAT_DATABASE_URL="postgresql://postgres:$PW@localhost:5432/b2b_chat" \
-TICKETING_DATABASE_URL="postgresql://postgres:$PW@localhost:5432/b2b_ticketing" \
-TICKET_DATABASE_URL="postgresql://postgres:$PW@localhost:5432/b2b_ticket" \
-ADMIN_TICKETING_DATABASE_URL="postgresql://postgres:$PW@localhost:5432/b2b_ticketing_admin" \
-  bash db/provision.sh
-```
-
-Idempotent and safe to re-run: existence guards on databases, `IF NOT EXISTS` on
-tables and indexes, `ON CONFLICT DO NOTHING` on seed rows. It never drops.
-
-**✅ Check — the platform roles seeded.** The app cannot create an administrator
-without these:
-
-```bash
-psql "postgresql://postgres:$PW@localhost:5432/b2b" \
-  -c 'SELECT key, jsonb_array_length(permissions) AS keys FROM "PlatformRole" ORDER BY key;'
-```
-
-Expect exactly four rows: `administration 0`, `employee 8`, `hr_admin 13`,
-`intern 5`. **`administration` holding 0 is correct** — its permissions are
-computed as "everything" in code and never stored, which is what makes the role
-impossible to strip.
-
-**❌ Do NOT run `npm run db:seed`.** It creates demo organizations and fake users.
-Development only.
-
----
-
-## 6. Build and start
+One command does all of it:
 
 ```bash
 cd /opt/B2B-Site
-sudo ./deploy/podman/build.sh          # tags :latest and :<git-sha>
+sudo ./deploy/podman/build.sh
 ```
 
-The `:<git-sha>` tag is your rollback artifact. `build.sh` **refuses to build**
-when `NEXT_PUBLIC_API_URL` is unset, rather than producing an image whose every
-browser call fails after deploy.
+It asks **once** for three things it cannot derive, then remembers them:
+
+| Prompt | Example | Why it can't be generated |
+|---|---|---|
+| Public origin | `https://b2b.example.com` | Only you know this host's address. Becomes `FRONTEND_URL`, `ALLOWED_ORIGINS`, `NEXT_PUBLIC_API_URL`, and decides `COOKIE_SECURE`. |
+| Admin email domains | `yourcompany.com` | ⚠ See step 6 — this is a self-service admin door. |
+| SMTP host / port / user / password | `smtp.example.com` | A 6-digit MFA code is emailed on **every** login. No SMTP, no logins. |
+
+Everything else it handles:
+
+- **Generates** `POSTGRES_PASSWORD` (hex-24) and `JWT_ACCESS_SECRET`,
+  `JWT_REFRESH_SECRET`, `IMPERSONATION_SECRET`, `SLACK_TOKEN_SECRET`,
+  `PASSWORD_PEPPER` (hex-32 each), plus a VAPID key pair for Web Push — using the
+  API image's own `web-push`, so no network fetch.
+- **Derives** the five `*_DATABASE_URL` pointing at `b2b-postgres`, `REDIS_URL`,
+  `UPLOAD_DIR`, and `TRUST_PROXY` (read from `Subnet=` in `b2b.network`, so the two
+  cannot drift apart).
+- **Builds** `b2b-api` and `b2b-web`, tagged `:latest` and `:<git-sha>`. That second
+  tag is your rollback artifact.
+- **Creates and verifies** the five databases, by running `server/db/provision.sh`
+  inside the postgres container — no host `postgresql-client` needed.
+
+Non-interactive:
+
+```bash
+FRONTEND_URL=https://b2b.example.com ADMIN_DOMAINS=yourcompany.com \
+SMTP_HOST=smtp.example.com SMTP_PORT=587 SMTP_USER=… SMTP_PASS=… \
+  sudo -E ./deploy/podman/build.sh
+```
+
+> **Keep the generated secrets somewhere durable now.** Copy
+> `/etc/b2b/server.env` into your secrets manager. `SLACK_TOKEN_SECRET` encrypts
+> Slack tokens and AD passwords at rest — lose it and that data is unrecoverable;
+> change it and existing secrets stop decrypting. `PASSWORD_PEPPER` keys the
+> password-reuse fingerprint; changing it invalidates every stored fingerprint.
+> `build.sh` never regenerates a secret that already exists, precisely for this
+> reason.
+
+### ⚠ Never quote a value in `/etc/b2b/*.env`
+
+The one rule, and the one that has already bitten this deployment. Quadlet's
+`EnvironmentFile=` is **not** systemd's — it becomes `podman run --env-file`,
+which reads the file **verbatim**:
+
+```console
+$ printf 'TRUST_PROXY="10.89.10.0/24"   # comment\n' > env
+$ podman run --rm --env-file env alpine sh -c 'echo "[$TRUST_PROXY]"'
+["10.89.10.0/24"   # comment]
+```
+
+Quotes *and* inline comments become part of the value. `config/env.ts` then
+rejects the database URLs as `Invalid url`, the API exits 1, and `Restart=always`
+turns that into a restart loop whose only symptom is `systemctl restart b2b-api`
+failing with nothing obviously wrong.
+
+`build.sh` writes these files unquoted and strips quotes from anything
+hand-edited. **If you edit one by hand, re-run `build.sh`.**
+
+---
+
+## 4. Verify the config before starting anything
+
+`build.sh` already ran both of these as its last phase; run them again any time
+you touch `/etc/b2b/server.env`.
+
+```bash
+# What the API itself makes of the config — this is the exact module whose
+# process.exit(1) shows up as a failed `systemctl restart`.
+podman run --rm --env-file /etc/b2b/server.env localhost/b2b-api:latest \
+  node -e 'require("/app/dist/config/env.js")' && echo "config OK"
+
+# All five databases reachable, with their schemas.
+podman run --rm --network b2b --env-file /etc/b2b/server.env \
+  localhost/b2b-api:latest npm run db:verify
+```
+
+Migrating from an existing bare-metal cluster? Copy the data in now, with the old
+application **stopped**:
+
+```bash
+sudo systemctl stop b2b.service
+./deploy/podman/migrate-db.sh
+```
+
+---
+
+## 5. Start the application
 
 ```bash
 sudo systemctl start b2b-api b2b-web
@@ -282,7 +221,7 @@ only discovered at the worst possible moment.
 
 ---
 
-## 7. Create the first administrator
+## 6. Create the first administrator
 
 There is no seeded admin on a production install and no CLI to make one. The
 first administrator is created by **registering through the UI with an email whose
@@ -318,7 +257,7 @@ SELECT email, role, "platformRoleId" FROM "User" WHERE role = 'ADMINISTRATOR';
 
 ---
 
-## 8. Verify before announcing
+## 7. Verify before announcing
 
 Do all of these in a browser. Each exercises a path that a container deployment
 commonly breaks.
@@ -340,7 +279,7 @@ podman logs b2b-api | grep -i 'rate' | tail
 
 ---
 
-## 9. Before you call it done
+## 8. Before you call it done
 
 - [ ] **Set up backups and point them at the container**, not at any host cluster:
       ```bash
@@ -349,11 +288,11 @@ podman logs b2b-api | grep -i 'rate' | tail
       done
       podman volume export b2b-uploads > "/backups/uploads-$(date +%F).tar"
       ```
-- [ ] **Back up `/etc/b2b/server.env`** separately — it holds the secrets from
-      step 3, and losing `SLACK_TOKEN_SECRET` is unrecoverable.
+- [ ] **Back up `/etc/b2b/server.env`** separately — it holds the generated secrets,
+      and losing `SLACK_TOKEN_SECRET` is unrecoverable.
 - [ ] **Restore-test one dump** into a scratch database. An untested backup is not a backup.
 - [ ] **Reboot the host** and confirm every pod returns unattended.
-- [ ] `ADMIN_DOMAINS` narrowed or `/register` restricted (step 7).
+- [ ] `ADMIN_DOMAINS` narrowed or `/register` restricted (step 6).
 - [ ] Certificate trusted on the machines that will use the app.
 - [ ] `COOKIE_SECURE=true` and `ALLOWED_ORIGINS` is an exact origin, not `*`.
 
@@ -364,11 +303,11 @@ podman logs b2b-api | grep -i 'rate' | tail
 | Symptom | Cause |
 |---|---|
 | API exits seconds after starting | A database URL. `podman logs --tail 50 b2b-api`. |
-| `Invalid environment variables` | A required var missing from `server.env` — the log names each one. |
+| `Invalid environment variables` | A missing var, or a **quoted** one (step 3). The log names each. Re-run `build.sh`. |
 | `host not found in upstream "b2b-app"` | nginx cached the address. `systemctl restart b2b-nginx`. |
 | Browser calls go to the wrong host | `NEXT_PUBLIC_API_URL` was wrong at *build* time. Fix `client.env`, rebuild. |
 | Rate limits treat everyone as one client | `TRUST_PROXY` does not match the network. |
-| Registration returns 503 `PLATFORM_ROLES_MISSING` | `provision.sh` did not seed `PlatformRole`. Re-run step 5. |
+| Registration returns 503 `PLATFORM_ROLES_MISSING` | `provision.sh` did not seed `PlatformRole`. Re-run `build.sh`. |
 | Attachments 404 after redeploy | Uploads volume not mounted; check `UPLOAD_DIR=/app/uploads`. |
 
 Fuller troubleshooting, and all day-2 operations, are in
@@ -379,8 +318,13 @@ Fuller troubleshooting, and all day-2 operations, are in
 ## Never run these on production
 
 ```bash
-podman volume rm b2b-pgdata        # destroys all five databases, irreversibly
-podman volume rm b2b-uploads       # destroys every ticket attachment
-podman system prune -a --volumes   # both of the above, plus the images
-npm run db:seed                    # inserts demo organizations and fake users
+sudo ./deploy/podman/drop.sh --all-gone   # destroys all five databases AND every attachment
+podman volume rm b2b-pgdata               # destroys all five databases, irreversibly
+podman volume rm b2b-uploads              # destroys every ticket attachment
+podman system prune -a --volumes          # both of the above, plus the images
+npm run db:seed                           # inserts demo organizations and fake users
 ```
+
+`sudo ./deploy/podman/drop.sh` **without** `--all-gone` is the safe one: it removes
+the containers, pods and network but leaves both volumes intact. That is the
+"redeploy from scratch after a bad build" command.

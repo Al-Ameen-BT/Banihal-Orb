@@ -16,6 +16,10 @@
 #   SUPERUSER_PSQL overrides how the CREATE DATABASE step connects
 #   (default: "sudo -u postgres psql"). Set e.g. SUPERUSER_PSQL="psql -U postgres"
 #   on systems without sudo.
+#   DB_CONTAINER applies each schema inside that Podman container over stdin
+#   instead of through a host psql client — so the containerized deploy needs no
+#   postgresql-client package and does not depend on the database being published
+#   to the host. Set by deploy/podman/build.sh; leave unset for bare metal.
 #
 # Usage:  bash db/provision.sh
 # ============================================================================
@@ -51,18 +55,30 @@ SUPERUSER_PSQL="${SUPERUSER_PSQL:-sudo -u postgres psql}"
 # (used by the app + db:verify) tolerates it, so only psql needs this.
 psql_url() { echo "$1" | sed -E 's/([?&])schema=[^&]*//g; s/\?&/?/g; s/[?&]$//; s/^([^?]*)&/\1?/'; }
 
+# Apply one .sql file to the database a URL names. Fed over STDIN rather than
+# `-f`, because a host path is not visible inside a container — that one detail is
+# what lets the same call serve both the bare-metal and the DB_CONTAINER paths.
+apply() { # $1 = database URL, $2 = .sql file
+  if [ -n "${DB_CONTAINER:-}" ]; then
+    local db="${1##*/}"; db="${db%%\?*}"        # database name out of the URL
+    podman exec -i "$DB_CONTAINER" psql -U postgres -d "$db" -v ON_ERROR_STOP=1 < "$2"
+  else
+    psql "$(psql_url "$1")" -v ON_ERROR_STOP=1 -f "$2"
+  fi
+}
+
 echo "🗄️  Step 1/2 — creating databases…"
-$SUPERUSER_PSQL -v ON_ERROR_STOP=1 -f "$DB_DIR/00_databases.sql"
+$SUPERUSER_PSQL -v ON_ERROR_STOP=1 < "$DB_DIR/00_databases.sql"
 
 echo "📐 Step 2/2 — applying schemas…"
-psql "$(psql_url "$DATABASE_URL")"           -v ON_ERROR_STOP=1 -f "$DB_DIR/b2b.sql"
-psql "$(psql_url "$CHAT_DATABASE_URL")"      -v ON_ERROR_STOP=1 -f "$DB_DIR/b2b_chat.sql"
-psql "$(psql_url "$TICKETING_DATABASE_URL")" -v ON_ERROR_STOP=1 -f "$DB_DIR/b2b_ticketing.sql"
-psql "$(psql_url "$TICKET_DATABASE_URL")"    -v ON_ERROR_STOP=1 -f "$DB_DIR/b2b_ticket.sql"
+apply "$DATABASE_URL"           "$DB_DIR/b2b.sql"
+apply "$CHAT_DATABASE_URL"      "$DB_DIR/b2b_chat.sql"
+apply "$TICKETING_DATABASE_URL" "$DB_DIR/b2b_ticketing.sql"
+apply "$TICKET_DATABASE_URL"    "$DB_DIR/b2b_ticket.sql"
 # The Administrators' isolated store is the SAME 14-table schema in its own
 # database. Upstream loads it from the `ticketingDB` pg dump, which is not in this
 # repo — b2b_ticket.sql is idempotent and non-destructive, so applying it here
 # gives a from-scratch install a working admin store instead of a schemaless one.
-psql "$(psql_url "$ADMIN_TICKETING_DATABASE_URL")" -v ON_ERROR_STOP=1 -f "$DB_DIR/b2b_ticket.sql"
+apply "$ADMIN_TICKETING_DATABASE_URL" "$DB_DIR/b2b_ticket.sql"
 
 echo "✅ Provisioning complete."

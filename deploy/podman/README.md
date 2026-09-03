@@ -55,7 +55,11 @@ server-side rewrite and the nginx SSE bypass both find the API on
 | `b2b-nginx.pod` / `.container` | TLS + reverse proxy |
 | `b2b-pgdata.volume` | **The stateful volume.** Everything else is reconstructible. |
 | `b2b-uploads.volume` | Ticket attachments |
-| `install.sh` `build.sh` `migrate-db.sh` | Scripts |
+| `install.sh` | Installs the Quadlet units + nginx conf. Starts nothing. |
+| `build.sh` | Writes `/etc/b2b/*.env`, builds both images, provisions + verifies the databases. Idempotent. |
+| `drop.sh` | Tears the stack down. `--all-gone` also destroys volumes and images. |
+| `migrate-db.sh` | Copies five databases off an existing host cluster. |
+| `test-envfile.sh` | Self-check for `build.sh`'s env-file helpers. No root, no podman. |
 
 ---
 
@@ -99,72 +103,74 @@ sudo ./deploy/podman/install.sh
 ```
 
 Idempotent. It copies the Quadlet units to `/etc/containers/systemd`, installs
-the container nginx config to `/etc/b2b/nginx/b2b-site.conf`, seeds
-`/etc/b2b/{server,client,postgres}.env` (mode 0600) from any existing
-`server/.env` / `client/.env`, and runs `systemctl daemon-reload`.
+the container nginx config to `/etc/b2b/nginx/b2b-site.conf`, and runs
+`systemctl daemon-reload`.
+
+**It writes no env files.** `build.sh` owns `/etc/b2b/{server,client,postgres}.env`
+— see §4 for why that matters.
 
 **It starts nothing.** Starting is a separate, deliberate step so this is safe to
 run on a live host.
 
 ---
 
-## 4. Configure
+## 4. Configure and build
 
-Three files, all `root:root` mode 0600, all on the host — never in an image layer,
-which is readable by anyone who can pull it.
+One command. `build.sh` writes all three env files, builds both images, and
+creates and verifies the five databases:
 
-### `/etc/b2b/postgres.env`
-
-```ini
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=<a real password>     # install.sh writes CHANGE_ME
+```bash
+sudo ./deploy/podman/build.sh
 ```
 
-### `/etc/b2b/server.env`
+It asks **once** for the three things it cannot derive — this host's public
+origin, the admin email domains, and SMTP — then remembers them. Every later run
+prompts for nothing and regenerates nothing.
 
-Start from `server/.env.example`. Three values differ from a bare-metal install:
+| It generates | It derives | It asks for |
+|---|---|---|
+| `POSTGRES_PASSWORD`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `IMPERSONATION_SECRET`, `SLACK_TOKEN_SECRET`, `PASSWORD_PEPPER`, the VAPID pair | the five `*_DATABASE_URL`, `REDIS_URL`, `TRUST_PROXY`, `COOKIE_SECURE`, `UPLOAD_DIR`, `NEXT_PUBLIC_*` | `FRONTEND_URL`, `ADMIN_DOMAINS`, `SMTP_*` |
 
-```ini
-# Container DNS names, resolved by aardvark-dns on the b2b network.
-DATABASE_URL="postgresql://postgres:<pw>@b2b-postgres:5432/b2b?schema=public"
-CHAT_DATABASE_URL="postgresql://postgres:<pw>@b2b-postgres:5432/b2b_chat"
-TICKETING_DATABASE_URL="postgresql://postgres:<pw>@b2b-postgres:5432/b2b_ticketing"
-TICKET_DATABASE_URL="postgresql://postgres:<pw>@b2b-postgres:5432/b2b_ticket"
-ADMIN_TICKETING_DATABASE_URL="postgresql://postgres:<pw>@b2b-postgres:5432/b2b_ticketing_admin"
+Non-interactive (CI, or a re-run on a fresh host):
 
-REDIS_URL="redis://b2b-redis:6379"
-
-# ⚠ The single most common containerization mistake. See below.
-TRUST_PROXY="10.89.10.0/24"
-
-COOKIE_SECURE="true"
-ALLOWED_ORIGINS="https://<your host>"
-FRONTEND_URL="https://<your host>"
+```bash
+FRONTEND_URL=https://b2b.example.com ADMIN_DOMAINS=example.com \
+SMTP_HOST=smtp.example.com SMTP_USER=… SMTP_PASS=… \
+  sudo -E ./deploy/podman/build.sh
 ```
 
-> **`TRUST_PROXY` must be the subnet, not `loopback`.**
-> On bare metal nginx reached the API over loopback. It now arrives from its
-> address on the `b2b` network, and Express ignores an `X-Forwarded-For` from an
-> untrusted hop. Leave the default and every IP-keyed rate limiter collapses into
-> a single bucket keyed on nginx's container IP — with nothing in the logs.
-> Never set it to `true`: that trusts a client-supplied header and makes the
-> limiters bypassable by anyone who sends one.
+### ⚠ Never quote a value in `/etc/b2b/*.env`
 
-This is also why `b2b.network` pins the subnet instead of letting Podman allocate
-it — an allocated range changes on a network recreate and this value silently
-stops matching.
+This is the one rule. Quadlet's `EnvironmentFile=` is **not** systemd's — it
+becomes `podman run --env-file`, which reads the file **verbatim**:
 
-### `/etc/b2b/client.env`
-
-```ini
-NEXT_PUBLIC_API_URL="https://<your host>"
-NEXT_PUBLIC_VAPID_PUBLIC_KEY="<optional, web push>"
+```console
+$ printf 'DATABASE_URL="postgresql://…"\n' > env
+$ podman run --rm --env-file env alpine sh -c 'echo "[$DATABASE_URL]"'
+["postgresql://…"]          ← the quotes are part of the value
 ```
 
-> **`NEXT_PUBLIC_*` are build-time, not runtime.** They are inlined into the
-> browser bundle by `next build`. `build.sh` sources this file and passes them as
-> build args. Setting them in a Quadlet unit does nothing — the server process
-> reads them and the browser code never sees them. **To change one, rebuild.**
+`config/env.ts` then rejects it as `Invalid url`, the API exits 1, and
+`Restart=always` turns that into a restart loop whose only visible symptom is
+`systemctl restart b2b-api` failing. `build.sh` writes these files unquoted and
+strips quotes from anything hand-edited, so if you edit one by hand, just re-run
+`build.sh`.
+
+### `TRUST_PROXY` is read from `b2b.network`, not typed
+
+`build.sh` takes it from `Subnet=` so the two cannot drift apart. On bare metal
+nginx reached the API over loopback; it now arrives from its address on the `b2b`
+network, and Express ignores an `X-Forwarded-For` from an untrusted hop. Left at
+the `loopback` default, every IP-keyed rate limiter collapses into a single
+bucket keyed on nginx's container IP — with nothing in the logs. Never set it to
+`true`: that trusts a client-supplied header and makes the limiters bypassable by
+anyone who sends one.
+
+### `NEXT_PUBLIC_*` are build-time, not runtime
+
+They are inlined into the browser bundle by `next build`. `build.sh` passes them
+as build args. Setting one in a Quadlet unit does nothing — the server process
+reads it and the browser code never sees it. **To change one, rebuild.**
 
 Because everything is served from one origin behind nginx, `NEXT_PUBLIC_API_URL`
 is the site's own `https://` address. That keeps the auth cookie first-party and
@@ -174,50 +180,30 @@ CORS out of the picture — do not split the app and API across two addresses.
 
 ## 5. Database
 
-Start the data tier first; it must be healthy before the API will do anything useful.
-
-```bash
-sudo systemctl start b2b-postgres b2b-redis
-podman healthcheck run b2b-postgres     # or: podman ps --format '{{.Names}} {{.Status}}'
-```
-
 ### 5a. Fresh install
 
-Provision from the host repo. The postgres pod publishes on `127.0.0.1:5432`, so
-host `psql` reaches it.
-
-> The container hostname `b2b-postgres` **does not resolve from the host**, so
-> `server/.env`'s URLs will not work here. Override them for this one command.
-
-```bash
-cd server
-PW='<POSTGRES_PASSWORD>'
-SUPERUSER_PSQL="psql postgresql://postgres:$PW@localhost:5432/postgres" \
-DATABASE_URL="postgresql://postgres:$PW@localhost:5432/b2b" \
-CHAT_DATABASE_URL="postgresql://postgres:$PW@localhost:5432/b2b_chat" \
-TICKETING_DATABASE_URL="postgresql://postgres:$PW@localhost:5432/b2b_ticketing" \
-TICKET_DATABASE_URL="postgresql://postgres:$PW@localhost:5432/b2b_ticket" \
-ADMIN_TICKETING_DATABASE_URL="postgresql://postgres:$PW@localhost:5432/b2b_ticketing_admin" \
-  bash db/provision.sh
-```
-
-Idempotent, and safe to re-run: existence guards on databases, `IF NOT EXISTS` on
-tables and indexes, `ON CONFLICT DO NOTHING` on seed rows. It never drops or
-truncates.
+Nothing to do — `build.sh` phase 5 already did it. It starts `b2b-postgres`,
+waits for the healthcheck, then runs [`server/db/provision.sh`](../../server/db/provision.sh)
+*through the container* (`DB_CONTAINER=b2b-postgres`), so no host
+`postgresql-client` is needed. Idempotent and non-destructive: existence guards on
+databases, `IF NOT EXISTS` on tables and indexes, `ON CONFLICT DO NOTHING` on seed
+rows.
 
 `b2b_ticketing_admin` is *created* by `00_databases.sql`, but upstream loads its
 schema from the `ticketingDB` pg dump, which is not in this repo. `provision.sh`
 applies the equivalent `b2b_ticket.sql` so a from-scratch install gets a working
 admin store rather than a schemaless one.
 
-Then verify and seed:
+Demo data, if you want it (**skip on a real production install**):
 
 ```bash
-npm run db:verify                # fail-fast preflight; gate every deploy on this
-npm run db:seed                  # demo data — SKIP on a real production install
+podman exec b2b-api npm run db:seed
 ```
 
 ### 5b. Migrating from an existing host cluster
+
+Run this **after** `build.sh` and **before** starting the app. `build.sh` has
+already created the five databases with their schemas; this copies the data in.
 
 ```bash
 sudo systemctl stop b2b.service   # stop writes first
@@ -231,16 +217,14 @@ backup cycle; it is your rollback.
 
 ---
 
-## 6. Build and start
+## 6. Start
+
+Images are built and databases provisioned (§4), so this is just starting things.
 
 ```bash
-./deploy/podman/build.sh                    # tags :latest and :<git sha>
 sudo systemctl start b2b-api b2b-web
 curl -fsS http://localhost:3001/health      # only if you published the app ports
 ```
-
-`build.sh` refuses to build when `NEXT_PUBLIC_API_URL` is unset rather than
-producing an image whose every browser call fails after deploy.
 
 Smoke-test before nginx takes `:80`/`:443` by temporarily adding to `b2b-app.pod`:
 
@@ -287,12 +271,14 @@ podman logs b2b-api | grep -i 'rate' | tail
 ### Upgrade
 
 ```bash
-git pull
-cd server && npm run db:provision && npm run db:verify   # back up FIRST
-cd .. && ./deploy/podman/build.sh
+git pull                                    # back up FIRST
+sudo ./deploy/podman/build.sh               # re-provisions and re-verifies too
 sudo systemctl restart b2b-api b2b-web
 curl -fsSk https://localhost/health
 ```
+
+`build.sh` regenerates no secret and prompts for nothing on a re-run, so this is
+the routine path as well as the first-run one.
 
 ### Roll back
 
@@ -355,13 +341,26 @@ podman network inspect b2b --format '{{range .Subnets}}{{.Subnet}}{{end}}'
 **A browser API call goes to the wrong host.** `NEXT_PUBLIC_API_URL` was wrong at
 *build* time. Fix `/etc/b2b/client.env` and rebuild — restarting cannot fix it.
 
-**The API starts, then dies seconds later.** Almost always a database URL. It logs
-"Server running" first, so `systemctl restart` returning 0 proves nothing:
+**`systemctl restart b2b-api` fails and the app never starts.** Read the logs
+before anything else — `Restart=always` hides a config rejection as a restart
+loop:
 
 ```bash
 podman logs --tail 50 b2b-api
+```
+
+`❌ Invalid environment variables: { DATABASE_URL: [ 'Invalid url' ], … }` means
+something re-quoted `/etc/b2b/server.env`. Re-run `build.sh`; it strips them. Ask
+the API itself what it sees, which is the check `build.sh` phase 6 runs:
+
+```bash
+podman run --rm --env-file /etc/b2b/server.env localhost/b2b-api:latest \
+  node -e 'require("/app/dist/config/env.js")'
 podman exec b2b-postgres psql -U postgres -l    # do the databases exist?
 ```
+
+**The API starts, then dies seconds later.** Almost always a database URL. It logs
+"Server running" first, so `systemctl restart` returning 0 proves nothing.
 
 **Attachments 404 after a redeploy.** The uploads volume is not mounted; rows
 survive and point at files that are gone. Check `Volume=b2b-uploads.volume` in
@@ -374,13 +373,34 @@ declares `Wants=`, not `Requires=`, for exactly this reason.
 
 ---
 
-## 9. Destructive commands
+## 9. Tearing down
 
 ```bash
-podman volume rm b2b-pgdata       # ⚠ destroys all five databases, irreversibly
-podman volume rm b2b-uploads      # ⚠ destroys every ticket attachment
-podman system prune -a --volumes  # ⚠ both of the above, plus the images
+sudo ./deploy/podman/drop.sh              # containers, pods, network
+sudo ./deploy/podman/drop.sh --all-gone   # ⚠ ALSO volumes (all DBs + uploads) and images
 ```
 
-`podman-system-reset` removes everything Podman owns on the host. There is no
-undo and no confirmation beyond the first prompt.
+The default is safe to run at any time: it removes everything reconstructible and
+touches no data. Use it when a build or cutover went wrong and you want the
+containers recreated from scratch.
+
+`--all-gone` destroys `b2b-pgdata` (all five databases) and `b2b-uploads` (every
+ticket attachment). It prompts for a typed `all-gone` first and takes no backup.
+`--yes` skips the prompt for scripted use.
+
+Neither mode touches the Quadlet units or `/etc/b2b/*.env`, so recovery from
+either is one command — no `install.sh`, no re-prompting, secrets reused:
+
+```bash
+sudo ./deploy/podman/build.sh
+sudo systemctl start b2b-api b2b-web b2b-nginx
+```
+
+### Blunter instruments
+
+```bash
+podman system prune -a --volumes  # everything above, plus unrelated containers
+podman system reset               # everything Podman owns on this host
+```
+
+Both reach outside this deployment. Prefer `drop.sh`, which only touches `b2b-*`.
