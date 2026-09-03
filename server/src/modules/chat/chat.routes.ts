@@ -1,8 +1,12 @@
 import { Router } from 'express';
 import * as chatController from './chat.controller';
+import { requirePermissionIfPlatform } from '../../middleware/rbac.middleware';
 import { chatRateLimiter } from '../../middleware/rateLimiter';
 
 const router = Router();
+
+// The Assistant. Customers pass through; platform staff need nav.chat.
+router.use(requirePermissionIfPlatform('nav.chat'));
 
 router.post('/', chatRateLimiter, chatController.sendMessage);
 

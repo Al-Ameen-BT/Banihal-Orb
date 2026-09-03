@@ -364,6 +364,15 @@ export const saasAdminApi = {
   updateSadmin: (id: string, data: unknown) => api.patch(`/saas-admin/sadmins/${id}`, data),
   removeSadmin: (id: string) => api.delete(`/saas-admin/sadmins/${id}`),
   resetSadminPassword: (id: string) => api.post(`/saas-admin/sadmins/${id}/reset-password`),
+
+  // Platform roles (IAM). inviteStaff is the only path that mints a
+  // non-Administration staff account.
+  inviteStaff: (data: { email: string; name: string; platformRoleId: string }) => api.post('/saas-admin/staff', data),
+  listPlatformRoles: () => api.get('/saas-admin/roles'),
+  permissionCatalog: () => api.get('/saas-admin/roles/catalog'),
+  createPlatformRole: (data: unknown) => api.post('/saas-admin/roles', data),
+  updatePlatformRole: (id: string, data: unknown) => api.patch(`/saas-admin/roles/${id}`, data),
+  deletePlatformRole: (id: string) => api.delete(`/saas-admin/roles/${id}`),
 };
 
 // Ops dashboard. One aggregate over the whole ticket estate; the server scopes it

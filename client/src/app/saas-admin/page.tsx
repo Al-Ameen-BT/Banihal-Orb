@@ -506,7 +506,7 @@ export default function SaasAdminPage() {
   const { user } = useAuth();
   if (user?.role === 'ADMINISTRATOR') {
     return (
-      <RoleGuard allowedRoles={['ADMINISTRATOR']}>
+      <RoleGuard allowedRoles={['ADMINISTRATOR']} permission="nav.control_plane">
         <div className="flex h-screen overflow-hidden bg-canvas">
           <Sidebar />
           <main className="flex-1 overflow-y-auto">
@@ -604,7 +604,7 @@ function SadminPage() {
   }, [allOrgs, orgFilter, orgSearch]);
 
   return (
-    <RoleGuard allowedRoles={['ADMINISTRATOR']}>
+    <RoleGuard allowedRoles={['ADMINISTRATOR']} permission="nav.control_plane">
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">

@@ -1,81 +1,99 @@
 import { Router } from 'express';
 import * as saasAdminController from './saas-admin.controller';
-import { requireRole, requirePermission } from '../../middleware/rbac.middleware';
+import { requirePermission } from '../../middleware/rbac.middleware';
 
+// Mounted at /api/saas-admin behind requireRole('ADMINISTRATOR') (app.ts).
+//
+// That router-level gate proves only "works for the vendor" — EVERY platform role
+// satisfies it, Intern included. So it is not authorization, it is an audience
+// filter, and each route below carries its own permission key.
+//
+// There is deliberately no `onlyAdministrator` helper here any more: it was
+// requireRole('ADMINISTRATOR'), identical to the mount gate, so it read like a
+// restriction while granting everyone. Where a surface really is
+// Administration-only, that is expressed by which roles hold the key — and
+// `administration` holds every key by construction.
 const router = Router();
-const onlyAdministrator = requireRole('ADMINISTRATOR');
 
-// ─── Platform roles (read-only for now; the matrix editor lands in P6) ───────
-// Both are needed by the roles UI and by the staff-invite role picker.
+// ─── Platform roles (IAM matrix) ─────────────────────────────────────────────
 router.get('/roles', requirePermission('roles.manage'), saasAdminController.listPlatformRoles);
 router.get('/roles/catalog', requirePermission('roles.manage'), saasAdminController.permissionCatalog);
+router.post('/roles', requirePermission('roles.manage'), saasAdminController.createPlatformRole);
+router.patch('/roles/:id', requirePermission('roles.manage'), saasAdminController.updatePlatformRole);
+router.delete('/roles/:id', requirePermission('roles.manage'), saasAdminController.deletePlatformRole);
 
-// Organizations
-router.get('/orgs', saasAdminController.listOrgs);
-router.get('/orgs/overview', saasAdminController.getOrgsOverview);
-router.patch('/orgs/:id', saasAdminController.updateOrg);
-router.get('/orgs/:id/detail', saasAdminController.getOrgDetail);
+// Organizations (the key's label is "Organizations, flags & impersonation").
+router.get('/orgs', requirePermission('orgs.manage'), saasAdminController.listOrgs);
+router.get('/orgs/overview', requirePermission('orgs.manage'), saasAdminController.getOrgsOverview);
+router.patch('/orgs/:id', requirePermission('orgs.manage'), saasAdminController.updateOrg);
+router.get('/orgs/:id/detail', requirePermission('orgs.manage'), saasAdminController.getOrgDetail);
 
 // People (org admins / impersonation / cross-org user mgmt)
-router.get('/admins', saasAdminController.listOrgAdmins);
-router.get('/all-users', onlyAdministrator, saasAdminController.listAllOrgUsers);
-router.post('/impersonate/:userId', saasAdminController.impersonateUser);
-router.patch('/users/:id', saasAdminController.updateUser);
-router.delete('/users/:id', saasAdminController.removeUser);
-router.post('/users/:id/reset-password', saasAdminController.resetUserPassword);
+router.get('/admins', requirePermission('users.manage'), saasAdminController.listOrgAdmins);
+router.get('/all-users', requirePermission('users.manage'), saasAdminController.listAllOrgUsers);
+router.post('/impersonate/:userId', requirePermission('orgs.manage'), saasAdminController.impersonateUser);
+router.patch('/users/:id', requirePermission('users.manage'), saasAdminController.updateUser);
+router.delete('/users/:id', requirePermission('users.manage'), saasAdminController.removeUser);
+router.post('/users/:id/reset-password', requirePermission('users.manage'), saasAdminController.resetUserPassword);
 
-// Metrics
+// Metrics. /metrics is deliberately ungated: Employee and Intern legitimately see
+// org counts and open-ticket totals on their dashboard. Its ONE sensitive field
+// (mrr) is withheld field-level by the controller via can(req, 'revenue.view').
 router.get('/metrics', saasAdminController.getMetrics);
-router.get('/top-clients', saasAdminController.getTopClients);
-router.get('/sla-breaches', saasAdminController.getSlaBreaches);
-router.get('/chat-analytics', saasAdminController.getChatAnalytics);
+router.get('/top-clients', requirePermission('nav.control_plane'), saasAdminController.getTopClients);
+router.get('/sla-breaches', requirePermission('tickets.view'), saasAdminController.getSlaBreaches);
+router.get('/chat-analytics', requirePermission('nav.control_plane'), saasAdminController.getChatAnalytics);
 
 // Ticket escalations forwarded by org admins (categorized by org client-side)
-router.get('/escalations', saasAdminController.listEscalations);
-router.patch('/escalations/:id', saasAdminController.updateEscalation);
+router.get('/escalations', requirePermission('tickets.view'), saasAdminController.listEscalations);
+router.patch('/escalations/:id', requirePermission('tickets.write'), saasAdminController.updateEscalation);
 
 // Announcements (platform broadcasts)
-router.get('/announcements', saasAdminController.listAnnouncements);
-router.post('/announcements', saasAdminController.createAnnouncement);
-router.patch('/announcements/:id', saasAdminController.updateAnnouncement);
-router.delete('/announcements/:id', saasAdminController.deleteAnnouncement);
+router.get('/announcements', requirePermission('nav.control_plane'), saasAdminController.listAnnouncements);
+router.post('/announcements', requirePermission('nav.control_plane'), saasAdminController.createAnnouncement);
+router.patch('/announcements/:id', requirePermission('nav.control_plane'), saasAdminController.updateAnnouncement);
+router.delete('/announcements/:id', requirePermission('nav.control_plane'), saasAdminController.deleteAnnouncement);
 
 // Service requests
-router.get('/requests', saasAdminController.listRequests);
-router.patch('/requests/:id', saasAdminController.updateRequest);
+router.get('/requests', requirePermission('customer_services.manage'), saasAdminController.listRequests);
+router.patch('/requests/:id', requirePermission('customer_services.manage'), saasAdminController.updateRequest);
 
 // Customer services (each org's own services w/ expiry management)
-router.get('/services', saasAdminController.listServices);
-router.post('/customers/:customerId/services', saasAdminController.assignService);
-router.patch('/services/:id', saasAdminController.updateService);
-router.post('/services/:id/renew', saasAdminController.renewService);
-router.delete('/services/:id', saasAdminController.removeService);
+router.get('/services', requirePermission('customer_services.manage'), saasAdminController.listServices);
+router.post('/customers/:customerId/services', requirePermission('customer_services.manage'), saasAdminController.assignService);
+router.patch('/services/:id', requirePermission('customer_services.manage'), saasAdminController.updateService);
+router.post('/services/:id/renew', requirePermission('customer_services.manage'), saasAdminController.renewService);
+router.delete('/services/:id', requirePermission('customer_services.manage'), saasAdminController.removeService);
 
 // Service catalog (platform master list)
-router.get('/catalog', saasAdminController.listCatalog);
-router.post('/catalog', saasAdminController.createCatalogItem);
-router.patch('/catalog/:id', saasAdminController.updateCatalogItem);
-router.delete('/catalog/:id', saasAdminController.deleteCatalogItem);
+router.get('/catalog', requirePermission('catalog.manage'), saasAdminController.listCatalog);
+router.post('/catalog', requirePermission('catalog.manage'), saasAdminController.createCatalogItem);
+router.patch('/catalog/:id', requirePermission('catalog.manage'), saasAdminController.updateCatalogItem);
+router.delete('/catalog/:id', requirePermission('catalog.manage'), saasAdminController.deleteCatalogItem);
 
-// Feature flags
-router.get('/flags', saasAdminController.listFlags);
-router.patch('/flags/:key', saasAdminController.toggleFlag);
+// Feature flags — same key as organizations, per the key's own label.
+router.get('/flags', requirePermission('orgs.manage'), saasAdminController.listFlags);
+router.patch('/flags/:key', requirePermission('orgs.manage'), saasAdminController.toggleFlag);
 
-// Ticket-number format (whole router is already ADMINISTRATOR-gated)
-router.get('/ticket-number-format', saasAdminController.getTicketNumberFormat);
-router.put('/ticket-number-format', saasAdminController.updateTicketNumberFormat);
+// Ticket-number format — ticketing configuration, so it rides tickets.write.
+router.get('/ticket-number-format', requirePermission('tickets.view'), saasAdminController.getTicketNumberFormat);
+router.put('/ticket-number-format', requirePermission('tickets.write'), saasAdminController.updateTicketNumberFormat);
 
-// Administrator-only: SADMIN activity feed + Sadmin management
-router.get('/activity', onlyAdministrator, saasAdminController.getSadminActivity);
-router.get('/system-activity', onlyAdministrator, saasAdminController.getSystemActivity);
-router.get('/logins-by-org', onlyAdministrator, saasAdminController.getLoginsByOrg);
-router.get('/sadmins', onlyAdministrator, saasAdminController.listSadmins);
-router.patch('/sadmins/:id', onlyAdministrator, saasAdminController.updateSadmin);
-router.delete('/sadmins/:id', onlyAdministrator, saasAdminController.removeSadmin);
-router.post('/sadmins/:id/reset-password', onlyAdministrator, saasAdminController.resetSadminPassword);
+// Audit surfaces + staff directory ("Audit log, logins & staff directory").
+router.get('/activity', requirePermission('platform_audit.view'), saasAdminController.getSadminActivity);
+router.get('/system-activity', requirePermission('platform_audit.view'), saasAdminController.getSystemActivity);
+router.get('/logins-by-org', requirePermission('platform_audit.view'), saasAdminController.getLoginsByOrg);
+router.get('/sadmins', requirePermission('platform_audit.view'), saasAdminController.listSadmins);
 
-// Security: accounts sharing the same password (platform-wide). ADMINISTRATOR only —
-// it enumerates users across every organization.
-router.get('/password-reuse', onlyAdministrator, saasAdminController.getPasswordReuse);
+// Staff lifecycle. Reading the directory is an audit action; changing a staff
+// account is a user-management one, so the keys differ deliberately.
+router.post('/staff', requirePermission('staff.invite'), saasAdminController.inviteStaff);
+router.patch('/sadmins/:id', requirePermission('users.manage'), saasAdminController.updateSadmin);
+router.delete('/sadmins/:id', requirePermission('users.manage'), saasAdminController.removeSadmin);
+router.post('/sadmins/:id/reset-password', requirePermission('users.manage'), saasAdminController.resetSadminPassword);
+
+// Security: accounts sharing the same password (platform-wide) — it enumerates
+// users across every organization, so it is an audit surface.
+router.get('/password-reuse', requirePermission('platform_audit.view'), saasAdminController.getPasswordReuse);
 
 export default router;

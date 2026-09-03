@@ -91,7 +91,15 @@ function limiter(
     if (!distributed) {
       const store = redisStore(prefix);
       if (!store) { memory(req, res, next); return; }
-      distributed = rateLimit({ ...base, store });
+      // `creationStack` off, and ONLY that check. It fires because this limiter is
+      // built inside a request handler, which is deliberate — the lazy build above
+      // is what recovers from a Redis that was dead at boot. The check exists to
+      // catch a limiter whose counters live in per-instance memory and would reset
+      // on every request; RedisStore keeps no localKeys, so every counter is in
+      // Redis and shared. Left on, it printed a stack trace on each rebuild —
+      // per request during a Redis flap, i.e. loudest exactly when you are reading
+      // the logs for the real fault.
+      distributed = rateLimit({ ...base, store, validate: { creationStack: false } });
     }
 
     distributed(req, res, (err?: unknown) => {

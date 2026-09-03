@@ -2,7 +2,10 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { prisma } from '../../config/database';
 import { chatPrisma } from '../../config/chatDatabase';
-import { signImpersonationToken } from '../auth/auth.service';
+import { signImpersonationToken, isProviderAdminEmail } from '../auth/auth.service';
+import { assertRoleAssignable } from '../platform-roles/platformRoles.service';
+import { sendInviteEmail } from '../mail/mail.service';
+import type { PermissionKey } from '../../config/permissions';
 import { passwordFingerprint } from '../auth/passwordReuse';
 import { syncTicketUpdated } from '../requests/ticketing.provider';
 import { getTicketNumberFormat as readTicketNumberFormat } from '../ticketing/services/numberFormat';
@@ -12,7 +15,7 @@ import type {
   ListServicesInput, UpdateServiceInput, RenewServiceInput,
   AssignServiceInput,
   CreateCatalogServiceInput, UpdateCatalogServiceInput,
-  UpdateUserInput, SystemActivityInput, LoginsByOrgInput,
+  UpdateUserInput, UpdateSadminInput, InviteStaffInput, SystemActivityInput, LoginsByOrgInput,
   CreateAnnouncementInput, UpdateAnnouncementInput,
   ListEscalationsInput, UpdateEscalationInput,
   TicketNumberFormatInput,
@@ -680,6 +683,10 @@ export async function getLoginsByOrg(input: LoginsByOrgInput) {
 const sadminSelect = {
   id: true, email: true, name: true, role: true, mfaEnabled: true,
   lastLoginAt: true, createdAt: true, customerId: true,
+  // Which KIND of staff — the directory is meaningless without it now that
+  // Administration is no longer the only assignable platform role.
+  platformRoleId: true,
+  platformRole: { select: { id: true, key: true, name: true } },
   customer: { select: { id: true, name: true, slug: true, domain: true } },
 } as const;
 
@@ -692,10 +699,30 @@ export async function listSadmins() {
   });
 }
 
-export async function updateSadmin(targetUserId: string, administratorId: string, input: UpdateUserInput) {
+export async function updateSadmin(
+  targetUserId: string,
+  administratorId: string,
+  input: UpdateSadminInput,
+  actorPermissions: Set<PermissionKey>,
+) {
   const target = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, customerId: true, role: true, email: true } });
   if (!target) throw Object.assign(new Error('User not found'), { status: 404, code: 'NOT_FOUND' });
   if (target.role !== 'ADMINISTRATOR') throw Object.assign(new Error('Target is not an Administrator'), { status: 400, code: 'INVALID_TARGET' });
+
+  // Reassigning a platform role is a privilege grant: refuse to hand out a role
+  // holding keys the caller does not hold themselves. Without this an HR Admin
+  // (who holds users.manage by default) could promote anyone to Administration.
+  if (input.platformRoleId) await assertRoleAssignable(input.platformRoleId, actorPermissions);
+
+  // Moving an account off the provider domain would lock it out at login
+  // (initiateLogin rejects ADMINISTRATOR on a non-provider domain), so refuse
+  // rather than silently bricking it.
+  if (input.email && !isProviderAdminEmail(input.email)) {
+    throw Object.assign(
+      new Error('Platform staff must use a provider-domain email address.'),
+      { status: 400, code: 'ADMIN_DOMAIN_FORBIDDEN' },
+    );
+  }
 
   await prisma.auditLog.create({
     data: {
@@ -706,6 +733,76 @@ export async function updateSadmin(targetUserId: string, administratorId: string
   });
 
   return prisma.user.update({ where: { id: targetUserId }, data: input, select: sadminSelect });
+}
+
+// ─── Staff invitation ────────────────────────────────────────────────────────
+// The only path that mints a NON-Administration staff account, and therefore the
+// thing that made HR Admin / Employee / Intern reachable at all: before this,
+// every platformRoleId ever written was plr_administration.
+export async function inviteStaff(input: InviteStaffInput, administratorId: string, actorPermissions: Set<PermissionKey>) {
+  // An ADMINISTRATOR on a non-provider domain can never log in (initiateLogin
+  // throws ADMIN_DOMAIN_FORBIDDEN), so reject here rather than create a dead row.
+  if (!isProviderAdminEmail(input.email)) {
+    throw Object.assign(
+      new Error('Platform staff must use a provider-domain email address (see ADMIN_DOMAINS).'),
+      { status: 400, code: 'ADMIN_DOMAIN_FORBIDDEN' },
+    );
+  }
+
+  await assertRoleAssignable(input.platformRoleId, actorPermissions);
+
+  const existing = await prisma.user.findUnique({ where: { email: input.email }, select: { id: true } });
+  if (existing) throw Object.assign(new Error('An account with that email already exists'), { status: 409, code: 'EMAIL_TAKEN' });
+
+  // Staff join the inviting administrator's own organization — the provider org.
+  const inviter = await prisma.user.findUnique({
+    where: { id: administratorId },
+    select: { customerId: true, customer: { select: { name: true } } },
+  });
+  if (!inviter) throw Object.assign(new Error('Inviting account not found'), { status: 401, code: 'AUTH_REQUIRED' });
+
+  const tempPassword = crypto.randomBytes(9).toString('base64').replace(/[+/=]/g, '') + 'A1!';
+  const passwordHash = await bcrypt.hash(tempPassword, 12);
+
+  const user = await prisma.user.create({
+    data: {
+      email: input.email,
+      name: input.name,
+      role: 'ADMINISTRATOR',
+      platformRoleId: input.platformRoleId,
+      passwordHash,
+      passwordFingerprint: passwordFingerprint(tempPassword),
+      customerId: inviter.customerId,
+    },
+    select: sadminSelect,
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      action: 'ADMINISTRATOR_STAFF_INVITED', performedById: administratorId, targetId: user.id,
+      customerId: inviter.customerId,
+      metadata: { targetEmail: user.email, platformRoleId: input.platformRoleId },
+    },
+  });
+
+  const role = await prisma.platformRole.findUnique({ where: { id: input.platformRoleId }, select: { name: true } });
+  const delivered = await sendInviteEmail(user.email, {
+    name: user.name,
+    tempPassword,
+    roleLabel: role?.name ?? 'Platform staff',
+    orgName: inviter.customer.name,
+  });
+
+  // The password is returned ONLY when the email did not go out — otherwise a
+  // working mail setup would still spray credentials through the API response.
+  return {
+    user,
+    delivered,
+    ...(delivered ? {} : { tempPassword }),
+    message: delivered
+      ? `Invitation sent to ${user.email}.`
+      : 'Email could not be sent. Communicate this temporary password securely.',
+  };
 }
 
 export async function removeSadmin(targetUserId: string, administratorId: string) {

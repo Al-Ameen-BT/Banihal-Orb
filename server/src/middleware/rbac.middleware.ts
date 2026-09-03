@@ -39,15 +39,27 @@ const deny = (res: Response): void => {
   res.status(403).json({ error: 'Insufficient permissions', code: 'PERMISSION_DENIED' });
 };
 
+// The guards below tag themselves with the key they enforce. That tag is what
+// lets tests/route-permissions.test.ts walk the mounted routers and fail on a
+// route that carries no permission at all — the defect the truth-table tests in
+// permissions.test.ts structurally cannot see.
+export interface PermissionGuard {
+  (req: Request, res: Response, next: NextFunction): void;
+  permissionKey: PermissionKey;
+}
+
+const tag = (key: PermissionKey, fn: (req: Request, res: Response, next: NextFunction) => void): PermissionGuard =>
+  Object.assign(fn, { permissionKey: key });
+
 /**
  * Platform-only route: the caller must be vendor staff AND hold `key`.
  * Customer roles are rejected outright.
  */
-export const requirePermission = (key: PermissionKey) =>
-  (req: Request, res: Response, next: NextFunction): void => {
+export const requirePermission = (key: PermissionKey): PermissionGuard =>
+  tag(key, (req, res, next) => {
     if (!can(req, key)) { deny(res); return; }
     next();
-  };
+  });
 
 /**
  * Shared route serving both audiences: customer roles pass through untouched
@@ -55,9 +67,9 @@ export const requirePermission = (key: PermissionKey) =>
  * additionally hold `key`. This is what stops an Intern reaching a surface that
  * today is open to every ADMINISTRATOR.
  */
-export const requirePermissionIfPlatform = (key: PermissionKey) =>
-  (req: Request, res: Response, next: NextFunction): void => {
+export const requirePermissionIfPlatform = (key: PermissionKey): PermissionGuard =>
+  tag(key, (req, res, next) => {
     if (req.user?.role !== 'ADMINISTRATOR') { next(); return; }
     if (!can(req, key)) { deny(res); return; }
     next();
-  };
+  });

@@ -1,20 +1,37 @@
 import { Router } from 'express';
 import * as ticketingController from './ticketing.controller';
-import { requireRole } from '../../middleware/rbac.middleware';
+import { can, requireRole, requirePermission, requirePermissionIfPlatform } from '../../middleware/rbac.middleware';
 import { runWithTicketDb } from '../../config/ticketDatabase';
 import { upload } from './uploads';
 
 const router = Router();
-const staff = requireRole('ORG_ADMIN', 'ADMINISTRATOR'); // management surfaces
-const onlyOrgAdmin = requireRole('ORG_ADMIN');            // escalation is an org-side action
-const onlyAdministrator = requireRole('ADMINISTRATOR');   // platform admin store
+// Management surfaces. An ORG_ADMIN passes on their role alone (their own
+// authorization was decided when they were made an org admin); platform staff
+// must additionally hold the key.
+//
+// The split is the whole point of the view/write pair: an Intern holds
+// tickets.view but not tickets.write, so they READ the ops dashboard, SLAs and
+// analytics while every mutation below returns PERMISSION_DENIED.
+const staffRead  = [requireRole('ORG_ADMIN', 'ADMINISTRATOR'), requirePermissionIfPlatform('tickets.view')];
+const staffWrite = [requireRole('ORG_ADMIN', 'ADMINISTRATOR'), requirePermissionIfPlatform('tickets.write')];
+const onlyOrgAdmin = requireRole('ORG_ADMIN');                  // escalation is an org-side action
+const adminStore = requirePermission('ticket.store.admin');     // platform admin store
 
-// Scope every ticketing request to a store by the caller's platform role:
-// ADMINISTRATOR → the isolated admin store (b2b_ticketing_admin); everyone else →
-// the shared client store (b2b_ticket). All ticketing.client queries read this
-// scope via getTicketDb(). (Escalation overrides the scope per-operation.)
+// Scope every ticketing request to a store by the caller's PERMISSION, not their
+// role: ticket.store.admin → the isolated admin store (b2b_ticketing_admin);
+// everyone else → the shared client store (b2b_ticket). All ticketing.client
+// queries read this scope via getTicketDb(). (Escalation overrides it per-op.)
+//
+// can() returns false for USER / ORG_ADMIN whatever the database says, so the
+// customer side is structurally pinned to the shared store — the same guarantee
+// the old role check gave, now expressed by the key that documents it.
 router.use((req, _res, next) =>
-  runWithTicketDb(req.user?.role === 'ADMINISTRATOR' ? 'admin' : 'default', () => next()));
+  runWithTicketDb(can(req, 'ticket.store.admin') ? 'admin' : 'default', () => next()));
+
+// Ticketing at all is tickets.view for platform staff. Customers fall straight
+// through — their access was already decided by being in the org. Without this a
+// custom platform role with no ticketing keys still reached every route below.
+router.use(requirePermissionIfPlatform('tickets.view'));
 
 // All authenticated users: raise + view tickets, see projects + the assignee pool.
 router.get('/tickets', ticketingController.listTickets);
@@ -41,28 +58,29 @@ router.get('/my-updates', ticketingController.myUpdates);
 // ADMINISTRATOR store, routed to the administrator group (unassigned, notify-all).
 router.post('/tickets/:id/escalate', onlyOrgAdmin, ticketingController.escalateTicket);
 
-// ADMINISTRATOR-only: the admin store's client pool (New Ticket form's client picker).
-router.get('/customers', onlyAdministrator, ticketingController.listCustomers);
+// Admin-store only: its client pool (New Ticket form's client picker).
+router.get('/customers', adminStore, ticketingController.listCustomers);
 
-// ADMINISTRATOR escalation notifications + first-wins claim (admin store).
-router.get('/admin/escalation-alerts', onlyAdministrator, ticketingController.escalationAlerts);
-router.post('/admin/tickets/:id/claim', onlyAdministrator, ticketingController.claimTicket);
+// Escalation notifications + first-wins claim (admin store). Claiming is a write,
+// so it needs tickets.write on top of reaching the store at all.
+router.get('/admin/escalation-alerts', adminStore, ticketingController.escalationAlerts);
+router.post('/admin/tickets/:id/claim', adminStore, requirePermission('tickets.write'), ticketingController.claimTicket);
 
 // Management surfaces — ORG_ADMIN / ADMINISTRATOR.
-router.patch('/tickets/:id', staff, ticketingController.updateTicket);
-router.post('/projects', staff, ticketingController.createProject);
-router.patch('/projects/:id', staff, ticketingController.updateProject);
-router.delete('/projects/:id', staff, ticketingController.deleteProject);
-router.get('/slas', staff, ticketingController.listSlas);
-router.post('/slas', staff, ticketingController.createSla);
-router.patch('/slas/:id', staff, ticketingController.updateSla);
-router.delete('/slas/:id', staff, ticketingController.deleteSla);
+router.patch('/tickets/:id', staffWrite, ticketingController.updateTicket);
+router.post('/projects', staffWrite, ticketingController.createProject);
+router.patch('/projects/:id', staffWrite, ticketingController.updateProject);
+router.delete('/projects/:id', staffWrite, ticketingController.deleteProject);
+router.get('/slas', staffRead, ticketingController.listSlas);
+router.post('/slas', staffWrite, ticketingController.createSla);
+router.patch('/slas/:id', staffWrite, ticketingController.updateSla);
+router.delete('/slas/:id', staffWrite, ticketingController.deleteSla);
 // Ops-dashboard aggregate. Scoped by the same role→store rule as everything else
 // above, so an ORG_ADMIN's dashboard can only ever aggregate their own store.
-router.get('/dashboard', staff, ticketingController.dashboardOverview);
-router.get('/stats', staff, ticketingController.getStats);
-router.get('/analytics', staff, ticketingController.getAnalytics);
-router.get('/reports', staff, ticketingController.getReport);
-router.get('/alerts', staff, ticketingController.getAlerts);
+router.get('/dashboard', staffRead, ticketingController.dashboardOverview);
+router.get('/stats', staffRead, ticketingController.getStats);
+router.get('/analytics', staffRead, ticketingController.getAnalytics);
+router.get('/reports', staffRead, ticketingController.getReport);
+router.get('/alerts', staffRead, ticketingController.getAlerts);
 
 export default router;

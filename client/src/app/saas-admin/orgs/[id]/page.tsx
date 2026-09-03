@@ -543,7 +543,7 @@ export default function OrgDetailPage() {
 
   if (isLoading || !data) {
     return (
-      <RoleGuard allowedRoles={['ADMINISTRATOR']}>
+      <RoleGuard allowedRoles={['ADMINISTRATOR']} permission="orgs.manage">
         <div className="flex h-screen overflow-hidden bg-canvas">
           <Sidebar />
           <main className="flex-1 overflow-y-auto">
@@ -560,7 +560,7 @@ export default function OrgDetailPage() {
 
   if (error || !data?.org) {
     return (
-      <RoleGuard allowedRoles={['ADMINISTRATOR']}>
+      <RoleGuard allowedRoles={['ADMINISTRATOR']} permission="orgs.manage">
         <div className="flex h-screen overflow-hidden bg-canvas">
           <Sidebar />
           <main className="flex-1 flex items-center justify-center">
@@ -578,7 +578,7 @@ export default function OrgDetailPage() {
   const otherUsers = org.users.filter((u) => u.id !== admin?.id);
 
   return (
-    <RoleGuard allowedRoles={['ADMINISTRATOR']}>
+    <RoleGuard allowedRoles={['ADMINISTRATOR']} permission="orgs.manage">
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">

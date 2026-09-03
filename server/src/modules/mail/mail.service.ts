@@ -31,6 +31,10 @@ const MONO = "'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace";
 
 const appUrl = () => env.FRONTEND_URL.replace(/\/$/, '');
 
+// SMTP is "configured" only with a host AND a user. Note this does NOT prove the
+// host is reachable — sendMail failures are reported per-email below.
+const isSmtpConfigured = (): boolean => Boolean(env.SMTP_HOST && env.SMTP_USER);
+
 // Shared shell: gradient brand header, white card, signature, and a footer with
 // Privacy Policy + Terms links. `bodyHtml` is the email-specific card content.
 function emailShell(opts: { bodyHtml: string; to: string }): string {
@@ -144,7 +148,7 @@ export function buildPasswordResetEmail(to: string, resetLink: string): { subjec
 }
 
 export async function sendPasswordResetEmail(to: string, resetLink: string): Promise<void> {
-  const isConfigured = Boolean(env.SMTP_HOST && env.SMTP_USER);
+  const isConfigured = isSmtpConfigured();
   const { subject, html, text } = buildPasswordResetEmail(to, resetLink);
 
   if (!isConfigured) {
@@ -216,7 +220,7 @@ export function buildMfaCodeEmail(to: string, code: string, ttlMinutes: number):
 }
 
 export async function sendMfaCodeEmail(to: string, code: string, ttlMinutes: number): Promise<void> {
-  const isConfigured = Boolean(env.SMTP_HOST && env.SMTP_USER);
+  const isConfigured = isSmtpConfigured();
   const { subject, html, text } = buildMfaCodeEmail(to, code, ttlMinutes);
 
   if (!isConfigured) {
@@ -234,5 +238,93 @@ export async function sendMfaCodeEmail(to: string, code: string, ttlMinutes: num
     console.log(`MFA code email sent to ${to}`);
   } catch (error) {
     console.error('Error sending MFA code email:', error);
+  }
+}
+
+// ─── Account invitation ──────────────────────────────────────────────────────
+// Sent when an administrator creates an account for someone. Carries a temporary
+// password, so it is a credential-bearing email: no link that logs anyone in, and
+// the same security notice box as the rest.
+export function buildInviteEmail(
+  to: string,
+  opts: { name: string; tempPassword: string; roleLabel: string; orgName: string },
+): { subject: string; html: string; text: string } {
+  const signIn = `${appUrl()}/login`;
+  const bodyHtml = `
+    <h1 style="margin:0 0 8px;font-size:20px;font-weight:700;color:${INK};">Your ${BRAND_NAME} account is ready</h1>
+    <p style="margin:0 0 22px;font-size:14px;line-height:1.6;color:${MUTED};">
+      Hi ${opts.name}, an administrator created an account for you in <strong>${opts.orgName}</strong> as <strong>${opts.roleLabel}</strong>. Sign in with the temporary password below, then change it from My Profile straight away.
+    </p>
+
+    <p style="margin:0 0 8px;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:${BRAND_COLOR};">Temporary password</p>
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 10px;">
+      <tr>
+        <td align="center" style="background:${BRAND_TINT};border:1px solid ${BRAND_BORDER};border-radius:12px;padding:20px 12px;">
+          <div style="font-family:${MONO};font-size:22px;font-weight:700;letter-spacing:2px;color:${BRAND_DARK};line-height:1.3;word-break:break-all;-webkit-user-select:all;-moz-user-select:all;user-select:all;">${opts.tempPassword}</div>
+        </td>
+      </tr>
+    </table>
+    <p style="margin:0 0 20px;text-align:center;font-size:12px;color:${FAINT};">Tap or click the password to select it, then copy.</p>
+
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 24px;">
+      <tr><td align="center">
+        <a href="${signIn}" style="display:inline-block;padding:13px 30px;background:${BRAND_COLOR};color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;border-radius:10px;">Sign in</a>
+      </td></tr>
+    </table>
+
+    ${noticeBox([
+      `<strong>Change this password immediately after your first sign-in.</strong> Until you do, anyone holding this email can sign in as you.`,
+      `${BRAND_NAME} will never ask you for your password by phone, email, text, or chat.`,
+      `Never share or forward this email.`,
+      `<strong>If you were not expecting this account,</strong> tell your administrator &mdash; do not sign in.`,
+    ])}`;
+
+  const text = [
+    `${BRAND_NAME} — your account is ready`,
+    ``,
+    `Hi ${opts.name}, an administrator created an account for you in ${opts.orgName} as ${opts.roleLabel}.`,
+    ``,
+    `Sign in at: ${signIn}`,
+    `Email:      ${to}`,
+    `Temporary password: ${opts.tempPassword}`,
+    ``,
+    `SECURITY NOTICE`,
+    `- Change this password immediately after your first sign-in.`,
+    `- ${BRAND_NAME} will never ask you for your password.`,
+    `- Never share or forward this email.`,
+    `- If you were not expecting this account, tell your administrator and do not sign in.`,
+    textFooter(to),
+  ].join('\n');
+
+  return { subject: `Your ${BRAND_NAME} account details`, html: emailShell({ bodyHtml, to }), text };
+}
+
+/**
+ * Send an invitation. Unlike the two above this REPORTS delivery instead of
+ * swallowing the failure: the caller shows the temporary password in the UI when
+ * the mail did not go out, so a misconfigured SMTP host cannot silently produce
+ * an account nobody can ever sign in to.
+ */
+export async function sendInviteEmail(
+  to: string,
+  opts: { name: string; tempPassword: string; roleLabel: string; orgName: string },
+): Promise<boolean> {
+  const { subject, html, text } = buildInviteEmail(to, opts);
+
+  if (!isSmtpConfigured()) {
+    console.log(`\n=============================================`);
+    console.log(`[Email Mock - SMTP Not Configured] Invitation for ${to}:`);
+    console.log(`   temporary password: ${opts.tempPassword}`);
+    console.log(`=============================================\n`);
+    return false;
+  }
+
+  try {
+    await transporter.sendMail({ from: `"${BRAND_NAME}" <${env.MAIL_FROM}>`, to, subject, html, text });
+    console.log(`Invitation email sent to ${to}`);
+    return true;
+  } catch (error) {
+    console.error('Error sending invitation email:', error);
+    return false;
   }
 }

@@ -93,8 +93,10 @@ interface ActivityEntry {
 interface PlatformUser {
   id: string; name: string; email: string; role: string;
   mfaEnabled: boolean; lastLoginAt: string | null; createdAt: string;
+  platformRole?: { id: string; key: string; name: string } | null;
   customer: { id: string; name: string; slug: string; domain?: string | null; plan?: string | null };
 }
+interface PlatformRole { id: string; key: string; name: string; description: string | null; system: boolean; permissions: string[] }
 // System-wide audit log (Administrator console)
 interface SystemLogEntry {
   id: string;
@@ -144,11 +146,22 @@ function timeAgo(iso: string) {
 export default function UsersPage() {
   const qc = useQueryClient();
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const isPlatformAdmin = user?.role === 'ADMINISTRATOR';
+  // Each panel keys off the permission that gates its endpoint, not off "is
+  // staff" — every ADMINISTRATOR satisfies that, Intern included.
+  const canAudit = can('platform_audit.view');
+  const canManageUsers = can('users.manage');
+  const canInviteStaff = can('staff.invite');
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteName,  setInviteName]  = useState('');
   const [inviteRole,  setInviteRole]  = useState<'USER' | 'ORG_ADMIN'>('USER');
+
+  // Platform-staff invitation (the only path that assigns HR Admin / Employee /
+  // Intern — before it existed every staff account was Administration).
+  const [staffEmail, setStaffEmail] = useState('');
+  const [staffName, setStaffName] = useState('');
+  const [staffRoleId, setStaffRoleId] = useState('');
 
   // Confirmation modal state
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string; email: string; type: 'user' | 'sadmin' } | null>(null);
@@ -160,6 +173,9 @@ export default function UsersPage() {
     queryKey: ['users'],
     queryFn: () => usersApi.list().then((r) => r.data as { users: User[] }),
     staleTime: 30_000,
+    // ORG_ADMIN always; platform staff only with users.manage, which is what the
+    // route now requires of them.
+    enabled: !isPlatformAdmin || canManageUsers,
   });
 
   const { data: org } = useQuery<Customer>({
@@ -172,22 +188,29 @@ export default function UsersPage() {
   const { data: activity, isLoading: activityLoading } = useQuery<ActivityEntry[]>({
     queryKey: ['sadmin-activity'],
     queryFn: () => saasAdminApi.getSadminActivity(60).then((r) => r.data as ActivityEntry[]),
-    enabled: isPlatformAdmin,
+    enabled: canAudit,
     staleTime: 10_000,
     refetchInterval: 15_000,
   });
   const { data: sadmins, isLoading: sadminsLoading } = useQuery<PlatformUser[]>({
     queryKey: ['sadmin-list'],
     queryFn: () => saasAdminApi.listSadmins().then((r) => (r.data as { sadmins: PlatformUser[] }).sadmins),
-    enabled: isPlatformAdmin,
+    enabled: canAudit,
     staleTime: 15_000,
     refetchInterval: 30_000,
+  });
+
+  const { data: platformRoles } = useQuery<PlatformRole[]>({
+    queryKey: ['platform-roles'],
+    queryFn: () => saasAdminApi.listPlatformRoles().then((r) => (r.data as { roles: PlatformRole[] }).roles),
+    enabled: can('roles.manage'),
+    staleTime: 300_000,
   });
 
   const { data: allUsers, isLoading: allUsersLoading } = useQuery<PlatformUser[]>({
     queryKey: ['all-users'],
     queryFn: () => saasAdminApi.listAllUsers().then((r) => (r.data as { users: PlatformUser[] }).users),
-    enabled: isPlatformAdmin,
+    enabled: canManageUsers,
     staleTime: 30_000,
     refetchInterval: 60_000,
   });
@@ -204,7 +227,7 @@ export default function UsersPage() {
   const { data: orgOptions } = useQuery<{ id: string; name: string }[]>({
     queryKey: ['org-options'],
     queryFn: () => saasAdminApi.listOrgs({ limit: 100 }).then((r) => (r.data as { orgs: { id: string; name: string }[] }).orgs),
-    enabled: isPlatformAdmin,
+    enabled: can('orgs.manage'),
     staleTime: 60_000,
   });
 
@@ -219,7 +242,7 @@ export default function UsersPage() {
   const { data: syslog, isLoading: syslogLoading } = useQuery<SystemActivityResp>({
     queryKey: ['system-activity', logParams],
     queryFn: () => saasAdminApi.getSystemActivity(logParams).then((r) => r.data as SystemActivityResp),
-    enabled: isPlatformAdmin,
+    enabled: canAudit,
     staleTime: 10_000,
     refetchInterval: 20_000,
   });
@@ -234,7 +257,7 @@ export default function UsersPage() {
   const { data: loginsByOrg, isLoading: loginsByOrgLoading } = useQuery<LoginsByOrgResp>({
     queryKey: ['logins-by-org', loginStatParams],
     queryFn: () => saasAdminApi.getLoginsByOrg(loginStatParams).then((r) => r.data as LoginsByOrgResp),
-    enabled: isPlatformAdmin,
+    enabled: canAudit,
     staleTime: 15_000,
     refetchInterval: 30_000,
   });
@@ -275,6 +298,20 @@ export default function UsersPage() {
       qc.invalidateQueries({ queryKey: ['sadmin-list'] });
       router.push('/users');
     },
+  });
+
+  const inviteStaffMutation = useMutation({
+    mutationFn: () => saasAdminApi.inviteStaff({ email: staffEmail, name: staffName, platformRoleId: staffRoleId }),
+    onSuccess: () => {
+      setStaffEmail(''); setStaffName('');
+      void qc.invalidateQueries({ queryKey: ['sadmin-list'] });
+    },
+  });
+
+  const assignRoleMutation = useMutation({
+    mutationFn: ({ id, platformRoleId }: { id: string; platformRoleId: string }) =>
+      saasAdminApi.updateSadmin(id, { platformRoleId }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['sadmin-list'] }),
   });
 
   const userColumns = [
@@ -387,14 +424,21 @@ export default function UsersPage() {
                     Send Invite
                   </GlowButton>
                 </div>
-                {inviteMutation.isSuccess && (
-                  <p className="mt-3 flex items-center gap-1.5 text-sm font-medium text-emerald-600">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.5 12.75l6 6 9-13.5" />
-                    </svg>
-                    Invitation sent
-                  </p>
-                )}
+                {inviteMutation.isSuccess && (() => {
+                  // Report what actually happened. This used to say "Invitation
+                  // sent" unconditionally while no email was ever sent and the
+                  // temporary password was discarded — the account could never
+                  // be signed in to.
+                  const d = inviteMutation.data?.data as { delivered: boolean; tempPassword?: string; message: string };
+                  return (
+                    <p className={`mt-3 flex items-center gap-1.5 text-sm font-medium ${d.delivered ? 'text-emerald-600' : 'text-amber-600'}`}>
+                      <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.5 12.75l6 6 9-13.5" />
+                      </svg>
+                      <span>{d.message}{d.tempPassword && <span className="ml-2 font-mono select-all">{d.tempPassword}</span>}</span>
+                    </p>
+                  );
+                })()}
               </div>
             </motion.div>
 
@@ -420,6 +464,52 @@ export default function UsersPage() {
             {isPlatformAdmin && (
               <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.16 }} className="space-y-6">
                 
+                {/* Platform staff invitation */}
+                {canInviteStaff && (
+                  <div>
+                    <h2 className="text-base font-semibold text-slate-900 mb-4">Invite Platform Staff</h2>
+                    <div className="card p-5 space-y-3">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <input value={staffEmail} onChange={(e) => setStaffEmail(e.target.value)}
+                          placeholder="colleague@provider-domain.com" className="input" />
+                        <input value={staffName} onChange={(e) => setStaffName(e.target.value)}
+                          placeholder="Jane Smith" className="input" />
+                        <select value={staffRoleId} onChange={(e) => setStaffRoleId(e.target.value)} className="input">
+                          <option value="">Select a platform role…</option>
+                          {(platformRoles ?? []).map((r) => (
+                            <option key={r.id} value={r.id}>{r.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <p className="text-xs text-slate-400">
+                        Staff must use a provider-domain address (ADMIN_DOMAINS) — anything else cannot sign in.
+                        You can only assign a role whose permissions you hold yourself.
+                      </p>
+                      <div className="flex items-center gap-3">
+                        <GlowButton
+                          onClick={() => inviteStaffMutation.mutate()}
+                          disabled={!staffEmail || !staffName || !staffRoleId || inviteStaffMutation.isPending}
+                          loading={inviteStaffMutation.isPending}
+                        >
+                          Send invitation
+                        </GlowButton>
+                        {inviteStaffMutation.isSuccess && (() => {
+                          const d = inviteStaffMutation.data?.data as { delivered: boolean; tempPassword?: string; message: string };
+                          return (
+                            <p className={`text-sm font-medium ${d.delivered ? 'text-emerald-600' : 'text-amber-600'}`}>
+                              {d.message}
+                              {/* Shown only when the email did NOT go out, so a broken
+                                  SMTP host degrades to a manual handover instead of an
+                                  account nobody can sign in to. */}
+                              {d.tempPassword && <span className="ml-2 font-mono select-all">{d.tempPassword}</span>}
+                            </p>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Platform Users Directory */}
                 <div>
                   <h2 className="text-base font-semibold text-slate-900 mb-4">Platform Users Directory</h2>
@@ -478,9 +568,23 @@ export default function UsersPage() {
                                   <div className="text-right flex-shrink-0">
                                     <p className="text-xs font-mono text-slate-500">{lastLogin}</p>
                                     <p className="text-[10px] text-slate-400 truncate max-w-[150px]" title={u.customer.name}>{u.customer.name}</p>
-                                    {user?.id !== u.id && u.role === 'ADMINISTRATOR' && (
+                                    {u.role === 'ADMINISTRATOR' && (
+                                      canManageUsers && platformRoles ? (
+                                        <select
+                                          className="mt-1 text-[10px] border border-slate-200 rounded px-1 py-0.5 bg-white"
+                                          value={u.platformRole?.id ?? ''}
+                                          disabled={assignRoleMutation.isPending}
+                                          onChange={(e) => assignRoleMutation.mutate({ id: u.id, platformRoleId: e.target.value })}
+                                        >
+                                          {platformRoles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                                        </select>
+                                      ) : (
+                                        <p className="text-[10px] text-slate-400 mt-1">{u.platformRole?.name ?? '—'}</p>
+                                      )
+                                    )}
+                                    {user?.id !== u.id && u.role === 'ADMINISTRATOR' && canManageUsers && (
                                       <button
-                                        className="text-[10px] text-red-600 font-semibold hover:text-red-700 mt-1 cursor-pointer"
+                                        className="text-[10px] text-red-600 font-semibold hover:text-red-700 mt-1 cursor-pointer block ml-auto"
                                         onClick={() => setDeleteTarget({ id: u.id, name: u.name, email: u.email, type: 'sadmin' })}
                                         disabled={removeSadminMutation.isPending}
                                       >

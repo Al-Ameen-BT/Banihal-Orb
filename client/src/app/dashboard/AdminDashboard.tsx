@@ -531,25 +531,38 @@ export default function AdminPlatformDashboard() {
     queryFn: () => saasAdminApi.getMetrics().then((r) => r.data as PlatformMetrics),
     staleTime: 30_000,
   });
+  // Each panel below is gated by the permission that gates its endpoint. `enabled`
+  // is doing real work, not tidying: without it an Intern's dashboard fires five
+  // requests that all 403 and raises five toasts before rendering nothing.
+  const showTickets = can('tickets.view');
+  const showOrgs = can('orgs.manage');
+  const showServices = can('customer_services.manage');
+  const showControlPlane = can('nav.control_plane');
+  const showAudit = can('platform_audit.view');
+
   const { data: sla, isLoading: slaLoading } = useQuery<SlaBreachReport>({
     queryKey: ['admin-sla'],
     queryFn: () => saasAdminApi.getSlaBreaches().then((r) => r.data as SlaBreachReport),
     staleTime: 30_000,
+    enabled: showTickets,
   });
   const { data: orgsData } = useQuery<{ orgs: OrgOverview[] }>({
     queryKey: ['admin-orgs-overview'],
     queryFn: () => saasAdminApi.getOrgsOverview().then((r) => r.data as { orgs: OrgOverview[] }),
     staleTime: 30_000,
+    enabled: showOrgs,
   });
   const { data: expiringData, isLoading: expiringLoading } = useQuery<{ services: WatchService[]; total: number }>({
     queryKey: ['admin-expiring-services'],
     queryFn: () => saasAdminApi.listServices({ status: 'EXPIRING', limit: 6 }).then((r) => r.data as { services: WatchService[]; total: number }),
     staleTime: 30_000,
+    enabled: showServices,
   });
   const { data: chat, isLoading: chatLoading } = useQuery<ChatAnalytics>({
     queryKey: ['admin-chat-analytics'],
     queryFn: () => saasAdminApi.getChatAnalytics().then((r) => r.data as ChatAnalytics),
     staleTime: 60_000,
+    enabled: showControlPlane,
   });
 
   const renewMut = useMutation({
@@ -577,6 +590,11 @@ export default function AdminPlatformDashboard() {
     .sort((a, b) => b.score - a.score)
     .slice(0, 6), [orgs]);
 
+  // Section numbers count what this viewer actually sees — hiding ③ for an Intern
+  // must not leave the list reading ①②④⑤.
+  let groupNo = 0;
+  const step = () => ++groupNo;
+
   const maxDaily = Math.max(1, ...(chat?.daily.map((d) => d.messages) ?? [1]));
   const breaches = sla?.breached ?? [];
   const approaching = sla?.approaching ?? [];
@@ -598,14 +616,16 @@ export default function AdminPlatformDashboard() {
                 <h1 className="text-2xl font-bold tracking-tight text-slate-900">Welcome back, {user?.name?.split(' ')[0]}</h1>
                 <p className="mt-1 text-sm text-slate-500">SLA health, account risk, service expiry, and platform activity across every client organization</p>
               </div>
-              <Link href="/saas-admin">
-                <GlowButton variant="secondary">Open Control Plane →</GlowButton>
-              </Link>
+              {showControlPlane && (
+                <Link href="/saas-admin">
+                  <GlowButton variant="secondary">Open Control Plane →</GlowButton>
+                </Link>
+              )}
             </motion.div>
 
             {/* ① Overview */}
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.03 }} className="space-y-6">
-              <GroupHeader index={1} title="Overview" caption="Platform health at a glance" />
+              <GroupHeader index={step()} title="Overview" caption="Platform health at a glance" />
               {metricsLoading ? (
                 <div className={`grid grid-cols-2 gap-4 ${can('revenue.view') ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
                   {Array.from({ length: can('revenue.view') ? 4 : 3 }).map((_, i) => <ShimmerCard key={i} />)}
@@ -631,8 +651,9 @@ export default function AdminPlatformDashboard() {
             </motion.div>
 
             {/* ② Operations — SLA monitor + escalations */}
+            {showTickets && (
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.06 }} className="space-y-6">
-              <GroupHeader index={2} title="Operations" caption="Tickets needing platform attention — SLA breaches and org escalations" />
+              <GroupHeader index={step()} title="Operations" caption="Tickets needing platform attention — SLA breaches and org escalations" />
               <div>
               <SectionHeader
                 title="SLA Breach Monitor"
@@ -677,11 +698,14 @@ export default function AdminPlatformDashboard() {
 
               <EscalationsSection />
             </motion.div>
+            )}
 
             {/* ③ Accounts & Services — at-risk orgs + expiring services */}
+            {(showOrgs || showServices) && (
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.09 }} className="space-y-6">
-              <GroupHeader index={3} title="Accounts & Services" caption="Account risk and service expiry across client organizations" />
+              <GroupHeader index={step()} title="Accounts & Services" caption="Account risk and service expiry across client organizations" />
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+              {showOrgs && (
               <div>
                 <SectionHeader title="At-Risk Accounts" hint="Low health, critical tickets, or lapsing services — for CSM follow-up" />
                 <div className="space-y-2.5">
@@ -707,7 +731,9 @@ export default function AdminPlatformDashboard() {
                   )}
                 </div>
               </div>
+              )}
 
+              {showServices && (
               <div>
                 <SectionHeader
                   title="Service Expiry Watchtower"
@@ -741,12 +767,15 @@ export default function AdminPlatformDashboard() {
                   )}
                 </div>
               </div>
+              )}
               </div>
             </motion.div>
+            )}
 
             {/* ④ Engagement — assistant analytics */}
+            {showControlPlane && (
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.12 }} className="space-y-6">
-              <GroupHeader index={4} title="Engagement" caption="How client organizations use the platform" />
+              <GroupHeader index={step()} title="Engagement" caption="How client organizations use the platform" />
               <div>
               <SectionHeader title="Assistant Analytics" hint="AI assistant adoption across client organizations" />
               {chatLoading ? (
@@ -813,19 +842,26 @@ export default function AdminPlatformDashboard() {
               )}
               </div>
             </motion.div>
+            )}
 
             {/* ⑤ Communication & Governance — broadcasts + audit trail */}
+            {(showControlPlane || showAudit) && (
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.15 }} className="space-y-6">
-              <GroupHeader index={5} title="Communication & Governance" caption="Broadcast to client organizations and review the platform audit trail" />
-              <div>
-                <SectionHeader title="Platform Announcements" hint="Broadcast maintenance windows and incident notices to client dashboards" />
-                <AnnouncementsManager orgs={orgs} />
-              </div>
-              <div>
-                <SectionHeader title="Audit Log" hint="Search the platform audit trail and export filtered results" />
-                <AuditLogSection orgs={orgs} />
-              </div>
+              <GroupHeader index={step()} title="Communication & Governance" caption="Broadcast to client organizations and review the platform audit trail" />
+              {showControlPlane && (
+                <div>
+                  <SectionHeader title="Platform Announcements" hint="Broadcast maintenance windows and incident notices to client dashboards" />
+                  <AnnouncementsManager orgs={orgs} />
+                </div>
+              )}
+              {showAudit && (
+                <div>
+                  <SectionHeader title="Audit Log" hint="Search the platform audit trail and export filtered results" />
+                  <AuditLogSection orgs={orgs} />
+                </div>
+              )}
             </motion.div>
+            )}
 
           </div>
         </main>

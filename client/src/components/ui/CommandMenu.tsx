@@ -35,27 +35,30 @@ export default function CommandMenu() {
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
-  const { user, logout } = useAuth();
+  const { user, logout, can } = useAuth();
 
   const close = useCallback(() => { setOpen(false); setQuery(''); setActiveIndex(0); }, []);
 
   const commands: Command[] = useMemo(() => {
     const role = user?.role;
-    const isAdmin = role === 'ORG_ADMIN' || role === 'ADMINISTRATOR';
-    const isSaas  = role === 'ADMINISTRATOR';
+    const isOrgAdmin = role === 'ORG_ADMIN';
+    const isStaff = role === 'ADMINISTRATOR';
+    // Mirrors Sidebar: role for customers, permission for platform staff.
+    const showServices = isOrgAdmin || (isStaff && can('services.view'));
+    const showUsers = isOrgAdmin || (isStaff && can('users.manage'));
 
     return [
       { id: 'nav-dashboard', group: 'Navigation', label: 'Go to Dashboard',     shortcut: 'G D', icon: ICON.dashboard, action: () => router.push('/dashboard') },
       { id: 'nav-ticketing', group: 'Navigation', label: 'Open Ticketing',      shortcut: 'G T', icon: ICON.ticket,    action: () => router.push('/ticketing') },
-      { id: 'nav-chat',      group: 'Navigation', label: 'Chat Assistant',      shortcut: 'G C', icon: ICON.chat,      action: () => router.push('/chat') },
-      { id: 'nav-services',  group: 'Navigation', label: 'Services',            shortcut: 'G V', icon: ICON.services,  action: () => router.push('/services'),            visible: () => isAdmin },
-      { id: 'nav-users',     group: 'Navigation', label: 'Users',               shortcut: 'G U', icon: ICON.users,     action: () => router.push('/users'),               visible: () => isAdmin },
-      { id: 'nav-saas',      group: 'Navigation', label: 'Control Plane',       shortcut: 'G S', icon: ICON.shield,    action: () => router.push('/saas-admin'),          visible: () => isSaas },
+      { id: 'nav-chat',      group: 'Navigation', label: 'Chat Assistant',      shortcut: 'G C', icon: ICON.chat,      action: () => router.push('/chat'),                 visible: () => !isStaff || can('nav.chat') },
+      { id: 'nav-services',  group: 'Navigation', label: 'Services',            shortcut: 'G V', icon: ICON.services,  action: () => router.push('/services'),            visible: () => showServices },
+      { id: 'nav-users',     group: 'Navigation', label: 'Users',               shortcut: 'G U', icon: ICON.users,     action: () => router.push('/users'),               visible: () => showUsers },
+      { id: 'nav-saas',      group: 'Navigation', label: 'Control Plane',       shortcut: 'G S', icon: ICON.shield,    action: () => router.push('/saas-admin'),          visible: () => can('nav.control_plane') },
       { id: 'nav-profile',   group: 'Account',    label: 'My Profile',          icon: ICON.user,   action: () => router.push('/profile') },
       { id: 'account-logout',group: 'Account',    label: 'Sign Out',            icon: ICON.logout, action: async () => { await logout(); router.push('/login'); } },
       { id: 'help-shortcuts',group: 'Help',       label: 'Keyboard Shortcuts',  hint: '⌘K opens this menu', icon: ICON.keyboard, action: () => { /* keep open */ } },
     ];
-  }, [router, user, logout]);
+  }, [router, user, logout, can]);
 
   const filtered = useMemo(() => {
     const visible = commands.filter((c) => (c.visible ? c.visible() : true));

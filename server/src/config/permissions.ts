@@ -39,8 +39,12 @@ export const PERMISSIONS = [
   { key: 'tickets.write',            group: 'Ticketing',   label: 'Change status / assignee, manage projects & SLAs' },
   // ⚠ SECURITY BOUNDARY, not a feature toggle. This decides which DATABASE a
   // ticketing request reads (b2b_ticketing_admin vs the shared b2b_ticket), and
-  // therefore whether access.ts applies a per-row owner filter. See
-  // modules/ticketing/ticketing.routes.ts and access.ts before changing it.
+  // therefore whether access.ts applies a per-row owner filter. It is consulted
+  // by the router-level can() in modules/ticketing/ticketing.routes.ts — read
+  // that and access.ts before changing it.
+  //
+  // can() refuses every customer role outright, so USER / ORG_ADMIN are pinned to
+  // the shared store no matter what the database says about their platform role.
   { key: 'ticket.store.admin',       group: 'Ticketing',   label: 'Internal (platform) ticket queue' },
 
   { key: 'credentials.view',         group: 'Credentials', label: 'Credential deliveries' },

@@ -56,11 +56,23 @@ function SectionDivider({ label }: { label: string }) {
 }
 
 export default function Sidebar() {
-  const { user, logout } = useAuth();
+  const { user, logout, can } = useAuth();
   const path = usePathname();
 
-  const isAdmin = user?.role === 'ORG_ADMIN' || user?.role === 'ADMINISTRATOR';
-  const isSaas  = user?.role === 'ADMINISTRATOR';
+  // Customer-side items still key off the role — USER / ORG_ADMIN hold no
+  // permissions by design. Platform items key off the permission that gates the
+  // API behind them, so an Intern is not shown four links that all 403.
+  const isOrgAdmin = user?.role === 'ORG_ADMIN';
+  const isStaff = user?.role === 'ADMINISTRATOR';
+  const showServices = isOrgAdmin || (isStaff && can('services.view'));
+  const showUsers = isOrgAdmin || (isStaff && can('users.manage'));
+  const platform = {
+    controlPlane: can('nav.control_plane'),
+    customerServices: can('customer_services.manage'),
+    catalog: can('catalog.manage'),
+    bots: can('bots.view'),
+  };
+  const showPlatform = Object.values(platform).some(Boolean);
   const roleCfg = roleConfig[user?.role ?? ''] ?? roleConfig['USER']!;
 
   return (
@@ -82,22 +94,22 @@ export default function Sidebar() {
         <SectionDivider label="Workspace" />
         <NavItem href="/dashboard" label="Dashboard" icon={icons.dashboard} active={path === '/dashboard'} />
         <NavItem href="/ticketing" label="Ticketing" icon={icons.ticketing} active={path === '/ticketing'} />
-        <NavItem href="/chat"      label="Assistant" icon={icons.chat}      active={path === '/chat'} />
-        <NavItem href="/credentials" label="Credentials" icon={icons.key}   active={path === '/credentials'} />
-        {isAdmin && (
-          <>
-            <NavItem href="/services" label="Services" icon={icons.services} active={path === '/services'} />
-            <NavItem href="/users"    label="Users"    icon={icons.users}    active={path === '/users'} />
-          </>
+        {(!isStaff || can('nav.chat')) && (
+          <NavItem href="/chat" label="Assistant" icon={icons.chat} active={path === '/chat'} />
         )}
+        {(!isStaff || can('credentials.view')) && (
+          <NavItem href="/credentials" label="Credentials" icon={icons.key} active={path === '/credentials'} />
+        )}
+        {showServices && <NavItem href="/services" label="Services" icon={icons.services} active={path === '/services'} />}
+        {showUsers && <NavItem href="/users" label="Users" icon={icons.users} active={path === '/users'} />}
 
-        {isSaas && (
+        {showPlatform && (
           <>
             <SectionDivider label="Platform" />
-            <NavItem href="/saas-admin" label="Control Plane" icon={icons.saas} active={path === '/saas-admin'} />
-            <NavItem href="/saas-admin/services" label="Customer Services" icon={icons.services} active={path === '/saas-admin/services'} />
-            <NavItem href="/saas-admin/catalog" label="Service Catalog" icon={icons.catalog} active={path === '/saas-admin/catalog'} />
-            <NavItem href="/saas-admin/bots" label="Slack Bots" icon={icons.bots} active={path === '/saas-admin/bots'} />
+            {platform.controlPlane && <NavItem href="/saas-admin" label="Control Plane" icon={icons.saas} active={path === '/saas-admin'} />}
+            {platform.customerServices && <NavItem href="/saas-admin/services" label="Customer Services" icon={icons.services} active={path === '/saas-admin/services'} />}
+            {platform.catalog && <NavItem href="/saas-admin/catalog" label="Service Catalog" icon={icons.catalog} active={path === '/saas-admin/catalog'} />}
+            {platform.bots && <NavItem href="/saas-admin/bots" label="Slack Bots" icon={icons.bots} active={path === '/saas-admin/bots'} />}
           </>
         )}
 
@@ -121,12 +133,15 @@ export default function Sidebar() {
           {user?.role && (
             <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-[0.08em] ${roleCfg.badge}`}>
               <span className="w-1.5 h-1.5 rounded-full bg-current" />
-              {roleCfg.label}
+              {user.platformRole?.name ?? roleCfg.label}
             </span>
           )}
-          {/* Notifications: administrators → escalations (+claim); org admins → new
-              tickets; users → updates on their own tickets. */}
-          {isSaas ? <AdminNotifications /> : isAdmin ? <OrgNotifications /> : <UserNotifications />}
+          {/* Notifications: admin-store staff → escalations (+claim); org admins →
+              new tickets; everyone else → updates on their own tickets. Keyed on
+              the store permission because that is what gates the endpoint. */}
+          {isStaff && can('ticket.store.admin') ? <AdminNotifications />
+            : isOrgAdmin ? <OrgNotifications />
+            : <UserNotifications />}
         </div>
 
         {/* Sign out */}

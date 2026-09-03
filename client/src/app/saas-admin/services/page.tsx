@@ -60,7 +60,7 @@ export default function CustomerServicesPage() {
   }, [data?.services, search]);
 
   return (
-    <RoleGuard allowedRoles={['ADMINISTRATOR']}>
+    <RoleGuard allowedRoles={['ADMINISTRATOR']} permission="customer_services.manage">
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">

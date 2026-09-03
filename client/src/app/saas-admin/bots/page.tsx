@@ -428,7 +428,7 @@ export default function SlackBotsPage() {
   const connected = bots.filter((b) => b.status === 'CONNECTED').length;
 
   return (
-    <RoleGuard allowedRoles={['ADMINISTRATOR']}>
+    <RoleGuard allowedRoles={['ADMINISTRATOR']} permission="bots.view">
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">

@@ -87,3 +87,111 @@ export async function listRoles() {
     createdAt: r.createdAt,
   }));
 }
+
+// ─── Writes ──────────────────────────────────────────────────────────────────
+// Every write busts the snapshot so the editing instance sees its own change at
+// once; other instances converge within the TTL above.
+
+const bust = (): void => { snapshot = null; };
+
+const badRequest = (msg: string, code: string) =>
+  Object.assign(new Error(msg), { status: 400, code });
+
+/** Reject anything that is not a known permission key. */
+function validateKeys(keys: string[]): PermissionKey[] {
+  const bad = keys.filter((k) => !isPermissionKey(k));
+  if (bad.length) throw badRequest(`Unknown permission keys: ${bad.join(', ')}`, 'UNKNOWN_PERMISSION');
+  return keys as PermissionKey[];
+}
+
+/**
+ * No privilege escalation: you cannot hand out a key you do not hold yourself.
+ *
+ * Without this, `roles.manage` and `staff.invite` are each a path to full
+ * platform access — an HR Admin holds both by default and could mint an
+ * Administration account, or simply add the missing keys to their own role.
+ * Administration holds every key, so this never constrains them.
+ */
+function assertGrantable(granted: Iterable<string>, holder: Set<PermissionKey>): void {
+  const over = [...granted].filter((k) => !holder.has(k as PermissionKey));
+  if (over.length) {
+    throw Object.assign(
+      new Error(`You cannot grant permissions you do not hold: ${over.join(', ')}`),
+      { status: 403, code: 'PERMISSION_DENIED' },
+    );
+  }
+}
+
+/** Assert the caller may put someone into `platformRoleId`. Used by staff invite + edit. */
+export async function assertRoleAssignable(platformRoleId: string, holder: Set<PermissionKey>): Promise<void> {
+  const row = await prisma.platformRole.findUnique({ where: { id: platformRoleId }, select: { key: true } });
+  if (!row) throw badRequest('Unknown platform role', 'UNKNOWN_ROLE');
+  // Administration's set is computed, so read it the same way can() would.
+  const target = row.key === ADMINISTRATION_ROLE_KEY ? ALL_PERMISSION_KEYS : [...(await permissionsFor(platformRoleId))];
+  assertGrantable(target, holder);
+}
+
+export async function createRole(
+  input: { key: string; name: string; description?: string | null; permissions: string[] },
+  holder: Set<PermissionKey>,
+) {
+  const keys = validateKeys(input.permissions);
+  assertGrantable(keys, holder);
+  if (input.key === ADMINISTRATION_ROLE_KEY) throw badRequest('That role key is reserved', 'RESERVED_KEY');
+
+  const existing = await prisma.platformRole.findUnique({ where: { key: input.key }, select: { id: true } });
+  if (existing) throw Object.assign(new Error('A role with that key already exists'), { status: 409, code: 'DUPLICATE_KEY' });
+
+  const row = await prisma.platformRole.create({
+    data: { key: input.key, name: input.name, description: input.description ?? null, permissions: keys, system: false },
+    select: { id: true, key: true, name: true, description: true, system: true, permissions: true, createdAt: true },
+  });
+  bust();
+  return row;
+}
+
+export async function updateRole(
+  id: string,
+  input: { name?: string; description?: string | null; permissions?: string[] },
+  holder: Set<PermissionKey>,
+) {
+  const row = await prisma.platformRole.findUnique({ where: { id }, select: { key: true } });
+  if (!row) throw Object.assign(new Error('Role not found'), { status: 404, code: 'NOT_FOUND' });
+
+  // Administration is not editable. Its permissions are computed, never stored,
+  // so an edit would be a silent no-op — and the point of the role is that it
+  // cannot be stripped, including by itself.
+  if (row.key === ADMINISTRATION_ROLE_KEY) {
+    throw Object.assign(new Error('The Administration role cannot be edited'), { status: 400, code: 'ROLE_IMMUTABLE' });
+  }
+
+  const data: { name?: string; description?: string | null; permissions?: PermissionKey[] } = {};
+  if (input.name !== undefined) data.name = input.name;
+  if (input.description !== undefined) data.description = input.description;
+  if (input.permissions !== undefined) {
+    const keys = validateKeys(input.permissions);
+    assertGrantable(keys, holder);
+    data.permissions = keys;
+  }
+
+  const updated = await prisma.platformRole.update({
+    where: { id }, data,
+    select: { id: true, key: true, name: true, description: true, system: true, permissions: true, createdAt: true },
+  });
+  bust();
+  return updated;
+}
+
+export async function deleteRole(id: string) {
+  const row = await prisma.platformRole.findUnique({ where: { id }, select: { key: true, system: true } });
+  if (!row) throw Object.assign(new Error('Role not found'), { status: 404, code: 'NOT_FOUND' });
+  if (row.system) throw badRequest('Seeded roles cannot be deleted', 'ROLE_SYSTEM');
+
+  // A user whose role vanished resolves to an empty permission set, which is safe
+  // but silently strips them. Refuse instead — reassign first.
+  const inUse = await prisma.user.count({ where: { platformRoleId: id } });
+  if (inUse > 0) throw badRequest(`${inUse} staff account(s) still hold this role`, 'ROLE_IN_USE');
+
+  await prisma.platformRole.delete({ where: { id } });
+  bust();
+}

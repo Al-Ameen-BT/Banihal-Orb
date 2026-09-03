@@ -231,7 +231,7 @@ export default function CatalogPage() {
   const enabledCount = items.filter((i) => i.enabled).length;
 
   return (
-    <RoleGuard allowedRoles={['ADMINISTRATOR']}>
+    <RoleGuard allowedRoles={['ADMINISTRATOR']} permission="catalog.manage">
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">

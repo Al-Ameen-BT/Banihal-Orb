@@ -75,7 +75,11 @@ model User {
   // A DB CHECK constraint (db/b2b.sql) enforces that pairing — `role=ADMINISTRATOR`
   // with no platformRoleId is an invalid state, and can() fails closed on it anyway.
   platformRoleId String?
-  // Null until the mailbox is proven. Login is blocked while null (initiateLogin).
+  // ⚠ INERT. Intended as "null until the mailbox is proven", but nothing writes it
+  // and initiateLogin does not read it — no code creates, sends or redeems an
+  // EmailVerificationToken, so every account is effectively unverified and logs in
+  // regardless. The column and that model are dead until the flow is built; do not
+  // rely on this as a gate.
   emailVerifiedAt DateTime?
   mfaEnabled    Boolean        @default(false)
   lastLoginAt   DateTime?

@@ -2,30 +2,18 @@ import { describe, it, expect } from 'vitest';
 import type { Request, Response } from 'express';
 import { can, requirePermission, requirePermissionIfPlatform } from '../src/middleware/rbac.middleware';
 import { PERMISSIONS, ALL_PERMISSION_KEYS, isPermissionKey, type PermissionKey } from '../src/config/permissions';
+import { SEEDED } from './seeded-roles';
 
 // The permission truth table, pinned. DB-free on purpose: it exercises can() and
 // the two middlewares against hand-built requests, so it runs in CI where the
 // DB-backed suites cannot.
 //
-// The seeded key sets below are transcribed from db/b2b.sql. If someone edits the
-// SQL seed without editing this file (or vice versa) these tests fail — which is
-// the point: a typo in that jsonb array is otherwise a silent, permanent denial
-// that nothing would catch until a user reported missing access.
+// The seeded key sets live in ./seeded-roles.ts, transcribed from db/b2b.sql and
+// shared with escalation-access.test.ts. If someone edits the SQL seed without
+// editing that file (or vice versa) these tests fail — which is the point: a typo
+// in that jsonb array is otherwise a silent, permanent denial that nothing would
+// catch until a user reported missing access.
 
-const SEEDED: Record<string, string[]> = {
-  hr_admin: [
-    'nav.control_plane', 'catalog.manage', 'customer_services.manage', 'orgs.manage',
-    'platform_audit.view', 'revenue.view', 'users.manage', 'staff.invite', 'roles.manage',
-    'services.view', 'nav.chat', 'tickets.view', 'tickets.write', 'ticket.store.admin',
-  ],
-  employee: [
-    'nav.chat', 'tickets.view', 'tickets.write', 'ticket.store.admin',
-    'credentials.view', 'credentials.reveal', 'bots.view', 'bots.manage',
-  ],
-  intern: [
-    'nav.chat', 'tickets.view', 'ticket.store.admin', 'credentials.view', 'bots.view',
-  ],
-};
 
 /** A request as auth.middleware would have built it. */
 function reqAs(role: 'USER' | 'ORG_ADMIN' | 'ADMINISTRATOR', keys: string[] = []): Request {

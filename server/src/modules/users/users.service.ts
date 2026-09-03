@@ -4,6 +4,7 @@ import { prisma } from '../../config/database';
 import { assertPasswordNotReused, passwordFingerprint } from '../auth/passwordReuse';
 import { chatPrisma } from '../../config/chatDatabase';
 import { permissionsFor } from '../platform-roles/platformRoles.service';
+import { sendInviteEmail } from '../mail/mail.service';
 import type { UpdateMeInput, InviteUserInput, ChangeRoleInput, PaginationInput, ChangePasswordInput } from './users.schema';
 
 const userSelect = {
@@ -76,10 +77,14 @@ export async function listUsers(input: PaginationInput) {
 }
 
 export async function inviteUser(input: InviteUserInput, customerId: string) {
+  // 16 random bytes is far past anything a human types, so this is only ever
+  // usable via the invitation email below — which is the whole point: before it
+  // existed the password was generated, hashed and DISCARDED, leaving an account
+  // nobody could ever sign in to while the UI reported "Invitation sent".
   const tempPassword = crypto.randomBytes(16).toString('hex') + 'A1!';
   const passwordHash = await bcrypt.hash(tempPassword, 12);
 
-  return prisma.user.create({
+  const user = await prisma.user.create({
     data: {
       email: input.email,
       name: input.name,
@@ -92,6 +97,27 @@ export async function inviteUser(input: InviteUserInput, customerId: string) {
     },
     select: userSelect,
   });
+
+  // Read OUTSIDE the tenant extension's reach is unnecessary here — Customer is a
+  // global model, and this is the invitee's own org either way.
+  const org = await prisma.customer.findUnique({ where: { id: customerId }, select: { name: true } });
+  const delivered = await sendInviteEmail(user.email, {
+    name: user.name,
+    tempPassword,
+    roleLabel: input.role === 'ORG_ADMIN' ? 'Organization Admin' : 'User',
+    orgName: org?.name ?? 'your organization',
+  });
+
+  // Surface the password ONLY when the mail failed, so a misconfigured SMTP host
+  // degrades to "hand it over yourself" instead of a silently unusable account.
+  return {
+    user,
+    delivered,
+    ...(delivered ? {} : { tempPassword }),
+    message: delivered
+      ? `Invitation sent to ${user.email}.`
+      : 'Email could not be sent. Communicate this temporary password securely.',
+  };
 }
 
 export async function changeRole(targetUserId: string, input: ChangeRoleInput) {

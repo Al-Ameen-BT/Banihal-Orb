@@ -9,6 +9,7 @@ import {
   CreateAnnouncementSchema, UpdateAnnouncementSchema,
   ListEscalationsSchema, UpdateEscalationSchema,
   TicketNumberFormatSchema,
+  InviteStaffSchema, UpdateSadminSchema, CreatePlatformRoleSchema, UpdatePlatformRoleSchema,
 } from './saas-admin.schema';
 import * as platformRoles from '../platform-roles/platformRoles.service';
 import { PERMISSIONS } from '../../config/permissions';
@@ -229,9 +230,17 @@ export async function listSadmins(_req: Request, res: Response, next: NextFuncti
 
 export async function updateSadmin(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const input = UpdateUserSchema.parse(req.body);
-    const user = await saasAdminService.updateSadmin(req.params['id']!, req.user.userId, input);
+    const input = UpdateSadminSchema.parse(req.body);
+    const user = await saasAdminService.updateSadmin(req.params['id']!, req.user.userId, input, req.user.permissions);
     res.json(user);
+  } catch (err) { next(err); }
+}
+
+export async function inviteStaff(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = InviteStaffSchema.parse(req.body);
+    const result = await saasAdminService.inviteStaff(input, req.user.userId, req.user.permissions);
+    res.status(201).json(result);
   } catch (err) { next(err); }
 }
 
@@ -355,4 +364,28 @@ export async function listPlatformRoles(_req: Request, res: Response, next: Next
 
 export function permissionCatalog(_req: Request, res: Response): void {
   res.json({ permissions: PERMISSIONS });
+}
+
+// Matrix writes. The caller's own permission set is passed through so the service
+// can refuse to grant a key the caller does not hold — otherwise roles.manage is
+// a one-step path to every other permission.
+export async function createPlatformRole(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = CreatePlatformRoleSchema.parse(req.body);
+    res.status(201).json(await platformRoles.createRole(input, req.user.permissions));
+  } catch (err) { next(err); }
+}
+
+export async function updatePlatformRole(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = UpdatePlatformRoleSchema.parse(req.body);
+    res.json(await platformRoles.updateRole(req.params['id']!, input, req.user.permissions));
+  } catch (err) { next(err); }
+}
+
+export async function deletePlatformRole(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    await platformRoles.deleteRole(req.params['id']!);
+    res.status(200).json({ success: true });
+  } catch (err) { next(err); }
 }

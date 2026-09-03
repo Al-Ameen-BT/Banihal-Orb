@@ -1,6 +1,6 @@
 import type { Role } from '@prisma/client';
 import { prisma } from '../../config/database';
-import { getTicketDb } from '../../config/ticketDatabase';
+import { getTicketDb, getTicketDbScope } from '../../config/ticketDatabase';
 import { resolveTicketActor } from './identity';
 
 // ─── Ticket-store tenant scoping ─────────────────────────────────────────────
@@ -14,12 +14,18 @@ const ticketNotFound = () => Object.assign(new Error('Ticket not found'), { stat
 export interface Caller { userId: string; role: Role; customerId: string }
 
 // The ticket-store user ids whose tickets the caller may access:
-//   ADMINISTRATOR → null  (full access; the admin store is already isolated per
-//                          request scope, so no per-row filter is needed)
-//   ORG_ADMIN     → every bridged ticket user belonging to the caller's org
-//   USER          → only themselves (own reported/assigned tickets)
+//   staff IN THE ADMIN STORE → null  (full access; that store is isolated per
+//                              request scope, so no per-row filter is needed)
+//   ORG_ADMIN                → every bridged ticket user belonging to their org
+//   everyone else            → only themselves (own reported/assigned tickets)
+//
+// ⚠ The null is conditioned on the STORE, not on the role. Store selection is a
+// permission (ticket.store.admin, see ticketing.routes.ts), so a platform role
+// without that key lands in the SHARED client store — where an unfiltered scope
+// would expose every organization's tickets. Reading the active scope keeps the
+// "already isolated" justification true instead of assumed.
 export async function ticketAccessScope(user: Caller): Promise<string[] | null> {
-  if (user.role === 'ADMINISTRATOR') return null;
+  if (user.role === 'ADMINISTRATOR' && getTicketDbScope() === 'admin') return null;
   const me = await resolveTicketActor(user.userId, user.role);
   if (user.role !== 'ORG_ADMIN') return [me.id];
 

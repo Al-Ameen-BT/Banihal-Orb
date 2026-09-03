@@ -167,3 +167,42 @@ export type CreateAnnouncementInput = z.infer<typeof CreateAnnouncementSchema>;
 export type UpdateAnnouncementInput = z.infer<typeof UpdateAnnouncementSchema>;
 export type ListEscalationsInput = z.infer<typeof ListEscalationsSchema>;
 export type UpdateEscalationInput = z.infer<typeof UpdateEscalationSchema>;
+
+// ─── Platform staff (IAM) ────────────────────────────────────────────────────
+// Inviting staff always pairs role=ADMINISTRATOR with a platform role: the DB
+// CHECK constraint rejects the pair being broken, and can() grants nothing
+// without one, so platformRoleId is required rather than optional.
+export const InviteStaffSchema = z.object({
+  email: z.string().email(),
+  name: z.string().min(2).max(80),
+  platformRoleId: z.string().min(1),
+});
+
+// Editing a staff account. Separate from UpdateUserSchema because that one
+// deliberately refuses ADMINISTRATOR, while this one only ever touches staff and
+// is the single path that reassigns a platform role.
+export const UpdateSadminSchema = z.object({
+  name: z.string().min(2).max(80).optional(),
+  email: z.string().email().optional(),
+  mfaEnabled: z.boolean().optional(),
+  platformRoleId: z.string().min(1).optional(),
+}).refine((d) => Object.keys(d).length > 0, { message: 'At least one field required' });
+
+export const CreatePlatformRoleSchema = z.object({
+  // Lowercase snake_case: the key is an identifier used in code and seeds, not a label.
+  key: z.string().min(2).max(40).regex(/^[a-z][a-z0-9_]*$/, 'Use lowercase letters, digits and underscores'),
+  name: z.string().min(2).max(60),
+  description: z.string().max(200).nullish(),
+  permissions: z.array(z.string()).default([]),
+});
+
+export const UpdatePlatformRoleSchema = z.object({
+  name: z.string().min(2).max(60).optional(),
+  description: z.string().max(200).nullish(),
+  permissions: z.array(z.string()).optional(),
+}).refine((d) => Object.keys(d).length > 0, { message: 'At least one field required' });
+
+export type InviteStaffInput = z.infer<typeof InviteStaffSchema>;
+export type UpdateSadminInput = z.infer<typeof UpdateSadminSchema>;
+export type CreatePlatformRoleInput = z.infer<typeof CreatePlatformRoleSchema>;
+export type UpdatePlatformRoleInput = z.infer<typeof UpdatePlatformRoleSchema>;
