@@ -1,7 +1,16 @@
 import { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
-import { Prisma } from '@prisma/client';
 import { env } from '../config/env';
+
+// Prisma generates its error classes PER client, and this app runs four
+// (@prisma/client, ticket-client, ticketing-client, chat-client). `instanceof`
+// against the main client's classes is therefore FALSE for everything thrown by
+// the ticket/chat stores — including the unreachable admin ticket store the 503
+// below was written for, which reached the generic branch and surfaced as a bare
+// 500 (and a hard redirect to /server-error). Match the shape instead: `name` is
+// stable across generated clients and every Prisma error carries its P-code.
+const prismaError = (err: unknown, name: string): (Error & { code?: string }) | null =>
+  err instanceof Error && err.name === name ? err : null;
 
 export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction): void {
   if (err instanceof ZodError) {
@@ -9,19 +18,21 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     return;
   }
 
-  if (err instanceof Prisma.PrismaClientKnownRequestError) {
-    if (err.code === 'P2002') {
+  const known = prismaError(err, 'PrismaClientKnownRequestError');
+  if (known) {
+    if (known.code === 'P2002') {
       res.status(409).json({ error: 'A record with this value already exists', code: 'CONFLICT' });
       return;
     }
-    if (err.code === 'P2025') {
+    if (known.code === 'P2025') {
       res.status(404).json({ error: 'Record not found', code: 'NOT_FOUND' });
       return;
     }
     // P2021: table missing, P2010/P2022: raw query / column errors that usually
-    // mean the schema hasn't been applied to this datasource. Report as an
+    // mean the schema hasn't been applied to this datasource. P2024: pool timeout —
+    // what a store on a distant link produces once RTT eats the pool. Report as an
     // upstream/service problem rather than an opaque 500.
-    if (err.code === 'P2021' || err.code === 'P2010' || err.code === 'P2022') {
+    if (known.code === 'P2021' || known.code === 'P2010' || known.code === 'P2022' || known.code === 'P2024') {
       res.status(503).json({ error: 'A required data store is unavailable', code: 'DATABASE_UNAVAILABLE' });
       return;
     }
@@ -30,7 +41,7 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
   // Can't reach a database server (e.g. an unreachable ticketing store). This is
   // a transient infrastructure outage, not a bug in the request — a 503 lets
   // clients back off instead of surfacing a generic 500 error page.
-  if (err instanceof Prisma.PrismaClientInitializationError) {
+  if (prismaError(err, 'PrismaClientInitializationError')) {
     res.status(503).json({ error: 'A required data store is unavailable', code: 'DATABASE_UNAVAILABLE' });
     return;
   }
