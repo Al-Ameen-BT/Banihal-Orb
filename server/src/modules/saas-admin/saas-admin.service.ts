@@ -772,6 +772,8 @@ export async function inviteStaff(input: InviteStaffInput, administratorId: stri
       platformRoleId: input.platformRoleId,
       passwordHash,
       passwordFingerprint: passwordFingerprint(tempPassword),
+      // Pre-verified for the same reason as the org invite in users.service.ts.
+      emailVerifiedAt: new Date(),
       customerId: inviter.customerId,
     },
     select: sadminSelect,

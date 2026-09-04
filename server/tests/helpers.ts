@@ -60,9 +60,16 @@ export async function loginAs(email: string, password = 'TestPassword1!') {
   return cookies;
 }
 
+/**
+ * Register an organization and return a logged-in session for its ORG_ADMIN.
+ *
+ * Registration deliberately no longer returns session cookies — signing up used
+ * to BE a login, which left the email-verification gate with nothing to guard
+ * (auth.service.register). So the flow is three steps now, and the middle one is
+ * short-circuited here: callers just need a usable session. A test OF the
+ * verification flow should register and redeem the real token instead.
+ */
 export async function registerAndLogin(orgName: string, email: string) {
-  // Registration already sets session cookies; a second cookie-less login would
-  // now be blocked by single-session enforcement (409 SESSION_ACTIVE).
   const res = await request(app).post('/api/auth/register').send({
     name: 'Test User',
     email,
@@ -70,7 +77,14 @@ export async function registerAndLogin(orgName: string, email: string) {
     organizationName: orgName,
     contactNumber: '+1-555-0000',
   });
-  return res.headers['set-cookie'] as string[];
+  if (res.status !== 201) throw new Error(`register failed (${res.status}): ${JSON.stringify(res.body)}`);
+  await verifyUser(email);
+  return loginAs(email);
+}
+
+/** Mark an account's email confirmed, the way redeeming the link would. */
+export async function verifyUser(email: string): Promise<void> {
+  await prisma.user.update({ where: { email }, data: { emailVerifiedAt: new Date() } });
 }
 
 /**
@@ -79,12 +93,35 @@ export async function registerAndLogin(orgName: string, email: string) {
  * b2b_saas database was once emptied by a test run — the database name has to
  * end in `_test` or nothing runs.
  */
+const dbName = (url: string): string => url.split('/').pop()?.split('?')[0] ?? '';
+const isTestDb = (url: string | undefined): boolean => Boolean(url) && dbName(url!).endsWith('_test');
+
 function assertTestDatabase(): void {
   const url = process.env.DATABASE_URL ?? '';
-  const name = url.split('/').pop()?.split('?')[0] ?? '';
-  if (!name.endsWith('_test')) {
-    throw new Error(`Refusing to run destructive tests against "${name || url}" — point DATABASE_URL at a *_test database.`);
+  if (!isTestDb(url)) {
+    throw new Error(`Refusing to run destructive tests against "${dbName(url) || url}" — point DATABASE_URL at a *_test database.`);
   }
+}
+
+/**
+ * The ticket stores live in their OWN databases and assertTestDatabase above does
+ * not cover them — it only ever guarded DATABASE_URL. A test that writes a real
+ * ticket (the first-wins claim) would otherwise land in whatever `.env` points at,
+ * which in a normal checkout is the DEV store.
+ *
+ * Returns false rather than throwing so such a test can SKIP with a reason instead
+ * of failing a suite that has no ticket database configured at all.
+ */
+export function ticketTestDbReady(): boolean {
+  return isTestDb(process.env['ADMIN_TICKETING_DATABASE_URL']) && isTestDb(process.env['TICKET_DATABASE_URL']);
+}
+
+/** Names the misconfigured URL, so a skipped ticket test says WHY it skipped. */
+export function ticketDbSkipReason(): string {
+  const bad = (['ADMIN_TICKETING_DATABASE_URL', 'TICKET_DATABASE_URL'] as const)
+    .filter((k) => !isTestDb(process.env[k]))
+    .map((k) => `${k}=${dbName(process.env[k] ?? '') || '(unset)'}`);
+  return `needs a *_test ticket store — ${bad.join(', ')}`;
 }
 
 export async function cleanDb() {

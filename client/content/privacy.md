@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Welcome to the website (the "Site") of Banihal Technologies LLP ("Banihal Technologies LLP," "we," "us," or "our"). Banihal Technologies LLP is a technology services and cybersecurity solutions provider specializing in network security, IT infrastructure, cloud services, compliance management, disaster recovery, data protection, and enterprise cybersecurity solutions. Through our website, consulting services, managed solutions, and related offerings (collectively, the "Services"), we help organizations strengthen their security posture, improve operational resilience, and navigate digital transformation securely.
+Welcome to the website ("orb.banihal.in") of Banihal Technologies LLP ("Banihal Technologies LLP," "we," "us," or "our"). Banihal Technologies LLP is a technology services and cybersecurity solutions provider specializing in network security, IT infrastructure, cloud services, compliance management, disaster recovery, data protection, and enterprise cybersecurity solutions. Through our website, consulting services, managed solutions, and related offerings (collectively, the "Services"), we help organizations strengthen their security posture, improve operational resilience, and navigate digital transformation securely.
 
 This Privacy Policy explains what personal information we collect, how we use and share that information, and your choices concerning our information practices.
 

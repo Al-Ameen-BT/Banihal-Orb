@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { RegisterSchema, RegisterUserSchema, LoginSchema, ForgotPasswordSchema, ResetPasswordSchema, VerifyMfaSchema, ResendMfaSchema } from './auth.schema';
+import { RegisterSchema, RegisterUserSchema, LoginSchema, ForgotPasswordSchema, ResetPasswordSchema, VerifyMfaSchema, ResendMfaSchema, VerifyEmailSchema, ResendVerificationSchema } from './auth.schema';
 import * as authService from './auth.service';
 import { env } from '../../config/env';
 
@@ -38,12 +38,19 @@ function setTokenCookies(res: Response, tokens: { accessToken: string; refreshTo
   res.cookie('hasSession', '1', { ...COOKIE_OPTS, maxAge: REFRESH_MAX_AGE_MS, path: '/' });
 }
 
+// Neither register handler sets session cookies any more. Registration used to
+// return a live session, which made signing up its own login and left the
+// email-verification gate with nothing to guard. Both now answer with the masked
+// address the confirmation link went to.
 export async function register(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const input = RegisterSchema.parse(req.body);
-    const tokens = await authService.register(input);
-    setTokenCookies(res, tokens);
-    res.status(201).json({ message: 'Registration successful' });
+    const result = await authService.register(input);
+    res.status(201).json({
+      message: 'Registration successful. Check your email to confirm your address.',
+      email: maskEmail(result.email),
+      emailSent: result.emailSent,
+    });
   } catch (err) {
     next(err);
   }
@@ -52,9 +59,35 @@ export async function register(req: Request, res: Response, next: NextFunction):
 export async function registerUser(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const input = RegisterUserSchema.parse(req.body);
-    const tokens = await authService.registerUser(input);
-    setTokenCookies(res, tokens);
-    res.status(201).json({ message: 'Registration successful' });
+    const result = await authService.registerUser(input);
+    res.status(201).json({
+      message: 'Registration successful. Check your email to confirm your address.',
+      email: maskEmail(result.email),
+      emailSent: result.emailSent,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function verifyEmail(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { token } = VerifyEmailSchema.parse(req.body);
+    const { email } = await authService.verifyEmail(token);
+    res.json({ message: 'Email confirmed. You can sign in now.', email: maskEmail(email) });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Always the same response, whether or not the address is registered or already
+// confirmed — the same anti-enumeration rule forgotPassword follows. The one
+// exception is the 429 cooldown, which only a real pending account can trigger.
+export async function resendVerification(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { email } = ResendVerificationSchema.parse(req.body);
+    await authService.resendEmailVerification(email);
+    res.json({ message: 'If that address needs confirming, a new link is on its way.' });
   } catch (err) {
     next(err);
   }

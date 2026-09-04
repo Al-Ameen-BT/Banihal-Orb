@@ -6,6 +6,7 @@ import { prisma } from './config/database';
 import { chatPrisma } from './config/chatDatabase';
 import { ticketingPrisma } from './config/ticketingDatabase';
 import { slackManager } from './modules/slack-bots/slackManager';
+import { isPushConfigured } from './lib/webpush';
 
 const PORT = env.PORT;
 
@@ -17,6 +18,13 @@ async function main() {
   console.log('✅ Chat database connected (b2b_chat)');
   await ticketingPrisma.$connect();
   console.log('✅ Ticketing database connected (b2b_ticketing)');
+
+  // Push degrades silently by design (an assignment must never fail because a
+  // notification could not be sent), so an unconfigured deploy is otherwise
+  // invisible — it looks exactly like "nobody has enabled notifications".
+  if (!isPushConfigured()) {
+    console.warn('⚠️  Web Push disabled: VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY are not set');
+  }
 
   app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT} [${env.NODE_ENV}]`);

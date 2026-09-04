@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
-import { cleanDb, app, request } from './helpers';
+import { cleanDb, app, request, verifyUser, registerAndLogin } from './helpers';
 import { prisma } from '../src/config/database';
 
 const TEST_USER = {
@@ -14,9 +14,26 @@ describe('Auth flow', () => {
   beforeEach(cleanDb);
   afterAll(async () => { await prisma.$disconnect(); });
 
-  it('registers successfully and returns HttpOnly cookies', async () => {
+  it('registers WITHOUT establishing a session — the email must be confirmed first', async () => {
     const res = await request(app).post('/api/auth/register').send(TEST_USER);
     expect(res.status).toBe(201);
+    // Registration used to return session cookies, which made signing up its own
+    // login and left the verification gate guarding nothing.
+    const cookies = (res.headers['set-cookie'] ?? []) as string[];
+    expect(cookies.some((c: string) => c.startsWith('accessToken='))).toBe(false);
+
+    // And the unconfirmed account cannot log in.
+    const denied = await request(app).post('/api/auth/login').send({ email: TEST_USER.email, password: TEST_USER.password });
+    expect(denied.status).toBe(403);
+    expect(denied.body.code).toBe('EMAIL_NOT_VERIFIED');
+  });
+
+  it('issues HttpOnly cookies once the email is confirmed', async () => {
+    await request(app).post('/api/auth/register').send(TEST_USER);
+    await verifyUser(TEST_USER.email);
+
+    const res = await request(app).post('/api/auth/login').send({ email: TEST_USER.email, password: TEST_USER.password });
+    expect(res.status).toBe(200);
     const cookies = res.headers['set-cookie'] as string[];
     expect(cookies.some((c: string) => c.startsWith('accessToken='))).toBe(true);
     expect(cookies.some((c: string) => c.includes('HttpOnly'))).toBe(true);
@@ -35,10 +52,8 @@ describe('Auth flow', () => {
   });
 
   it('rotates refresh token on each use', async () => {
-    // Use the registration session directly — a cookie-less second login is now
-    // blocked by single-session enforcement.
-    const regRes = await request(app).post('/api/auth/register').send(TEST_USER);
-    const cookies1 = regRes.headers['set-cookie'] as string[];
+    // Register, confirm, then log in — registration no longer returns a session.
+    const cookies1 = await registerAndLogin(TEST_USER.organizationName, TEST_USER.email);
 
     const refresh1 = await request(app).post('/api/auth/refresh').set('Cookie', cookies1);
     expect(refresh1.status).toBe(200);

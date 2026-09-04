@@ -8,10 +8,9 @@ import {
   enablePush,
   disablePush,
   syncSubscription,
+  vapidPublicKey,
   type PushPermission,
 } from '@/lib/push-client';
-
-const VAPID_PUBLIC_KEY = process.env['NEXT_PUBLIC_VAPID_PUBLIC_KEY'] ?? '';
 
 // Desktop Web Push toggle. Covers the four states — unsupported / default /
 // granted / denied — and requests permission ONLY inside the click handler.
@@ -26,9 +25,11 @@ export default function EnablePushButton() {
   useEffect(() => {
     setPermission(getPermission());
     setReady(true);
-    if (isPushSupported() && Notification.permission === 'granted') {
-      void syncSubscription(VAPID_PUBLIC_KEY);
-    }
+    if (!isPushSupported()) return;
+    // Warm the memoized key fetch now, so the click handler below doesn't spend
+    // a round-trip between granting permission and subscribing.
+    void vapidPublicKey();
+    if (Notification.permission === 'granted') void syncSubscription();
   }, []);
 
   const onEnable = useCallback(async () => {
@@ -36,7 +37,7 @@ export default function EnablePushButton() {
     setBusy(true);
     try {
       // Permission is requested inside this user-gesture handler (via enablePush).
-      const res = await enablePush(VAPID_PUBLIC_KEY);
+      const res = await enablePush();
       setPermission(getPermission());
       if (!res.ok) {
         if (res.reason === 'denied') setError('Notifications are blocked. Enable them in your browser settings.');

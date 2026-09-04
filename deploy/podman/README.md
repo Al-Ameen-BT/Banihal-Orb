@@ -129,7 +129,7 @@ prompts for nothing and regenerates nothing.
 
 | It generates | It derives | It asks for |
 |---|---|---|
-| `POSTGRES_PASSWORD`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `IMPERSONATION_SECRET`, `SLACK_TOKEN_SECRET`, `PASSWORD_PEPPER`, the VAPID pair | the five `*_DATABASE_URL`, `REDIS_URL`, `TRUST_PROXY`, `COOKIE_SECURE`, `UPLOAD_DIR`, `NEXT_PUBLIC_*` | `FRONTEND_URL`, `ADMIN_DOMAINS`, `SMTP_*` |
+| `POSTGRES_PASSWORD`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `IMPERSONATION_SECRET`, `SLACK_TOKEN_SECRET`, `PASSWORD_PEPPER`, the VAPID pair (server-side only) | the five `*_DATABASE_URL`, `REDIS_URL`, `TRUST_PROXY`, `COOKIE_SECURE`, `UPLOAD_DIR`, `NEXT_PUBLIC_API_URL` | `FRONTEND_URL`, `ADMIN_DOMAINS`, `SMTP_*` |
 
 Non-interactive (CI, or a re-run on a fresh host):
 
@@ -171,6 +171,12 @@ anyone who sends one.
 They are inlined into the browser bundle by `next build`. `build.sh` passes them
 as build args. Setting one in a Quadlet unit does nothing — the server process
 reads it and the browser code never sees it. **To change one, rebuild.**
+
+`NEXT_PUBLIC_API_URL` is now the only one. The VAPID public key used to be here
+too, and that is exactly why push broke: the key baked into the web image drifted
+from the pair in `server.env` with nothing able to detect it. The browser fetches
+it from `/api/push/vapid-public-key` at runtime instead, so a key rotation needs
+no web rebuild.
 
 Because everything is served from one origin behind nginx, `NEXT_PUBLIC_API_URL`
 is the site's own `https://` address. That keeps the auth cookie first-party and

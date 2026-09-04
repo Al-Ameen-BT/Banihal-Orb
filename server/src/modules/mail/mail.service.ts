@@ -328,3 +328,78 @@ export async function sendInviteEmail(
     return false;
   }
 }
+
+// ─── Email verification ──────────────────────────────────────────────────────
+// Sent at self-registration to prove the mailbox belongs to whoever signed up.
+// Not sent for admin-created accounts: those already receive a temporary password
+// at that address (buildInviteEmail above), and are created pre-verified.
+export function buildVerificationEmail(
+  to: string,
+  verifyLink: string,
+  ttlHours: number,
+): { subject: string; html: string; text: string } {
+  const bodyHtml = `
+    <h1 style="margin:0 0 8px;font-size:20px;font-weight:700;color:${INK};">Confirm your email address</h1>
+    <p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:${MUTED};">
+      An account was created with this email address. Confirm it to activate the account and sign in. This link expires in <strong>${ttlHours} hours</strong> and can be used once.
+    </p>
+
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 16px;">
+      <tr><td align="center">
+        <a href="${verifyLink}" style="display:inline-block;padding:13px 30px;background:${BRAND_COLOR};color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;border-radius:10px;">Confirm email address</a>
+      </td></tr>
+    </table>
+    <p style="margin:0 0 24px;font-size:12px;line-height:1.6;color:${FAINT};word-break:break-all;">
+      Or paste this link into your browser:<br /><span style="color:${MUTED};">${verifyLink}</span>
+    </p>
+
+    ${noticeBox([
+      `<strong>If you did not create this account,</strong> ignore this email. Without this confirmation the account cannot be used to sign in, and it grants access to nothing.`,
+      `${BRAND_NAME} will never ask you for your password or this link by phone, email, text, or chat.`,
+      `Never share or forward this email; the link confirms ownership of this address.`,
+    ])}`;
+
+  const text = [
+    `${BRAND_NAME} — confirm your email address`,
+    ``,
+    `An account was created with this email address. Confirm it to activate the`,
+    `account and sign in (valid for ${ttlHours} hours, single-use):`,
+    ``,
+    verifyLink,
+    ``,
+    `SECURITY NOTICE`,
+    `- If you did not create this account, ignore this email. Unconfirmed, it cannot sign in.`,
+    `- ${BRAND_NAME} will never ask you for your password or this link.`,
+    `- Never share or forward this email.`,
+    textFooter(to),
+  ].join('\n');
+
+  return { subject: `Confirm your ${BRAND_NAME} email address`, html: emailShell({ bodyHtml, to }), text };
+}
+
+/**
+ * Send the verification link. REPORTS delivery rather than swallowing the failure,
+ * for the same reason sendInviteEmail does: login is gated on this email arriving,
+ * so a silent SMTP failure would leave an account that can never be signed in to.
+ * The caller surfaces the result so the UI can offer "resend" immediately.
+ */
+export async function sendVerificationEmail(to: string, verifyLink: string, ttlHours: number): Promise<boolean> {
+  const { subject, html, text } = buildVerificationEmail(to, verifyLink, ttlHours);
+
+  if (!isSmtpConfigured()) {
+    console.log(`\n=============================================`);
+    console.log(`[Email Mock - SMTP Not Configured] Email verification link for ${to}:`);
+    console.log(`${verifyLink}`);
+    console.log(`=============================================\n`);
+    return false;
+  }
+
+  try {
+    await transporter.sendMail({ from: `"${BRAND_NAME} Security" <${env.MAIL_FROM}>`, to, subject, html, text });
+    console.log(`Verification email sent to ${to}`);
+    return true;
+  } catch (error) {
+    console.error('Error sending verification email:', error);
+    return false;
+  }
+}

@@ -55,3 +55,14 @@ export const VerifyMfaSchema = z.object({
 export const ResendMfaSchema = z.object({
   challengeId: z.string().min(1, 'Challenge is required'),
 });
+
+// Email verification: redeem the link, or ask for a fresh one.
+export const VerifyEmailSchema = z.object({
+  token: z.string().min(1, 'Token is required'),
+});
+export type VerifyEmailInput = z.infer<typeof VerifyEmailSchema>;
+
+export const ResendVerificationSchema = z.object({
+  email: z.string().email('Invalid email address'),
+});
+export type ResendVerificationInput = z.infer<typeof ResendVerificationSchema>;

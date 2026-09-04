@@ -12,6 +12,14 @@ import type { RegisterInput, RegisterUserInput, LoginInput, ForgotPasswordInput,
 
 const BCRYPT_ROUNDS = 12;
 
+// What self-registration returns now that it no longer issues a session.
+// `emailSent` is false when SMTP is unconfigured or the send failed, so the UI
+// can point at "resend" instead of silently stranding the account.
+export interface RegistrationResult {
+  email: string;
+  emailSent: boolean;
+}
+
 interface TokenPair {
   accessToken: string;
   refreshToken: string;
@@ -95,7 +103,7 @@ async function administrationRoleId(): Promise<string | null> {
   return row?.id ?? null;
 }
 
-export async function register(input: RegisterInput): Promise<TokenPair> {
+export async function register(input: RegisterInput): Promise<RegistrationResult> {
   await assertPasswordNotReused(input.password);
   const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
   const slug = generateSlug(input.organizationName);
@@ -151,15 +159,16 @@ export async function register(input: RegisterInput): Promise<TokenPair> {
     },
   }).catch(() => {});
 
-  const sessionId = newSessionId();
-  const accessToken = signAccessToken(user.id, customer.id, user.role, sessionId);
-  const refreshToken = await createRefreshToken(user.id, sessionId);
-  return { accessToken, refreshToken };
+  // Deliberately NO session here. Registration used to return tokens, which meant
+  // signing up was itself a login — the account was usable on an address nobody
+  // had proven. The caller is sent to /login and must confirm the email first.
+  const emailSent = await issueEmailVerification(user.id, user.email);
+  return { email: user.email, emailSent };
 }
 
 // Self-registration for a member joining an existing organization. The org is
 // resolved from the work-email domain — no organization name is collected.
-export async function registerUser(input: RegisterUserInput): Promise<TokenPair> {
+export async function registerUser(input: RegisterUserInput): Promise<RegistrationResult> {
   const existing = await prisma.user.findUnique({ where: { email: input.email } });
   if (existing) {
     throw Object.assign(new Error('Email already registered'), { status: 409, code: 'EMAIL_EXISTS' });
@@ -223,10 +232,9 @@ export async function registerUser(input: RegisterUserInput): Promise<TokenPair>
     },
   }).catch(() => {});
 
-  const sessionId = newSessionId();
-  const accessToken = signAccessToken(user.id, customer.id, user.role, sessionId);
-  const refreshToken = await createRefreshToken(user.id, sessionId);
-  return { accessToken, refreshToken };
+  // No session — see the note in register(). Confirm the address, then sign in.
+  const emailSent = await issueEmailVerification(user.id, user.email);
+  return { email: user.email, emailSent };
 }
 
 // Identity of the session the login request itself was made under (parsed from
@@ -328,6 +336,99 @@ export interface MfaChallenge {
 export const TRUSTED_DEVICE_DAYS = 7;
 const sha256 = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
 
+// ─── Email verification ──────────────────────────────────────────────────────
+// Self-registration proves nothing about the mailbox, and MFA is opt-in
+// (User.mfaEnabled defaults false), so without this an account could be created
+// AND used on an address the signer-up does not own. Admin-invited accounts are
+// created pre-verified: the administrator chose the address and a temporary
+// password is mailed to it, so the invite email is already the proof.
+export const EMAIL_VERIFICATION_TTL_HOURS = 24;
+export const VERIFICATION_RESEND_COOLDOWN_SECONDS = 60;
+
+/**
+ * Issue (or re-issue) a verification link. Returns whether the email actually
+ * went out, so the caller can tell the user to use "resend" instead of leaving
+ * them at an account they can never sign in to.
+ *
+ * The token is 32 CSPRNG bytes stored SHA-256 hashed — not bcrypt like
+ * PasswordResetToken. A KDF buys nothing on a full-entropy random token, and
+ * bcrypt's per-row salt would force the same scan-every-token compare loop
+ * resetPassword does; the unique index on tokenHash makes redemption O(1).
+ */
+export async function issueEmailVerification(userId: string, email: string): Promise<boolean> {
+  // One live token per user: re-issuing invalidates the previous link.
+  await prisma.emailVerificationToken.deleteMany({ where: { userId } }).catch(() => {});
+
+  const raw = crypto.randomBytes(32).toString('hex');
+  await prisma.emailVerificationToken.create({
+    data: {
+      tokenHash: sha256(raw),
+      userId,
+      expiresAt: new Date(Date.now() + EMAIL_VERIFICATION_TTL_HOURS * 60 * 60 * 1000),
+    },
+  });
+
+  const link = `${env.FRONTEND_URL.replace(/\/$/, '')}/verify-email?token=${raw}`;
+  return mailService.sendVerificationEmail(email, link, EMAIL_VERIFICATION_TTL_HOURS);
+}
+
+/** Redeem a verification link. Idempotent: an already-verified account succeeds. */
+export async function verifyEmail(rawToken: string): Promise<{ email: string }> {
+  const row = await prisma.emailVerificationToken.findUnique({
+    where: { tokenHash: sha256(rawToken) },
+    include: { user: { select: { id: true, email: true, customerId: true, emailVerifiedAt: true } } },
+  });
+
+  if (!row || row.expiresAt < new Date()) {
+    throw Object.assign(
+      new Error('This confirmation link is invalid or has expired. Request a new one.'),
+      { status: 400, code: 'VERIFICATION_TOKEN_INVALID' },
+    );
+  }
+
+  if (!row.user.emailVerifiedAt) {
+    await prisma.user.update({ where: { id: row.user.id }, data: { emailVerifiedAt: new Date() } });
+    await prisma.auditLog.create({
+      data: { action: 'EMAIL_VERIFIED', performedById: row.user.id, customerId: row.user.customerId, metadata: { email: row.user.email } },
+    }).catch(() => {});
+  }
+
+  // Burn every token for this user, so the link cannot be replayed.
+  await prisma.emailVerificationToken.deleteMany({ where: { userId: row.user.id } }).catch(() => {});
+  return { email: row.user.email };
+}
+
+/**
+ * Re-send the verification link. Never reveals whether the address is registered
+ * or already verified — the controller returns the same response either way, the
+ * same rule forgotPassword follows.
+ */
+export async function resendEmailVerification(email: string): Promise<void> {
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true, email: true, emailVerifiedAt: true },
+  });
+  if (!user || user.emailVerifiedAt) return; // unknown address, or nothing to do
+
+  // Cooldown, so this endpoint cannot be used to mail-bomb an address.
+  const existing = await prisma.emailVerificationToken.findFirst({
+    where: { userId: user.id },
+    orderBy: { lastSentAt: 'desc' },
+    select: { lastSentAt: true },
+  });
+  if (existing) {
+    const waitMs = existing.lastSentAt.getTime() + VERIFICATION_RESEND_COOLDOWN_SECONDS * 1000 - Date.now();
+    if (waitMs > 0) {
+      throw Object.assign(
+        new Error(`Please wait ${Math.ceil(waitMs / 1000)}s before requesting another email.`),
+        { status: 429, code: 'VERIFICATION_RESEND_COOLDOWN', retryAfter: Math.ceil(waitMs / 1000) },
+      );
+    }
+  }
+
+  await issueEmailVerification(user.id, user.email);
+}
+
 export async function createTrustedDevice(userId: string): Promise<{ cookieValue: string; maxAgeMs: number } | null> {
   // Housekeeping: drop this user's expired device rows.
   await prisma.trustedDevice.deleteMany({ where: { userId, expiresAt: { lt: new Date() } } }).catch(() => {});
@@ -379,12 +480,21 @@ export async function initiateLogin(
 ): Promise<LoginOutcome> {
   const user = await prisma.user.findUnique({
     where: { email: input.email },
-    select: { id: true, email: true, customerId: true, role: true, platformRoleId: true, passwordHash: true, mfaEnabled: true, customer: { select: { mfaRequired: true } } },
+    select: { id: true, email: true, customerId: true, role: true, platformRoleId: true, passwordHash: true, mfaEnabled: true, emailVerifiedAt: true, customer: { select: { mfaRequired: true } } },
   });
   if (!user) throw invalidCredentials();
 
   const valid = await bcrypt.compare(input.password, user.passwordHash);
   if (!valid) throw invalidCredentials();
+
+  // Placed AFTER the password check on purpose: answering this before the password
+  // is verified would turn login into an oracle for which addresses are registered.
+  if (!user.emailVerifiedAt) {
+    throw Object.assign(
+      new Error('Confirm your email address before signing in. Check your inbox for the confirmation link.'),
+      { status: 403, code: 'EMAIL_NOT_VERIFIED' },
+    );
+  }
 
   // The ADMINISTRATOR (provider) role is restricted to the configured provider domain(s).
   if (user.role === 'ADMINISTRATOR' && !isProviderAdminEmail(user.email)) {

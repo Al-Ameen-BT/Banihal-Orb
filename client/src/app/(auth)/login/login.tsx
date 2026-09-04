@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { useAuth } from '@/contexts/AuthContext';
+import { authApi } from '@/lib/api';
 import { LoginSchema } from '@/lib/schemas';
 import GlowButton from '@/components/ui/GlowButton';
 import AmbientBackdrop from '@/components/ui/AmbientBackdrop';
@@ -12,9 +13,14 @@ import BrandLogo from '@/components/ui/BrandLogo';
 
 const RESEND_COOLDOWN = 30;
 
+// Registration no longer signs anyone in — the address has to be confirmed first —
+// so the old "sign in with your new credentials" copy would send people straight
+// into an EMAIL_NOT_VERIFIED wall. `verified=1` is the return trip from that link.
 function RegistrationSuccessBanner() {
   const searchParams = useSearchParams();
-  if (searchParams.get('registered') !== '1') return null;
+  const registered = searchParams.get('registered') === '1';
+  const verified = searchParams.get('verified') === '1';
+  if (!registered && !verified) return null;
   return (
     <motion.div
       initial={{ opacity: 0, y: -4 }}
@@ -24,7 +30,9 @@ function RegistrationSuccessBanner() {
       <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
       </svg>
-      Account created successfully! Sign in with your new credentials.
+      {verified
+        ? 'Email confirmed! Sign in with your credentials.'
+        : 'Account created. Check your email for a confirmation link, then sign in.'}
     </motion.div>
   );
 }
@@ -43,6 +51,8 @@ export default function LoginPage() {
   const [rememberDevice, setRememberDevice] = useState(false);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [unverifiedEmail, setUnverifiedEmail] = useState('');
+  const [resendVerifyNote, setResendVerifyNote] = useState('');
   const [serverError, setServerError] = useState('');
   const [sessionNotice, setSessionNotice] = useState('');
   const [info, setInfo] = useState('');
@@ -58,7 +68,7 @@ export default function LoginPage() {
 
   async function handleCredentials(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setErrors({}); setServerError(''); setSessionNotice('');
+    setErrors({}); setServerError(''); setSessionNotice(''); setUnverifiedEmail(''); setResendVerifyNote('');
 
     const fd = new FormData(e.currentTarget);
     const data = { email: fd.get('email') as string, password: fd.get('password') as string };
@@ -88,7 +98,12 @@ export default function LoginPage() {
       const resp = errData(err);
       const msg = resp.error ?? 'Authentication failed';
       if (resp.code === 'SESSION_ACTIVE') setSessionNotice(msg);
-      else setServerError(msg);
+      else if (resp.code === 'EMAIL_NOT_VERIFIED') {
+        // The password was right; only the mailbox is unconfirmed. Offer the
+        // resend inline rather than leaving them with a dead end.
+        setUnverifiedEmail(result.data.email);
+        setServerError(msg);
+      } else setServerError(msg);
     } finally {
       setLoading(false);
     }
@@ -134,6 +149,18 @@ export default function LoginPage() {
     }
   }
 
+  // Resend the confirmation link for an account that exists but is unverified.
+  // The server answers identically for unknown addresses, so this leaks nothing.
+  async function resendVerification() {
+    setResendVerifyNote('');
+    try {
+      const { data } = await authApi.resendVerification({ email: unverifiedEmail });
+      setResendVerifyNote((data as { message?: string }).message ?? 'A new confirmation link is on its way.');
+    } catch (err: unknown) {
+      setResendVerifyNote(errData(err).error ?? 'Could not send a new link. Please try again shortly.');
+    }
+  }
+
   function backToCredentials() {
     setPhase('credentials'); setCode(''); setServerError(''); setInfo(''); setCooldown(0);
   }
@@ -172,6 +199,19 @@ export default function LoginPage() {
               </svg>
               {serverError}
             </motion.div>
+          )}
+          {unverifiedEmail && (
+            <div className="px-3.5 py-2.5 mb-5 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+              <p className="mb-2">Didn&apos;t get the confirmation email?</p>
+              {resendVerifyNote
+                ? <p className="text-xs">{resendVerifyNote}</p>
+                : (
+                  <button type="button" onClick={resendVerification}
+                    className="text-xs font-semibold text-brand hover:underline cursor-pointer">
+                    Send it again
+                  </button>
+                )}
+            </div>
           )}
           {sessionNotice && (
             <motion.div

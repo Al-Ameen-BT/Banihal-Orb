@@ -19,7 +19,9 @@ interface PlatformMetrics {
   totalOrgs: number; totalUsers: number; totalAdmins: number;
   openRequests: number; criticalRequests: number;
   planBreakdown: Record<string, number>;
-  mrr: number; arr: number;
+  // Optional because the server OMITS both for callers without revenue.view
+  // (saas-admin.controller.getMetrics) — they are absent, not zero.
+  mrr?: number; arr?: number;
   servicesActive: number; servicesExpiring: number; servicesExpired: number;
 }
 interface OrgOverview {
@@ -367,6 +369,7 @@ function timeAgo(iso: string) {
 // removed; org-side request management still lives on its own surface further down.
 
 function AdminDashboard() {
+  const { can } = useAuth();
   const { data: metrics, isLoading: metricsLoading } = useQuery<PlatformMetrics>({
     queryKey: ['admin-metrics'],
     queryFn: () => saasAdminApi.getMetrics().then((r) => r.data as PlatformMetrics),
@@ -407,10 +410,17 @@ function AdminDashboard() {
         {metricsLoading ? (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">{Array.from({ length: 4 }).map((_, i) => <ShimmerCard key={i} />)}</div>
         ) : (
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          // Drop to 3 columns without revenue, matching AdminDashboard's KPI
+          // strip — otherwise the grid leaves a hole where the card was.
+          <div className={`grid grid-cols-2 gap-4 ${can('revenue.view') ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
             <KpiCard title="Administrators"   value={sadmins?.length ?? 0}              tone="rose" />
             <KpiCard title="Client Orgs"      value={metrics?.totalOrgs ?? 0}           tone="brand" />
-            <KpiCard title="Platform ARR"     value={`₹${((metrics?.arr ?? 0) / 1000).toFixed(0)}K`} tone="emerald" />
+            {/* The server now withholds `arr` as well as `mrr` from callers
+                without this permission (saas-admin.controller.getMetrics), so
+                this only hides a value that would already be absent. */}
+            {can('revenue.view') && (
+              <KpiCard title="Platform ARR"   value={`₹${((metrics?.arr ?? 0) / 1000).toFixed(0)}K`} tone="emerald" />
+            )}
             <KpiCard title="Open Requests"    value={metrics?.openRequests ?? 0}        tone="amber"
               subtitle={metrics?.criticalRequests ? `${metrics.criticalRequests} critical` : undefined} />
           </div>

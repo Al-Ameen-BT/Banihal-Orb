@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const PUBLIC_PATHS = ['/login', '/register', '/forgot-password', '/reset-password', '/terms', '/privacy', '/403', '/server-error', '/health'];
+const PUBLIC_PATHS = ['/login', '/register', '/forgot-password', '/reset-password', '/verify-email', '/terms', '/privacy', '/403', '/server-error', '/health'];
 
 // Files that must be reachable without a session. The Web Push service worker is
 // fetched by the browser with no cookies and MUST be served from the origin root.

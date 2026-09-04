@@ -7,7 +7,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import GlowButton from '@/components/ui/GlowButton';
 import {
   Modal, StatusBadge, PriorityBadge, TypeBadge, SlaBar, Avatar, Icons,
-  STATUS_OPTIONS, PRIORITY_OPTIONS, fmtDate, timeAgo, AttachmentGrid, Person,
+  STATUS_OPTIONS, PRIORITY_OPTIONS, fmtDate, timeAgo, AttachmentGrid, Person, ACCEPTED_IMAGE_ACCEPT,
 } from './shared';
 import type { TicketDTO, TicketComment, TicketAttachment, TicketStatus, TicketPriority } from '@/lib/schemas';
 
@@ -154,7 +154,7 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
                     <label className="text-xs text-slate-500 cursor-pointer hover:text-slate-700 inline-flex items-center gap-1">
                       <Icons.paperclip className="w-3.5 h-3.5" />
                       {files?.length ? `${files.length} image(s)` : 'Attach images'}
-                      <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => setFiles(e.target.files)} />
+                      <input type="file" accept={ACCEPTED_IMAGE_ACCEPT} multiple className="hidden" onChange={(e) => setFiles(e.target.files)} />
                     </label>
                     <GlowButton className="ml-auto py-1.5 px-4 text-xs" disabled={!comment.trim() || commentMut.isPending} loading={commentMut.isPending} onClick={() => commentMut.mutate()}>Send</GlowButton>
                   </div>

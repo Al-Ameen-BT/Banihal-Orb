@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import api, { authApi } from '@/lib/api';
 import { notify } from '@/lib/toast-bus';
+import { syncSubscription } from '@/lib/push-client';
 // api used directly for the initial auth check (validateStatus suppresses 401 console errors)
 import type { User } from '@/lib/schemas';
 
@@ -76,6 +77,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Re-POST the browser's push subscription once a session exists. Safari has no
+  // pushsubscriptionchange, and a subscription the server drops on a 410 is never
+  // recreated — previously only /profile did this, so a user who never went back
+  // there silently stopped receiving notifications. No-ops unless permission is
+  // already granted, so it never prompts.
+  useEffect(() => {
+    if (user) void syncSubscription();
+  }, [user]);
 
   // Step 1: exchange credentials for an MFA challenge (a code is emailed) — or,
   // on a trusted device, a completed session (cookies already set).

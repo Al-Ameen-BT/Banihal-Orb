@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll } from 'vitest';
-import { app, request } from './helpers';
+import { app, request, registerAndLogin } from './helpers';
 import { prisma } from '../src/config/database';
 
 describe('Zod input validation', () => {
@@ -25,18 +25,11 @@ describe('Zod input validation', () => {
   });
 
   it('returns 400 for invalid query params on paginated endpoints', async () => {
-    // Register and use the registration session cookies directly — a second
-    // cookie-less login is blocked by single-session enforcement. Unique email
-    // keeps this file independent of DB state (no cleanDb here).
+    // Unique email keeps this file independent of DB state (no cleanDb here).
+    // registerAndLogin does register → confirm email → log in; registration alone
+    // no longer establishes a session.
     const email = `valtest-${Math.random().toString(36).slice(2, 8)}@example.com`;
-    const regRes = await request(app).post('/api/auth/register').send({
-      name: 'Val User',
-      email,
-      password: 'TestPassword1!',
-      organizationName: 'Val Org',
-      contactNumber: '+1-555-0000',
-    });
-    const cookies = regRes.headers['set-cookie'] as string[];
+    const cookies = await registerAndLogin('Val Org', email);
 
     // limit > 100 should fail Zod coercion
     const res = await request(app)

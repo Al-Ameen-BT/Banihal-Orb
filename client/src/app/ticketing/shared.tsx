@@ -457,6 +457,15 @@ const ESCALATE_ADMINS_ID = '__escalate_admins__';
 const MAX_IMAGES = 5;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
+// EXACTLY the server's ALLOWED_TYPES (server/src/modules/ticketing/uploads.ts) —
+// keep the two in step. `image/*` here was wrong in both directions: it let HEIC
+// (every iPhone photo), AVIF, BMP and TIFF through to a 400 UNSUPPORTED_FILE_TYPE,
+// and it offered SVG, which the server excludes on purpose because an SVG is a
+// script-bearing document served back from the app's own origin.
+export const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+export const ACCEPTED_IMAGE_ACCEPT = ACCEPTED_IMAGE_TYPES.join(',');
+const ACCEPTED_IMAGE_LABEL = 'PNG, JPEG, GIF or WebP';
+
 export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: {
   projects: TicketProject[]; onCreated?: () => void; onCancel?: () => void; role?: Role;
 }) {
@@ -498,6 +507,7 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
   const [contactPerson, setContactPerson] = useState('');
   // What the client record already held, so an untouched field never rewrites it.
   const [prefilledContact, setPrefilledContact] = useState('');
+  const [prefilledEmail, setPrefilledEmail] = useState('');
   const [branch, setBranch] = useState('');
   const [onSite, setOnSite] = useState(false);
   const [labelsText, setLabelsText] = useState('');
@@ -530,8 +540,8 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
     const files = Array.from(picked);
     const tooBig = files.find((f) => f.size > MAX_IMAGE_BYTES);
     if (tooBig) { setUploadWarning(`${tooBig.name} is larger than 10 MB.`); return; }
-    const notImage = files.find((f) => !f.type.startsWith('image/'));
-    if (notImage) { setUploadWarning(`${notImage.name} is not an image.`); return; }
+    const notImage = files.find((f) => !ACCEPTED_IMAGE_TYPES.includes(f.type));
+    if (notImage) { setUploadWarning(`${notImage.name} is not a supported image — use ${ACCEPTED_IMAGE_LABEL}.`); return; }
     setUploadWarning(null);
     setImages((prev) => [...prev, ...files].slice(0, MAX_IMAGES));
   }
@@ -557,7 +567,7 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
   function resetForm() {
     setTitle(''); setDescription(''); setProjectId(''); setType('task'); setPriority('medium');
     setStatus('todo'); setAssigneeId(''); setBranch(''); setOnSite(false); setError(null);
-    setCustomerId(''); setClientEmail(''); setContactPerson(''); setPrefilledContact('');
+    setCustomerId(''); setClientEmail(''); setPrefilledEmail(''); setContactPerson(''); setPrefilledContact('');
     setLabelsText('');
     setImages([]); setUploadWarning(null);
     setAssigneeMode('person'); setBotId(''); setBotValues({});
@@ -596,7 +606,12 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
           // Sent even when empty (as null) so the server does NOT fall back to linking
           // the administrator's own organization as the client.
           ...(has('client') ? { customerId: customerId || null } : {}),
-          ...(has('clientEmail') && customerId ? { customerEmail: clientEmail.trim() || null } : {}),
+          // Only when actually EDITED, for the same reason as contactPerson below — plus
+          // one the contact field doesn't have: customerEmail is validated server-side as
+          // an email, so echoing back an address the client record already holds makes the
+          // WHOLE ticket fail with a 400 over a field the administrator never typed in.
+          ...(has('clientEmail') && customerId && clientEmail.trim() !== prefilledEmail.trim()
+            ? { customerEmail: clientEmail.trim() || null } : {}),
           // Only when actually EDITED: contactPerson is stored on the shared Customers
           // row, so echoing back the prefilled value would rewrite the client record on
           // every ticket. ponytail: per-ticket contacts need a contactPerson column on
@@ -605,8 +620,11 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
             ? { contactPerson: contactPerson.trim() || null } : {}),
           ...(has('branch') ? { branch: branch.trim() || null } : {}),
           ...(has('onSite') ? { onSiteSupportRequired: onSite } : {}),
+          // Both caps mirror the server's schema (labels: array(string.max(60)).max(30)).
+          // Only the count was capped here, so a single long label failed the WHOLE
+          // ticket with a 400 — truncate instead of rejecting what the user typed.
           ...(has('labels') && labelsText.trim()
-            ? { labels: labelsText.split(',').map((l) => l.trim()).filter(Boolean).slice(0, 30) } : {}),
+            ? { labels: labelsText.split(',').map((l) => l.trim().slice(0, 60)).filter(Boolean).slice(0, 30) } : {}),
         });
         ticketNumber = (data as TicketDTO).ticketNumber;
         newTicketId = (data as TicketDTO).id;
@@ -631,7 +649,14 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
       onCreated?.();
       setTimeout(() => { setCreatedNo(null); setSentToSlack(false); }, 6000);
     } catch (err) {
-      setError((err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Could not create the ticket. Please try again.');
+      // A Zod rejection carries only "Validation failed" in `error`; WHICH field failed is
+      // in details.fieldErrors. Without this the form reports a 400 nobody — user or
+      // developer reading a screenshot — can act on.
+      const data = (err as { response?: { data?: { error?: string; details?: { fieldErrors?: Record<string, string[]> } } } })?.response?.data;
+      const fields = Object.entries(data?.details?.fieldErrors ?? {}).map(([f, m]) => `${f}: ${m?.[0] ?? 'invalid'}`);
+      setError(fields.length
+        ? `${data?.error ?? 'Validation failed'} — ${fields.join('; ')}`
+        : data?.error ?? 'Could not create the ticket. Please try again.');
     } finally { setSubmitting(false); }
   }
 
@@ -641,10 +666,18 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
         return (
           <div key={f} className={span(f)}>
             <FieldLabel htmlFor="tk-project" required>Project</FieldLabel>
-            <select id="tk-project" value={projectId} onChange={(e) => setProjectId(e.target.value)} className="input">
+            <select id="tk-project" value={projectId} onChange={(e) => setProjectId(e.target.value)} className="input"
+              disabled={projects.length === 0}>
               <option value="">— Select a project —</option>
               {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
+            {/* A project is required, so with none the submit button is inert and
+                nothing is ever sent — which reads as "New Ticket is broken". Say why. */}
+            {projects.length === 0 && (
+              <p className="mt-1.5 text-xs text-amber-600">
+                No projects exist yet. An administrator has to create one before tickets can be raised.
+              </p>
+            )}
           </div>
         );
       case 'type':
@@ -694,6 +727,7 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
                 setCustomerId(id);
                 // Prefill email + contact person from the client record; both stay editable below.
                 setClientEmail(picked?.email ?? '');
+                setPrefilledEmail(picked?.email ?? '');
                 setContactPerson(picked?.contactPerson ?? '');
                 setPrefilledContact(picked?.contactPerson ?? '');
               }}>
@@ -828,7 +862,7 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
             <label className="w-20 h-20 rounded-lg ring-1 ring-dashed ring-slate-300 flex flex-col items-center justify-center gap-1 cursor-pointer text-slate-400 hover:text-brand hover:ring-brand/40 transition-colors">
               <Icons.paperclip className="w-4 h-4" />
               <span className="text-[10px] font-semibold">Add</span>
-              <input type="file" accept="image/*" multiple className="hidden"
+              <input type="file" accept={ACCEPTED_IMAGE_ACCEPT} multiple className="hidden"
                 onChange={(e) => { addImages(e.target.files); e.target.value = ''; }} />
             </label>
           )}

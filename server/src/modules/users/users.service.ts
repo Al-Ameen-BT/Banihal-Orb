@@ -93,6 +93,10 @@ export async function inviteUser(input: InviteUserInput, customerId: string) {
       // Random temp password — no reuse check needed (collision is negligible), but record
       // the fingerprint so the account is covered by the reuse report from day one.
       passwordFingerprint: passwordFingerprint(tempPassword),
+      // Pre-verified: an administrator chose this address and the temporary
+      // password is emailed to it, so the invite already proves delivery. Leaving
+      // it null would gate every invited user out of login.
+      emailVerifiedAt: new Date(),
       customerId,
     },
     select: userSelect,

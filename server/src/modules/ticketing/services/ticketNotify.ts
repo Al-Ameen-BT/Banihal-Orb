@@ -16,18 +16,38 @@ export interface AssignmentNotification {
   actorTicketUserId: string;   // whoever performed the assignment
 }
 
+// Every reason push does not happen used to be a bare `return`, so a
+// misconfigured or mis-keyed deployment was indistinguishable from "nobody has
+// subscribed". These warn once per reason — enough to diagnose from the journal,
+// quiet enough not to flood it on a deployment that simply has push turned off.
+const warned = new Set<string>();
+const warnOnce = (key: string, message: string): void => {
+  if (warned.has(key)) return;
+  warned.add(key);
+  console.warn(`⚠️  Web Push: ${message}`);
+};
+
 export async function notifyTicketAssigned({
   ticket, assigneeTicketUserId, actorTicketUserId,
 }: AssignmentNotification): Promise<void> {
-  if (!isPushConfigured()) return;
+  if (!isPushConfigured()) {
+    warnOnce('unconfigured', 'skipping notifications — VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY are not set');
+    return;
+  }
   if (!assigneeTicketUserId) return;
   // Self-assignment (incl. the administrator claim flow) needs no notification.
   if (assigneeTicketUserId === actorTicketUserId) return;
 
   const recipient = await resolveB2bIdentity(assigneeTicketUserId);
-  if (!recipient) return; // bot or non-bridged ticketing user — nobody to notify
+  if (!recipient) {
+    // A Slack bot, or ticketing staff created natively with no matching B2B
+    // account. Expected for bots; for a person it means the email bridge missed.
+    warnOnce(`unbridged:${assigneeTicketUserId}`,
+      `no B2B account bridged for ticketing user ${assigneeTicketUserId} — ${ticket.ticketNumber} not notified`);
+    return;
+  }
 
-  await sendToUser({
+  const result = await sendToUser({
     userId: recipient.userId,
     tenantId: recipient.tenantId,
     payload: {
@@ -40,6 +60,20 @@ export async function notifyTicketAssigned({
       data: { kind: 'ticket-assigned', ticketId: ticket.id, ticketNumber: ticket.ticketNumber },
     },
   });
+
+  // sendToUser never throws for a per-endpoint failure, so without this a push
+  // service rejecting every device wrote nothing anywhere. A 403 here is the
+  // signature of a VAPID key mismatch — the one failure that looks like success.
+  if (result.failed > 0) {
+    const detail = result.outcomes
+      .filter((o): o is Extract<typeof o, { status: 'error' }> => o.status === 'error')
+      // Host only: the endpoint path is a device capability URL, not for the log.
+      .map((o) => `${new URL(o.endpoint).host} ${o.statusCode ?? '?'} ${o.message}`)
+      .join('; ');
+    console.warn(
+      `⚠️  Web Push: ${result.failed}/${result.total} deliveries failed for ${ticket.ticketNumber} — ${detail}`,
+    );
+  }
 }
 
 // Fire-and-forget wrapper for request paths: never awaited, never throws.

@@ -55,15 +55,18 @@ export async function impersonateUser(req: Request, res: Response, next: NextFun
 
 export async function getMetrics(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { mrr, ...metrics } = await saasAdminService.getPlatformMetrics();
+    // BOTH revenue fields come out. `arr` is the same figure as `mrr` (service:
+    // mrr = arr / 12), so stripping only `mrr` withheld nothing — a staff member
+    // without revenue.view still received the annual number and could divide.
+    const { mrr, arr, ...metrics } = await saasAdminService.getPlatformMetrics();
     // Revenue is field-level authorized, not route-level: Employee and Intern
     // legitimately see the rest of this payload on their dashboard (org count,
-    // open tickets), so the endpoint stays open and only `mrr` is withheld.
+    // open tickets), so the endpoint stays open and only revenue is withheld.
     //
     // Withheld HERE, not just hidden in the UI — the whole /api/saas-admin
     // router is gated by requireRole('ADMINISTRATOR'), which every platform role
     // satisfies, so any staff member can call this endpoint directly.
-    res.json(can(req, 'revenue.view') ? { ...metrics, mrr } : metrics);
+    res.json(can(req, 'revenue.view') ? { ...metrics, mrr, arr } : metrics);
   } catch (err) { next(err); }
 }
 

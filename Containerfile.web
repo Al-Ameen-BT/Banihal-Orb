@@ -22,9 +22,13 @@ WORKDIR /app
 # this wrong is not a startup error: the app builds fine and every API call from
 # the browser fails once deployed.
 ARG NEXT_PUBLIC_API_URL
-ARG NEXT_PUBLIC_VAPID_PUBLIC_KEY
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
-ENV NEXT_PUBLIC_VAPID_PUBLIC_KEY=$NEXT_PUBLIC_VAPID_PUBLIC_KEY
+
+# NOTE: the VAPID public key is deliberately NOT a build arg. It used to be, and
+# that put the public half in this image while the private half lived in
+# server.env — the two drifted and push failed as "not configured" on a server
+# that was configured. The browser now fetches it from /api/push/vapid-public-key
+# at runtime, so rotating the key needs no web rebuild.
 
 COPY client/ ./
 RUN npm run build

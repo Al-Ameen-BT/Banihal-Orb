@@ -173,8 +173,12 @@ Quadlet unit does nothing):
 
 ```bash
 NEXT_PUBLIC_API_URL="https://app.example.com"          # the app's own origin when proxied under /api
-NEXT_PUBLIC_VAPID_PUBLIC_KEY="<same as server VAPID_PUBLIC_KEY>"
 ```
+
+Web Push needs nothing here: the browser fetches the VAPID public key from
+`/api/push/vapid-public-key` at runtime, so only the server's key pair is configured and rotating it
+needs no client rebuild. (It *was* a `NEXT_PUBLIC_*` build arg — which put the public half in the web
+image and the private half in `server.env`, two copies that drifted silently.)
 
 **Containerized secrets** live in `/etc/b2b/{server.env,client.env,postgres.env}`, mode `0600`,
 mounted via `EnvironmentFile=`. They are never baked into an image layer — a layer is readable by
@@ -447,7 +451,9 @@ cutover must be dumped back — keep the cutover window short.
 | "sent to **undefined**" on the verify screen | the `/api` proxy target is unreachable or the API is down |
 | "You're already signed in on another device" | single-session lock; wait `SESSION_INACTIVITY_MINUTES` |
 | MFA code never arrives | SMTP misconfigured, or `MAIL_FROM` not authorized by the SMTP account |
-| Push never arrives | `VAPID_*` unset (503), key mismatch, or not served over HTTPS |
+| New signup can't log in — "Confirm your email address before signing in" | Working as designed: self-registration is gated on the emailed confirmation link. If the mail never arrived, resend it from the login screen or `/verify-email`. With SMTP unconfigured the link is printed to the API log instead (`journalctl -u b2b-api \| grep verification`) |
+| Everyone is locked out after upgrading | `emailVerifiedAt` was added without its backfill. `db/b2b.sql` grandfathers existing accounts, but ONLY on the run that first adds the column — re-run `db:provision`, and if the column already existed unbackfilled: `UPDATE "User" SET "emailVerifiedAt" = "createdAt" WHERE "emailVerifiedAt" IS NULL;` |
+| Push never arrives | check `GET /api/push/vapid-public-key` (signed in) — `configured:false` means `VAPID_*` is unset in `server.env`. Otherwise: not served over HTTPS (service workers need a secure context), or nobody enabled it at `/profile`. `journalctl -u b2b-api \| grep -i push` now names the failure |
 | Admin can't log in | email domain not in `ADMIN_DOMAINS` |
 | `/health` shows a DB `down` | that URL is wrong, or the database isn't created/loaded |
 | `db:provision`: `invalid URI query parameter: "schema"` | a `*_DATABASE_URL` carries `?schema=public`, which `psql` rejects — `provision.sh` strips it; remove it manually on an older copy |

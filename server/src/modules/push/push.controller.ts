@@ -1,12 +1,22 @@
 import { Request, Response, NextFunction } from 'express';
 import { prisma } from '../../config/database';
 import { isPushConfigured } from '../../lib/webpush';
+import { env } from '../../config/env';
 import { SubscribeSchema, UnsubscribeSchema } from './push.schema';
 
-// GET /api/push/vapid-public-key — lets the client fetch the applicationServerKey
-// without hardcoding it. The PUBLIC key only; the private key never leaves the server.
+// GET /api/push/vapid-public-key — the client's ONLY source for the
+// applicationServerKey. It used to be baked into the browser bundle as a
+// NEXT_PUBLIC_* build arg, which meant the public half lived in the web image
+// while the private half lived in the API's env: two copies that drifted with
+// nothing able to detect it. The PUBLIC key only; the private key never leaves
+// the server.
+//
+// The key is withheld unless BOTH halves are present. Handing out a public key
+// whose private half is missing would let a browser subscribe successfully to a
+// server that can never send to it — a dead subscription that looks live.
 export async function getVapidPublicKey(_req: Request, res: Response): Promise<void> {
-  res.json({ publicKey: process.env['VAPID_PUBLIC_KEY'] ?? null, configured: isPushConfigured() });
+  const configured = isPushConfigured();
+  res.json({ publicKey: configured ? env.VAPID_PUBLIC_KEY : null, configured });
 }
 
 // POST /api/push/subscribe — upsert on the unique endpoint. userId + tenantId are

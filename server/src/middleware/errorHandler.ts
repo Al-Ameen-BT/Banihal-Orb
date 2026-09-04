@@ -12,9 +12,16 @@ import { env } from '../config/env';
 const prismaError = (err: unknown, name: string): (Error & { code?: string }) | null =>
   err instanceof Error && err.name === name ? err : null;
 
-export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction): void {
+export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction): void {
   if (err instanceof ZodError) {
-    res.status(400).json({ error: 'Validation failed', code: 'VALIDATION_ERROR', details: err.flatten() });
+    const flat = err.flatten();
+    // FIELD NAMES AND ZOD'S OWN MESSAGES ONLY — never the submitted values, which
+    // are user data. Without this a 400 reported from production ("the New Ticket
+    // form fails") could not be traced to a field at all: the details go to the
+    // client, and the server kept no record of them.
+    console.warn(`⚠️  400 VALIDATION_ERROR ${req.method} ${req.originalUrl}`,
+      JSON.stringify({ ...flat.fieldErrors, ...(flat.formErrors.length ? { _form: flat.formErrors } : {}) }));
+    res.status(400).json({ error: 'Validation failed', code: 'VALIDATION_ERROR', details: flat });
     return;
   }
 

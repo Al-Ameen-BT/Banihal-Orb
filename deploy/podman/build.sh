@@ -274,8 +274,7 @@ podman build -f Containerfile.api -t "localhost/b2b-api:$TAG" -t localhost/b2b-a
 # ─────────────────────────────────────────────────────────────────────────────
 # Generated with the image just built, because `web-push` is already a server
 # dependency and Containerfile.api copies node_modules whole. No npx, no network,
-# no new dependency. This is also why the API image is built BEFORE the web one:
-# the public half is a build ARG for Containerfile.web.
+# no new dependency — which is why this runs after Phase 2.
 echo
 echo "🔑 Phase 3/6 — Web Push (VAPID)"
 if [ -z "$(env_get "$SERVER_ENV" VAPID_PUBLIC_KEY)" ]; then
@@ -293,9 +292,10 @@ if [ -z "$(env_get "$SERVER_ENV" VAPID_PUBLIC_KEY)" ]; then
 else
     echo "   keeping the existing key pair (rotating it unsubscribes every browser)"
 fi
-# The public key must be IDENTICAL on both sides or every push subscription is
-# rejected by the push service.
-env_set "$CLIENT_ENV" NEXT_PUBLIC_VAPID_PUBLIC_KEY "$(env_get "$SERVER_ENV" VAPID_PUBLIC_KEY)"
+# Only the API needs the pair. The browser fetches the public half from
+# /api/push/vapid-public-key at runtime, so there is no second copy to keep in
+# step and no web rebuild after a rotation — which is what used to break push:
+# the key baked into the web image drifted from the one in server.env, silently.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Phase 4 — web image
@@ -314,7 +314,6 @@ echo
 echo "🏗️  Phase 4/6 — building b2b-web:$TAG  (NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL)"
 podman build -f Containerfile.web \
     --build-arg "NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL" \
-    --build-arg "NEXT_PUBLIC_VAPID_PUBLIC_KEY=$(env_get "$CLIENT_ENV" NEXT_PUBLIC_VAPID_PUBLIC_KEY)" \
     -t "localhost/b2b-web:$TAG" -t localhost/b2b-web:latest .
 
 # ─────────────────────────────────────────────────────────────────────────────

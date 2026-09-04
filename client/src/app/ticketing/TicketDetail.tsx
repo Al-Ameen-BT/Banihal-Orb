@@ -9,7 +9,7 @@ import { useConfirm } from '@/components/ui/ConfirmDialog';
 import { useToast } from '@/components/ui/Toast';
 import {
   StatusBadge, PriorityBadge, SlaBadge, TypeBadge, Avatar, Drawer, Icons,
-  STATUS_OPTIONS, PRIORITY_OPTIONS, fmtDate, timeAgo, AttachmentGrid,
+  STATUS_OPTIONS, PRIORITY_OPTIONS, fmtDate, timeAgo, AttachmentGrid, ACCEPTED_IMAGE_ACCEPT,
 } from './shared';
 import type {
   TicketDTO, TicketComment, TicketActivity, TicketAttachment, TicketProject,
@@ -176,7 +176,7 @@ export default function TicketDetail({ ticketId, onClose }: { ticketId: string; 
                   <p className="eyebrow">Attachments ({attData?.attachments.length ?? 0})</p>
                   <label className="text-xs font-semibold text-brand hover:text-brand-700 cursor-pointer">
                     + Add images
-                    <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => { if (e.target.files?.length) uploadMut.mutate(e.target.files); }} />
+                    <input type="file" accept={ACCEPTED_IMAGE_ACCEPT} multiple className="hidden" onChange={(e) => { if (e.target.files?.length) uploadMut.mutate(e.target.files); }} />
                   </label>
                 </div>
                 <AttachmentGrid attachments={attData?.attachments ?? []} />
@@ -204,7 +204,7 @@ export default function TicketDetail({ ticketId, onClose }: { ticketId: string; 
                     <label className="text-xs text-slate-500 cursor-pointer hover:text-slate-700 inline-flex items-center gap-1">
                       <Icons.paperclip className="w-3.5 h-3.5" />
                       {files?.length ? `${files.length} image(s)` : 'Attach images'}
-                      <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => setFiles(e.target.files)} />
+                      <input type="file" accept={ACCEPTED_IMAGE_ACCEPT} multiple className="hidden" onChange={(e) => setFiles(e.target.files)} />
                     </label>
                     <GlowButton className="ml-auto py-1.5 px-4 text-xs" disabled={!comment.trim() || commentMut.isPending} loading={commentMut.isPending} onClick={() => commentMut.mutate()}>Comment</GlowButton>
                   </div>

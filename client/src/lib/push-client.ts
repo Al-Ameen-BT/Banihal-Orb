@@ -5,6 +5,7 @@
 const SW_URL = '/sw.js';
 const SUBSCRIBE_URL = '/api/push/subscribe';   // same-origin; Next rewrite → API
 const UNSUBSCRIBE_URL = '/api/push/unsubscribe';
+const KEY_URL = '/api/push/vapid-public-key';
 
 // Persist the applicationServerKey so the service worker can recover it during a
 // pushsubscriptionchange (kept in sync with sw.js: same DB/store/key).
@@ -42,6 +43,23 @@ export function getPermission(): PushPermission {
   if (!isSecureContext()) return 'insecure-context';
   if (!isPushSupported()) return 'unsupported';
   return Notification.permission; // 'default' | 'granted' | 'denied'
+}
+
+// ─── VAPID public key ────────────────────────────────────────────────────────
+// Fetched from the API at RUNTIME, deliberately — not read from
+// NEXT_PUBLIC_VAPID_PUBLIC_KEY. That value is inlined into the JS bundle at
+// `next build`, which put the public half inside the web image while the private
+// half lives in the API's env file: two places that drift with nothing able to
+// detect it. A web image built without the build arg (or one predating a key
+// rotation) served an empty string, so push failed as "not configured" on a
+// server that was configured. One source of truth, resolved per page load.
+let keyPromise: Promise<string> | null = null;
+export function vapidPublicKey(): Promise<string> {
+  keyPromise ??= fetch(KEY_URL, { credentials: 'include' })
+    .then((r) => (r.ok ? r.json() : { publicKey: null }))
+    .then((j: { publicKey?: string | null }) => j.publicKey ?? '')
+    .catch(() => '');   // offline / 401 — callers degrade via their 'no-key' path
+  return keyPromise;
 }
 
 // ─── applicationServerKey conversion (base64url → Uint8Array) ────────────────
@@ -126,30 +144,33 @@ export interface EnableResult {
   message?: string;
 }
 
-export async function enablePush(vapidPublicKey: string): Promise<EnableResult> {
+export async function enablePush(): Promise<EnableResult> {
   if (!isSecureContext()) return { ok: false, reason: 'insecure-context' };
   if (!isPushSupported()) return { ok: false, reason: 'unsupported' };
-  if (!vapidPublicKey) return { ok: false, reason: 'no-key', message: 'Missing VAPID public key' };
 
   try {
-    // Permission request runs here so the caller can invoke enablePush directly
-    // from the click handler (browsers require a user gesture).
+    // Permission FIRST, then the key. requestPermission() must be reached inside
+    // the caller's click handler, and an await before it costs the user gesture
+    // in Safari — so the network fetch cannot come first.
     const permission = Notification.permission === 'granted'
       ? 'granted'
       : await Notification.requestPermission();
     if (permission !== 'granted') return { ok: false, reason: 'denied' };
 
+    const key = await vapidPublicKey();
+    if (!key) return { ok: false, reason: 'no-key', message: 'Missing VAPID public key' };
+
     const reg = await registerServiceWorker();
     if (!reg) return { ok: false, reason: 'unsupported' };
 
-    const applicationServerKey = urlBase64ToUint8Array(vapidPublicKey) as BufferSource;
+    const applicationServerKey = urlBase64ToUint8Array(key) as BufferSource;
     const existing = await reg.pushManager.getSubscription();
     const sub = existing ?? (await reg.pushManager.subscribe({
       userVisibleOnly: true,             // required on every subscribe
       applicationServerKey,
     }));
 
-    await idbSet(KEY_APP_SERVER_KEY, vapidPublicKey); // let the SW recover it later
+    await idbSet(KEY_APP_SERVER_KEY, key); // let the SW recover it later
     await postSubscription(sub);
     return { ok: true };
   } catch (err) {
@@ -184,19 +205,22 @@ export async function disablePush(): Promise<{ ok: boolean; message?: string }> 
 // Call on app load when permission is already granted: re-POST the current
 // subscription (upsert), or create one if the browser dropped it. Safe to call
 // repeatedly; no-op when unsupported or permission isn't granted.
-export async function syncSubscription(vapidPublicKey: string): Promise<{ ok: boolean; synced: boolean; message?: string }> {
-  if (!isPushSupported() || !vapidPublicKey) return { ok: true, synced: false };
+export async function syncSubscription(): Promise<{ ok: boolean; synced: boolean; message?: string }> {
+  if (!isPushSupported()) return { ok: true, synced: false };
   if (Notification.permission !== 'granted') return { ok: true, synced: false };
 
   try {
+    const key = await vapidPublicKey();
+    if (!key) return { ok: true, synced: false };
+
     const reg = await registerServiceWorker();
     if (!reg) return { ok: true, synced: false };
 
-    const applicationServerKey = urlBase64ToUint8Array(vapidPublicKey) as BufferSource;
+    const applicationServerKey = urlBase64ToUint8Array(key) as BufferSource;
     const sub = (await reg.pushManager.getSubscription())
       ?? (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey }));
 
-    await idbSet(KEY_APP_SERVER_KEY, vapidPublicKey);
+    await idbSet(KEY_APP_SERVER_KEY, key);
     await postSubscription(sub);
     return { ok: true, synced: true };
   } catch (err) {

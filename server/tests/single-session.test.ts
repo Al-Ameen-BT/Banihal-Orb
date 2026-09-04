@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
-import { cleanDb, app, request } from './helpers';
+import { cleanDb, app, request, verifyUser, loginAs } from './helpers';
 import { prisma } from '../src/config/database';
 
 const TEST_USER = {
@@ -11,11 +11,14 @@ const TEST_USER = {
 };
 const CREDS = { email: TEST_USER.email, password: TEST_USER.password };
 
-// Registration creates session A (cookies in the response) — "browser A".
+// "Browser A" — an established session. Registration no longer returns cookies
+// (it does not sign anyone in until the email is confirmed), so browser A is now
+// register → confirm → log in.
 async function registerBrowserA(): Promise<string[]> {
   const res = await request(app).post('/api/auth/register').send(TEST_USER);
   expect(res.status).toBe(201);
-  return res.headers['set-cookie'] as string[];
+  await verifyUser(TEST_USER.email);
+  return loginAs(TEST_USER.email);
 }
 
 describe('Single active session', () => {

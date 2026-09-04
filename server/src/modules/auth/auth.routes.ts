@@ -13,6 +13,8 @@ router.post('/mfa/verify', authController.verifyMfa);
 router.post('/mfa/resend', authController.resendMfa);
 router.post('/refresh', authController.refresh);
 router.post('/logout', authController.logout);
+router.post('/verify-email', authController.verifyEmail);
+router.post('/resend-verification', authController.resendVerification);
 router.post('/forgot-password', authController.forgotPassword);
 router.post('/reset-password', authController.resetPassword);
 

@@ -238,6 +238,21 @@ CREATE TABLE IF NOT EXISTS "EmailVerificationToken" (
 CREATE UNIQUE INDEX IF NOT EXISTS "EmailVerificationToken_tokenHash_key" ON "EmailVerificationToken" ("tokenHash");
 CREATE INDEX        IF NOT EXISTS "EmailVerificationToken_userId_idx"    ON "EmailVerificationToken" ("userId");
 
+-- ─── One-time grandfather for the verification CUTOVER ───────────────────────
+-- The ADD COLUMN backfill further up only fires the run that first creates the
+-- column. On this deployment the column shipped BEFORE the flow did, so every
+-- account self-registered in between sits at NULL — and the login gate
+-- (auth.service.ts initiateLogin) would lock all of them out at cutover.
+--
+-- Guarded on "has no EmailVerificationToken row" rather than a date or a marker
+-- table, which makes it self-limiting and safe to re-run: before the flow existed
+-- no token rows could exist, so every NULL here is a legacy account. Afterwards a
+-- genuinely pending signup always HAS a row (issued at registration, deleted only
+-- on redemption), so this can never silently verify one.
+UPDATE "User" u SET "emailVerifiedAt" = u."createdAt"
+WHERE u."emailVerifiedAt" IS NULL
+  AND NOT EXISTS (SELECT 1 FROM "EmailVerificationToken" t WHERE t."userId" = u."id");
+
 -- ─── EmailMfaChallenge ───────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS "EmailMfaChallenge" (
   "id"         TEXT PRIMARY KEY,
