@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { saasAdminApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
+import { roleBadgeFor, roleTextCls } from '@/lib/display';
 import RoleGuard from '@/components/guards/RoleGuard';
 import Sidebar from '@/components/ui/Sidebar';
 import KpiCard from '@/components/ui/KpiCard';
@@ -369,7 +370,8 @@ function timeAgo(iso: string) {
 // removed; org-side request management still lives on its own surface further down.
 
 function AdminDashboard() {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
+  const roleBadge = roleBadgeFor(user?.platformRole);
   const { data: metrics, isLoading: metricsLoading } = useQuery<PlatformMetrics>({
     queryKey: ['admin-metrics'],
     queryFn: () => saasAdminApi.getMetrics().then((r) => r.data as PlatformMetrics),
@@ -395,8 +397,8 @@ function AdminDashboard() {
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.22 }} className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div className="flex items-center gap-2 mb-1.5">
-            <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse-soft" />
-            <p className="text-sm font-semibold text-rose-600">Administrator · Platform Overview</p>
+            <span className={`w-2 h-2 rounded-full ${roleBadge.dot} animate-pulse-soft`} />
+            <p className={`text-sm font-semibold ${roleTextCls(roleBadge)}`}>{roleBadge.label} · Platform Overview</p>
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">Administrator Dashboard</h1>
           <p className="mt-1 text-sm text-slate-500">

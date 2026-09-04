@@ -62,3 +62,34 @@ export const serviceStatusConfig: Record<string, Badge> = {
   EXPIRED:   { cls: 'text-red-700 bg-red-50',         dot: 'bg-red-500',     label: 'Expired' },
   SUSPENDED: { cls: 'text-slate-600 bg-slate-100',    dot: 'bg-slate-400',   label: 'Suspended' },
 };
+
+// ─── Platform staff roles ────────────────────────────────────────────────────
+// The SECOND role axis. Every platform staff member is `ADMINISTRATOR` on the
+// legacy User.role enum, so colouring by that enum painted Administration,
+// HR Admin, Employee and Intern identically — which is why the sidebar showed
+// the same "ADMINISTRATION" tag to everyone on every page.
+//
+// Keyed on platformRole.KEY, never the display name: names are editable through
+// the roles API and custom roles can be created, so the name is not an identity.
+export const platformRoleBadge: Record<string, Badge> = {
+  administration: { cls: 'text-emerald-700 bg-emerald-50', dot: 'bg-emerald-500', label: 'Administration' },
+  hr_admin:       { cls: 'text-amber-700 bg-amber-50',     dot: 'bg-amber-500',   label: 'HR Admin' },
+  employee:       { cls: 'text-brand-700 bg-brand-50',     dot: 'bg-brand-500',   label: 'Employee' },
+  intern:         { cls: 'text-slate-600 bg-slate-100',    dot: 'bg-slate-400',   label: 'Intern' },
+};
+
+/**
+ * Resolve a platform role to its badge, falling back to neutral slate for roles
+ * created at runtime — carrying the server's own name through, so a custom role
+ * still reads correctly instead of rendering as "Staff" or unstyled.
+ *
+ * Tailwind has no safelist, so every class above is a full literal string; a
+ * built-up `text-${hue}-700` would be purged and the badge would lose its colour.
+ */
+export function roleBadgeFor(role?: { key: string; name: string } | null): Badge {
+  if (!role) return { cls: 'text-slate-600 bg-slate-100', dot: 'bg-slate-400', label: 'Staff' };
+  return platformRoleBadge[role.key] ?? { cls: 'text-slate-600 bg-slate-100', dot: 'bg-slate-400', label: role.name };
+}
+
+/** Just the text colour, for headings that aren't pills (dashboard eyebrows). */
+export const roleTextCls = (b: Badge): string => b.cls.split(' ')[0] ?? 'text-slate-600';

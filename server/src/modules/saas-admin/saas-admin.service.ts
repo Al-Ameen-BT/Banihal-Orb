@@ -705,9 +705,20 @@ export async function updateSadmin(
   input: UpdateSadminInput,
   actorPermissions: Set<PermissionKey>,
 ) {
-  const target = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, customerId: true, role: true, email: true } });
+  const target = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, customerId: true, role: true, email: true, platformRoleId: true } });
   if (!target) throw Object.assign(new Error('User not found'), { status: 404, code: 'NOT_FOUND' });
   if (target.role !== 'ADMINISTRATOR') throw Object.assign(new Error('Target is not an Administrator'), { status: 400, code: 'INVALID_TARGET' });
+
+  // A role change now ends the target's session (below). Applied to yourself that
+  // signs you out instantly, and dropping roles.manage on the way would leave
+  // nobody able to undo it — so refuse, the same way the UI already refuses to
+  // let you remove your own account.
+  if (input.platformRoleId && targetUserId === administratorId) {
+    throw Object.assign(
+      new Error('You cannot change your own platform role. Ask another administrator.'),
+      { status: 400, code: 'SELF_ROLE_CHANGE' },
+    );
+  }
 
   // Reassigning a platform role is a privilege grant: refuse to hand out a role
   // holding keys the caller does not hold themselves. Without this an HR Admin
@@ -732,7 +743,25 @@ export async function updateSadmin(
     },
   });
 
-  return prisma.user.update({ where: { id: targetUserId }, data: input, select: sadminSelect });
+  const updated = await prisma.user.update({ where: { id: targetUserId }, data: input, select: sadminSelect });
+
+  // A changed platform role must not wait for the access token to expire: the
+  // permissions it grants are baked into that JWT's `prid`. Deleting the session
+  // row takes effect on the NEXT request, because authMiddleware re-checks that
+  // the session exists every time — so the old role stops working immediately.
+  //
+  // Scoped to an ACTUAL change, so a name or email edit never signs anyone out.
+  // For a user who is not signed in this deletes nothing and reports false: the
+  // administrator's change simply applies the next time they sign in, with no
+  // interruption and no alert. That is the whole "only interrupt active users"
+  // rule — enforced by there being no session to delete, not by a second check.
+  let sessionEnded = false;
+  if (input.platformRoleId && input.platformRoleId !== target.platformRoleId) {
+    const { count } = await prisma.refreshToken.deleteMany({ where: { userId: targetUserId } });
+    sessionEnded = count > 0;
+  }
+
+  return { ...updated, sessionEnded };
 }
 
 // ─── Staff invitation ────────────────────────────────────────────────────────

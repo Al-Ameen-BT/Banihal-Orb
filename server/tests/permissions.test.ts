@@ -118,6 +118,19 @@ describe('can() — seeded platform roles', () => {
     expect(can(reqAs('ADMINISTRATOR', SEEDED['intern']!), 'revenue.view')).toBe(false);
   });
 
+  it('gives the System Activity workspace to Administration alone', () => {
+    // The cross-tenant audit trail. Split out of platform_audit.view precisely
+    // so HR Admin keeps the staff directory WITHOUT the audit trail — if this
+    // ever flips to true for a seeded role, that split has been undone.
+    expect(can(reqAs('ADMINISTRATOR', [...ALL_PERMISSION_KEYS]), 'system_activity.view')).toBe(true);
+    for (const role of ['hr_admin', 'employee', 'intern'] as const) {
+      expect(can(reqAs('ADMINISTRATOR', SEEDED[role]!), 'system_activity.view'), role).toBe(false);
+      // ...while the key it was split from stays exactly as it was.
+      expect(can(reqAs('ADMINISTRATOR', SEEDED[role]!), 'platform_audit.view'), role)
+        .toBe(SEEDED[role]!.includes('platform_audit.view'));
+    }
+  });
+
   it('all four platform roles reach the isolated ticket store', () => {
     // Employee and Intern exist to work the internal escalation queue. Routing
     // them to the shared customer store would give them a self-only scope there

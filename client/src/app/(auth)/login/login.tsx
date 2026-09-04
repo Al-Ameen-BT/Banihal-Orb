@@ -20,6 +20,24 @@ function RegistrationSuccessBanner() {
   const searchParams = useSearchParams();
   const registered = searchParams.get('registered') === '1';
   const verified = searchParams.get('verified') === '1';
+
+  // Hard-reload fallback for the session-ended dialog: a user whose tab was
+  // closed, or who lands here directly, still gets told why they were signed out.
+  if (searchParams.get('reason') === 'session-ended') {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: -4 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="flex items-start gap-2.5 px-3.5 py-2.5 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800"
+      >
+        <svg className="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 9v3.75m0 3.75h.008M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span>Your session ended because your account was updated. Sign in again to continue.</span>
+      </motion.div>
+    );
+  }
+
   if (!registered && !verified) return null;
   return (
     <motion.div

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
+import { roleBadgeFor } from '@/lib/display';
 import { UserNotifications, OrgNotifications, AdminNotifications } from './NotificationBell';
 import Image from 'next/image';
 import BrandLogo from '@/components/ui/BrandLogo';
@@ -19,6 +20,7 @@ const icons = {
   bots:      'M8.25 3v1.5M15.75 3v1.5M12 6.75a5.25 5.25 0 015.25 5.25v3.75a2.25 2.25 0 01-2.25 2.25H9a2.25 2.25 0 01-2.25-2.25V12A5.25 5.25 0 0112 6.75zM9.75 12h.008v.008H9.75V12zm4.5 0h.008v.008h-.008V12zM4.5 12.75H3.75m16.5 0h-.75M9 18.75V21m6-2.25V21',
   key:       'M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z',
   profile:   'M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.963 0a9 9 0 10-11.963 0m11.963 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0z',
+  activity:  'M2.25 12h3.75l2.25-6 3.75 12 2.25-6h3.75M18 12h3.75',
   logout:    'M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75',
 };
 
@@ -71,9 +73,14 @@ export default function Sidebar() {
     customerServices: can('customer_services.manage'),
     catalog: can('catalog.manage'),
     bots: can('bots.view'),
+    systemActivity: can('system_activity.view'),
   };
   const showPlatform = Object.values(platform).some(Boolean);
   const roleCfg = roleConfig[user?.role ?? ''] ?? roleConfig['USER']!;
+  // Platform staff are ALL 'ADMINISTRATOR' on the legacy enum, so roleCfg paints
+  // every one of them rose. Subdivide by the platform role for staff only;
+  // USER / ORG_ADMIN keep their existing slate / violet.
+  const staffBadge = isStaff ? roleBadgeFor(user?.platformRole) : null;
 
   return (
     <aside className="relative w-60 flex-shrink-0 h-screen flex flex-col bg-white border-r border-slate-200">
@@ -110,6 +117,7 @@ export default function Sidebar() {
             {platform.customerServices && <NavItem href="/saas-admin/services" label="Customer Services" icon={icons.services} active={path === '/saas-admin/services'} />}
             {platform.catalog && <NavItem href="/saas-admin/catalog" label="Service Catalog" icon={icons.catalog} active={path === '/saas-admin/catalog'} />}
             {platform.bots && <NavItem href="/saas-admin/bots" label="Slack Bots" icon={icons.bots} active={path === '/saas-admin/bots'} />}
+            {platform.systemActivity && <NavItem href="/system-activity" label="System Activity" icon={icons.activity} active={path === '/system-activity'} />}
           </>
         )}
 
@@ -120,7 +128,9 @@ export default function Sidebar() {
       {/* User identity + controls */}
       <div className="border-t border-slate-100 p-3 space-y-3">
         <div className="flex items-center gap-2.5 px-2">
-          <div className={`w-8 h-8 rounded-full bg-gradient-to-br ${roleCfg.avatar} flex items-center justify-center text-xs font-bold text-white flex-shrink-0`}>
+          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${
+            staffBadge ? `${staffBadge.cls} ring-1 ring-inset ring-current/20` : `bg-gradient-to-br ${roleCfg.avatar} text-white`
+          }`}>
             {user?.name?.charAt(0) ?? '?'}
           </div>
           <div className="flex-1 min-w-0">
@@ -131,9 +141,9 @@ export default function Sidebar() {
 
         <div className="flex items-center justify-between px-2">
           {user?.role && (
-            <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-[0.08em] ${roleCfg.badge}`}>
+            <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-[0.08em] ${staffBadge?.cls ?? roleCfg.badge}`}>
               <span className="w-1.5 h-1.5 rounded-full bg-current" />
-              {user.platformRole?.name ?? roleCfg.label}
+              {staffBadge?.label ?? roleCfg.label}
             </span>
           )}
           {/* Notifications: admin-store staff → escalations (+claim); org admins →

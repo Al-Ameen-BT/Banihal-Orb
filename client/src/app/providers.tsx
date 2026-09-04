@@ -6,6 +6,7 @@ import { AuthProvider } from '@/contexts/AuthContext';
 import CommandMenu from '@/components/ui/CommandMenu';
 import { ToastProvider } from '@/components/ui/Toast';
 import { ConfirmProvider } from '@/components/ui/ConfirmDialog';
+import SessionEndedProvider from '@/components/ui/SessionEndedDialog';
 
 export default function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(() => new QueryClient({
@@ -17,8 +18,10 @@ export default function Providers({ children }: { children: React.ReactNode }) {
       <AuthProvider>
         <ToastProvider>
           <ConfirmProvider>
-            {children}
-            <CommandMenu />
+            <SessionEndedProvider>
+              {children}
+              <CommandMenu />
+            </SessionEndedProvider>
           </ConfirmProvider>
         </ToastProvider>
       </AuthProvider>

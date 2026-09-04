@@ -6,6 +6,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { usersApi, orgsApi, saasAdminApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
+import { roleBadgeFor } from '@/lib/display';
+import { notify } from '@/lib/toast-bus';
 import RoleGuard from '@/components/guards/RoleGuard';
 import Sidebar from '@/components/ui/Sidebar';
 import DataTable from '@/components/ui/DataTable';
@@ -97,19 +99,6 @@ interface PlatformUser {
   customer: { id: string; name: string; slug: string; domain?: string | null; plan?: string | null };
 }
 interface PlatformRole { id: string; key: string; name: string; description: string | null; system: boolean; permissions: string[] }
-// System-wide audit log (Administrator console)
-interface SystemLogEntry {
-  id: string;
-  action: string;
-  createdAt: string;
-  metadata: Record<string, unknown> | null;
-  performedBy: { id: string; name: string; email: string; role: string };
-  organization: { id: string; name: string; slug: string } | null;
-}
-interface SystemActivityResp { items: SystemLogEntry[]; total: number; page: number; limit: number }
-// Logins classified by organization (compliance / log-analysis summary)
-interface OrgLoginStat { id: string; name: string; slug: string | null; logins: number; users: number; lastLogin: string | null }
-interface LoginsByOrgResp { items: OrgLoginStat[]; totalLogins: number; orgCount: number }
 const ACTION_LABEL: Record<string, { label: string; cls: string; icon: string }> = {
   LOGIN:                               { label: 'Logged in',        cls: 'text-emerald-700 bg-emerald-50', icon: '→' },
   LOGOUT:                              { label: 'Signed out',       cls: 'text-slate-600 bg-slate-100',    icon: '←' },
@@ -123,18 +112,6 @@ const ACTION_LABEL: Record<string, { label: string; cls: string; icon: string }>
   ADMIN_USER_REMOVE:                   { label: 'User removed',     cls: 'text-red-700 bg-red-50',         icon: '🗑' },
   USER_REMOVED:                        { label: 'User removed',     cls: 'text-red-700 bg-red-50',         icon: '🗑' },
 };
-const roleBadgeCls: Record<string, string> = {
-  USER:          'text-slate-600 bg-slate-100',
-  ORG_ADMIN:     'text-violet-700 bg-violet-50',
-  ADMINISTRATOR: 'text-rose-700 bg-rose-50',
-};
-const LOG_ACTION_OPTIONS = [
-  { value: '', label: 'All events' },
-  { value: 'CUSTOMER_CREATED', label: 'Org created' },
-  { value: 'USER_REGISTERED', label: 'User registered' },
-  { value: 'LOGIN', label: 'Login' },
-  { value: 'LOGOUT', label: 'Logout' },
-];
 function timeAgo(iso: string) {
   const diff = (Date.now() - new Date(iso).getTime()) / 1000;
   if (diff < 60)  return `${Math.round(diff)}s ago`;
@@ -215,58 +192,6 @@ export default function UsersPage() {
     refetchInterval: 60_000,
   });
 
-  // ─── System-wide activity log (Administrator audit console) ───────────────
-  const LOG_LIMIT = 50;
-  const [logAction, setLogAction] = useState('');
-  const [logRole, setLogRole]     = useState('');
-  const [logOrg, setLogOrg]       = useState('');
-  const [logFrom, setLogFrom]     = useState('');
-  const [logTo, setLogTo]         = useState('');
-  const [logPage, setLogPage]     = useState(1);
-
-  const { data: orgOptions } = useQuery<{ id: string; name: string }[]>({
-    queryKey: ['org-options'],
-    queryFn: () => saasAdminApi.listOrgs({ limit: 100 }).then((r) => (r.data as { orgs: { id: string; name: string }[] }).orgs),
-    enabled: can('orgs.manage'),
-    staleTime: 60_000,
-  });
-
-  const logParams: Record<string, unknown> = {
-    page: logPage, limit: LOG_LIMIT,
-    ...(logAction ? { action: logAction } : {}),
-    ...(logRole ? { role: logRole } : {}),
-    ...(logOrg ? { orgId: logOrg } : {}),
-    ...(logFrom ? { from: logFrom } : {}),
-    ...(logTo ? { to: logTo } : {}),
-  };
-  const { data: syslog, isLoading: syslogLoading } = useQuery<SystemActivityResp>({
-    queryKey: ['system-activity', logParams],
-    queryFn: () => saasAdminApi.getSystemActivity(logParams).then((r) => r.data as SystemActivityResp),
-    enabled: canAudit,
-    staleTime: 10_000,
-    refetchInterval: 20_000,
-  });
-  // Logins-by-org summary — shares the role + date filters so the classification
-  // matches the detailed log below. Not affected by the org filter (it IS the
-  // per-org breakdown) or the event filter (it always counts LOGINs).
-  const loginStatParams: Record<string, unknown> = {
-    ...(logRole ? { role: logRole } : {}),
-    ...(logFrom ? { from: logFrom } : {}),
-    ...(logTo ? { to: logTo } : {}),
-  };
-  const { data: loginsByOrg, isLoading: loginsByOrgLoading } = useQuery<LoginsByOrgResp>({
-    queryKey: ['logins-by-org', loginStatParams],
-    queryFn: () => saasAdminApi.getLoginsByOrg(loginStatParams).then((r) => r.data as LoginsByOrgResp),
-    enabled: canAudit,
-    staleTime: 15_000,
-    refetchInterval: 30_000,
-  });
-
-  // Any filter change resets to the first page.
-  const onFilter = <T,>(setter: (v: T) => void) => (v: T) => { setter(v); setLogPage(1); };
-  const logTotal = syslog?.total ?? 0;
-  const logPages = Math.max(1, Math.ceil(logTotal / LOG_LIMIT));
-
   const secMutation = useMutation({
     mutationFn: (d: { mfaRequired?: boolean }) => orgsApi.updateSecurity(d),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['org'] }),
@@ -311,7 +236,18 @@ export default function UsersPage() {
   const assignRoleMutation = useMutation({
     mutationFn: ({ id, platformRoleId }: { id: string; platformRoleId: string }) =>
       saasAdminApi.updateSadmin(id, { platformRoleId }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['sadmin-list'] }),
+    // A role change signs the target out so the new permissions apply at once —
+    // but only if they were signed in. Report which actually happened, so the
+    // administrator knows whether they just interrupted someone mid-work.
+    onSuccess: (res) => {
+      const d = res.data as { name?: string; sessionEnded?: boolean };
+      const who = d.name ?? 'They';
+      notify(d.sessionEnded
+        ? `Role updated — ${who} was signed out and must sign in again.`
+        : `Role updated — applies the next time ${who} signs in.`, 'success');
+      void qc.invalidateQueries({ queryKey: ['sadmin-list'] });
+    },
+    onError: (err) => notify((err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Could not update the role.', 'error'),
   });
 
   const userColumns = [
@@ -357,9 +293,22 @@ export default function UsersPage() {
     },
   ];
 
+  // Org-scoped: the signed-in user's OWN organization.
   const userCount  = users?.users.length ?? 0;
   const adminCount = users?.users.filter((u) => u.role === 'ORG_ADMIN').length ?? 0;
   const mfaCount   = users?.users.filter((u) => u.mfaEnabled).length ?? 0;
+
+  // Platform-wide, for the ADMINISTRATOR view. The two sources are disjoint:
+  // listAllOrgUsers excludes ADMINISTRATOR, listSadmins returns only them — so
+  // the total is a plain sum with nothing double-counted.
+  //
+  // null (not 0) when the caller lacks the permission that enables the query.
+  // An Employee holds neither key, and a confident "0 users" would be a lie.
+  const staffCount    = canAudit ? sadmins?.length ?? 0 : null;
+  const orgAdminCount = canManageUsers ? (allUsers ?? []).filter((u) => u.role === 'ORG_ADMIN').length : null;
+  const orgUserCount  = canManageUsers ? (allUsers ?? []).filter((u) => u.role === 'USER').length : null;
+  const totalCount    = staffCount !== null && canManageUsers ? staffCount + (allUsers?.length ?? 0) : null;
+  const shown = (v: number | null) => (v === null ? '—' : v);
 
   return (
     <RoleGuard allowedRoles={['ORG_ADMIN', 'ADMINISTRATOR']}>
@@ -372,20 +321,35 @@ export default function UsersPage() {
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.25 }}>
               <p className="text-sm text-slate-500 mb-1">Identity</p>
               <h1 className="text-2xl font-bold tracking-tight text-slate-900">Users</h1>
-              {org && (
+              {/* The platform view counts every organization, so naming only the
+                  provider's own org here would misdescribe the tiles below it. */}
+              {isPlatformAdmin ? (
+                <p className="mt-1 text-sm text-slate-500">Every account on the platform — provider staff and client organizations</p>
+              ) : org && (
                 <p className="mt-1 text-sm text-slate-500">
                   Manage team members in <span className="font-semibold text-slate-700">{org.name}</span>
                 </p>
               )}
             </motion.div>
 
-            {/* Summary tiles */}
+            {/* Summary tiles. Platform staff get PLATFORM-WIDE counts — the
+                org-scoped set below would have shown them only their own
+                provider organization, which reads as the whole platform. */}
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.04 }}>
-              <div className="grid grid-cols-3 gap-4">
-                <SummaryTile label="Total Members"   value={userCount}  tone="brand" />
-                <SummaryTile label="Org Admins"      value={adminCount} tone="violet" />
-                <SummaryTile label="MFA Enabled"     value={mfaCount}   tone="emerald" />
-              </div>
+              {isPlatformAdmin ? (
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                  <SummaryTile label="Platform Staff" value={shown(staffCount)}    tone="brand"   hint="Provider-side accounts" />
+                  <SummaryTile label="Org Admins"     value={shown(orgAdminCount)} tone="violet"  hint="Across every client org" />
+                  <SummaryTile label="Org Users"      value={shown(orgUserCount)}  tone="emerald" hint="Across every client org" />
+                  <SummaryTile label="Total Users"    value={shown(totalCount)}    tone="amber"   hint="Everyone on the platform" />
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 gap-4">
+                  <SummaryTile label="Total Members"   value={userCount}  tone="brand" />
+                  <SummaryTile label="Org Admins"      value={adminCount} tone="violet" />
+                  <SummaryTile label="MFA Enabled"     value={mfaCount}   tone="emerald" />
+                </div>
+              )}
             </motion.div>
 
             {/* Security Settings */}
@@ -400,7 +364,12 @@ export default function UsersPage() {
               </motion.div>
             )}
 
-            {/* Invite */}
+            {/* Invite — ORG_ADMIN only. This form adds someone to the CALLER'S
+                organization (POST /users/invite is tenant-scoped), so on the
+                platform side it read as "invite a platform user" while actually
+                creating an account inside the provider's own org. Platform staff
+                are invited through "Invite Platform Staff" below instead. */}
+            {!isPlatformAdmin && (
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.1 }}>
               <h2 className="text-base font-semibold text-slate-900 mb-4">Invite Member</h2>
               <div className="card p-5">
@@ -441,6 +410,7 @@ export default function UsersPage() {
                 })()}
               </div>
             </motion.div>
+            )}
 
             {/* Team Members - For Org Admins */}
             {!isPlatformAdmin && (
@@ -565,30 +535,62 @@ export default function UsersPage() {
                                     </div>
                                     <p className="text-xs text-slate-400 truncate">{u.email}</p>
                                   </div>
-                                  <div className="text-right flex-shrink-0">
-                                    <p className="text-xs font-mono text-slate-500">{lastLogin}</p>
-                                    <p className="text-[10px] text-slate-400 truncate max-w-[150px]" title={u.customer.name}>{u.customer.name}</p>
+                                  {/* Actions. The role control used to be a 10px
+                                      unlabelled <select> stacked under the org
+                                      name — it read as metadata, not as the
+                                      permission-granting control it is. */}
+                                  <div className="flex items-center gap-4 flex-shrink-0">
+                                    <div className="text-right hidden sm:block">
+                                      <p className="text-xs font-mono text-slate-500">{lastLogin}</p>
+                                      <p className="text-[11px] text-slate-400 truncate max-w-[140px]" title={u.customer.name}>{u.customer.name}</p>
+                                    </div>
+
                                     {u.role === 'ADMINISTRATOR' && (
-                                      canManageUsers && platformRoles ? (
-                                        <select
-                                          className="mt-1 text-[10px] border border-slate-200 rounded px-1 py-0.5 bg-white"
-                                          value={u.platformRole?.id ?? ''}
-                                          disabled={assignRoleMutation.isPending}
-                                          onChange={(e) => assignRoleMutation.mutate({ id: u.id, platformRoleId: e.target.value })}
+                                      <div className="w-[170px]">
+                                        <label
+                                          htmlFor={`role-${u.id}`}
+                                          className="block text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400 mb-1"
                                         >
-                                          {platformRoles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                                        </select>
-                                      ) : (
-                                        <p className="text-[10px] text-slate-400 mt-1">{u.platformRole?.name ?? '—'}</p>
-                                      )
+                                          Platform role
+                                        </label>
+                                        {canManageUsers && platformRoles ? (
+                                          <div className="relative">
+                                            <select
+                                              id={`role-${u.id}`}
+                                              className="w-full appearance-none rounded-lg border border-slate-200 bg-white py-1.5 pl-2.5 pr-7 text-xs font-medium text-slate-800 cursor-pointer transition-colors hover:border-slate-300 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30 disabled:opacity-60 disabled:cursor-wait"
+                                              value={u.platformRole?.id ?? ''}
+                                              disabled={assignRoleMutation.isPending}
+                                              onChange={(e) => assignRoleMutation.mutate({ id: u.id, platformRoleId: e.target.value })}
+                                            >
+                                              {platformRoles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                                            </select>
+                                            {/* appearance-none removes the native arrow, so draw one back */}
+                                            <svg className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+                                            </svg>
+                                          </div>
+                                        ) : (
+                                          // Read-only: still shows WHICH role, so the
+                                          // column reads the same for every viewer.
+                                          <span className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold ${roleBadgeFor(u.platformRole).cls}`}>
+                                            <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                                            {u.platformRole ? roleBadgeFor(u.platformRole).label : '—'}
+                                          </span>
+                                        )}
+                                      </div>
                                     )}
+
                                     {user?.id !== u.id && u.role === 'ADMINISTRATOR' && canManageUsers && (
                                       <button
-                                        className="text-[10px] text-red-600 font-semibold hover:text-red-700 mt-1 cursor-pointer block ml-auto"
+                                        className="rounded-lg border border-transparent p-1.5 text-slate-400 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600 focus:outline-none focus:ring-2 focus:ring-red-300 disabled:opacity-50 cursor-pointer"
+                                        title={`Remove ${u.name}`}
+                                        aria-label={`Remove ${u.name}`}
                                         onClick={() => setDeleteTarget({ id: u.id, name: u.name, email: u.email, type: 'sadmin' })}
                                         disabled={removeSadminMutation.isPending}
                                       >
-                                        Remove
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                                        </svg>
                                       </button>
                                     )}
                                   </div>
@@ -643,152 +645,6 @@ export default function UsersPage() {
               </motion.div>
             )}
 
-            {/* ─── System-wide activity log (Administrator audit console) ──────── */}
-            {isPlatformAdmin && (
-              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.19 }}>
-                <div className="flex items-baseline justify-between mb-4">
-                  <h2 className="text-base font-semibold text-slate-900">System Activity Log</h2>
-                  <span className="text-xs text-slate-400">{logTotal} {logTotal === 1 ? 'event' : 'events'}</span>
-                </div>
-
-                {/* Logins classified by organization — click an org to drill the log below into it */}
-                <div className="card p-4 mb-4">
-                  <div className="flex items-baseline justify-between mb-3">
-                    <h3 className="text-sm font-semibold text-slate-900">Logins by Organization</h3>
-                    <span className="text-xs text-slate-400">
-                      {loginsByOrg ? `${loginsByOrg.totalLogins} logins · ${loginsByOrg.orgCount} orgs` : ''}
-                      {(logRole || logFrom || logTo) ? ' · filtered' : ''}
-                    </span>
-                  </div>
-                  {loginsByOrgLoading ? (
-                    <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <ShimmerRow key={i} />)}</div>
-                  ) : !loginsByOrg?.items.length ? (
-                    <p className="py-6 text-center text-sm text-slate-400">No logins in this window.</p>
-                  ) : (
-                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                      {loginsByOrg.items.map((o) => {
-                        const active = logOrg === o.id;
-                        return (
-                          <button
-                            key={o.id}
-                            type="button"
-                            onClick={() => onFilter(setLogOrg)(active ? '' : o.id)}
-                            aria-pressed={active}
-                            title={active ? 'Clear org filter' : `Filter the log to ${o.name}`}
-                            className={`text-left rounded-lg border px-3 py-2.5 transition-colors ${active ? 'border-brand-400 bg-brand-50' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'}`}
-                          >
-                            <div className="flex items-baseline justify-between gap-2">
-                              <span className="truncate text-sm font-semibold text-slate-900">{o.name}</span>
-                              <span className="shrink-0 text-sm font-mono font-semibold tabular-nums text-brand-700">{o.logins}</span>
-                            </div>
-                            <div className="mt-0.5 text-[11px] text-slate-500">
-                              {o.users} {o.users === 1 ? 'user' : 'users'} · {o.lastLogin ? `last ${timeAgo(o.lastLogin)}` : 'no logins'}
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                {/* Filters */}
-                <div className="card p-4 mb-4">
-                  <div className="flex flex-wrap gap-3 items-end">
-                    <div className="min-w-40">
-                      <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Event</label>
-                      <select value={logAction} onChange={(e) => onFilter(setLogAction)(e.target.value)} className="input py-1.5 text-sm">
-                        {LOG_ACTION_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                      </select>
-                    </div>
-                    <div className="min-w-36">
-                      <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Role</label>
-                      <select value={logRole} onChange={(e) => onFilter(setLogRole)(e.target.value)} className="input py-1.5 text-sm">
-                        <option value="">All roles</option>
-                        <option value="USER">User</option>
-                        <option value="ORG_ADMIN">Org Admin</option>
-                        <option value="ADMINISTRATOR">Administrator</option>
-                      </select>
-                    </div>
-                    <div className="min-w-44">
-                      <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Organization</label>
-                      <select value={logOrg} onChange={(e) => onFilter(setLogOrg)(e.target.value)} className="input py-1.5 text-sm">
-                        <option value="">All organizations</option>
-                        {orgOptions?.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1.5">From</label>
-                      <input type="date" value={logFrom} onChange={(e) => onFilter(setLogFrom)(e.target.value)} className="input py-1.5 text-sm" />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1.5">To</label>
-                      <input type="date" value={logTo} onChange={(e) => onFilter(setLogTo)(e.target.value)} className="input py-1.5 text-sm" />
-                    </div>
-                    {(logAction || logRole || logOrg || logFrom || logTo) && (
-                      <GlowButton variant="ghost" className="py-1.5 px-3 text-xs"
-                        onClick={() => { setLogAction(''); setLogRole(''); setLogOrg(''); setLogFrom(''); setLogTo(''); setLogPage(1); }}>
-                        Clear
-                      </GlowButton>
-                    )}
-                  </div>
-                </div>
-
-                {/* Log table */}
-                <div className="card overflow-hidden">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-slate-100 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                          <th className="px-4 py-2.5">When</th>
-                          <th className="px-4 py-2.5">User</th>
-                          <th className="px-4 py-2.5">Role</th>
-                          <th className="px-4 py-2.5">Event</th>
-                          <th className="px-4 py-2.5">Organization</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-50">
-                        {syslogLoading ? (
-                          Array.from({ length: 6 }).map((_, i) => (
-                            <tr key={i}><td colSpan={5} className="px-4 py-3"><ShimmerRow /></td></tr>
-                          ))
-                        ) : !syslog?.items.length ? (
-                          <tr><td colSpan={5} className="px-5 py-12 text-center text-sm text-slate-400">No matching activity.</td></tr>
-                        ) : (
-                          syslog.items.map((e) => {
-                            const cfg = ACTION_LABEL[e.action] ?? { label: e.action, cls: 'text-slate-600 bg-slate-100', icon: '•' };
-                            return (
-                              <tr key={e.id} className="hover:bg-slate-50 transition-colors">
-                                <td className="px-4 py-3 whitespace-nowrap text-slate-500" title={new Date(e.createdAt).toLocaleString()}>{timeAgo(e.createdAt)}</td>
-                                <td className="px-4 py-3">
-                                  <div className="font-medium text-slate-900">{e.performedBy?.name ?? '—'}</div>
-                                  <div className="text-xs text-slate-400">{e.performedBy?.email ?? ''}</div>
-                                </td>
-                                <td className="px-4 py-3">
-                                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${roleBadgeCls[e.performedBy?.role] ?? 'text-slate-600 bg-slate-100'}`}>{e.performedBy?.role ?? '—'}</span>
-                                </td>
-                                <td className="px-4 py-3">
-                                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-semibold ${cfg.cls}`}>{cfg.icon} {cfg.label}</span>
-                                </td>
-                                <td className="px-4 py-3 text-slate-600">{e.organization?.name ?? <span className="text-slate-400">—</span>}</td>
-                              </tr>
-                            );
-                          })
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                  {/* Pagination */}
-                  <div className="flex items-center justify-between px-4 py-2.5 border-t border-slate-100">
-                    <span className="text-xs text-slate-400">Page {logPage} of {logPages}</span>
-                    <div className="flex gap-1.5">
-                      <GlowButton variant="ghost" className="py-1 px-2.5 text-xs" disabled={logPage <= 1} onClick={() => setLogPage((p) => Math.max(1, p - 1))}>Prev</GlowButton>
-                      <GlowButton variant="ghost" className="py-1 px-2.5 text-xs" disabled={logPage >= logPages} onClick={() => setLogPage((p) => Math.min(logPages, p + 1))}>Next</GlowButton>
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-
           </div>
         </main>
       </div>
@@ -815,8 +671,10 @@ export default function UsersPage() {
   );
 }
 
-function SummaryTile({ label, value, tone }: { label: string; value: number | string; tone: 'emerald' | 'brand' | 'violet' }) {
-  const dot = { emerald: 'bg-emerald-500', brand: 'bg-brand', violet: 'bg-violet-500' }[tone];
+function SummaryTile({ label, value, tone, hint }: {
+  label: string; value: number | string; tone: 'emerald' | 'brand' | 'violet' | 'amber'; hint?: string;
+}) {
+  const dot = { emerald: 'bg-emerald-500', brand: 'bg-brand', violet: 'bg-violet-500', amber: 'bg-amber-500' }[tone];
   return (
     <div className="card p-5">
       <div className="flex items-center justify-between mb-3">
@@ -824,6 +682,9 @@ function SummaryTile({ label, value, tone }: { label: string; value: number | st
         <span className={`w-2 h-2 rounded-full ${dot}`} />
       </div>
       <p className="font-mono text-2xl font-bold text-slate-900 tabular-nums leading-none">{value}</p>
+      {/* Says WHICH population the number counts — four tiles of bare digits
+          side by side are otherwise indistinguishable from one another. */}
+      {hint && <p className="mt-1.5 text-[11px] text-slate-400 leading-tight">{hint}</p>}
     </div>
   );
 }

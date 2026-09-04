@@ -18,6 +18,16 @@ export const PERMISSIONS = [
   { key: 'customer_services.manage', group: 'Platform',    label: 'Customer Services' },
   { key: 'orgs.manage',              group: 'Platform',    label: 'Organizations, flags & impersonation' },
   { key: 'platform_audit.view',      group: 'Platform',    label: 'Audit log, logins & staff directory' },
+  // The System Activity workspace: the cross-tenant audit trail of every action
+  // on the platform. Split from platform_audit.view so it can be held ALONE —
+  // that key also opens the staff directory and the Sadmin feed on the Users
+  // page, so gating the workspace on it would have handed the full audit trail
+  // to every role that merely needs to see who the staff are.
+  //
+  // No seed edit grants this: `administration` is computed as every key, and no
+  // other seeded role lists it — so today it is Administration-only, and the
+  // roles API can widen that later without a deploy.
+  { key: 'system_activity.view',     group: 'Platform',    label: 'System activity workspace' },
   // Financial figures (platform MRR). Deliberately its OWN key rather than
   // riding on nav.control_plane: revenue visibility is a separate decision from
   // control-plane access, and in an editable matrix the two must be togglable

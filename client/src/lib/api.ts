@@ -2,6 +2,7 @@ import axios, { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig } fro
 // Same specifier style as ToastProvider's import so both resolve to ONE module instance
 // (a mixed './toast-bus' vs '@/lib/toast-bus' can bundle as two, silently losing the handler).
 import { notify } from '@/lib/toast-bus';
+import { sessionEnded } from '@/lib/session-bus';
 
 // In the BROWSER, always call the API same-origin via the relative `/api` path
 // (the Next.js rewrites() in next.config.js proxies /api/* to NEXT_PUBLIC_API_URL).
@@ -64,7 +65,13 @@ api.interceptors.response.use(
         onRefreshComplete(false);
         isRefreshing = false;
         if (typeof window !== 'undefined' && !currentPath.startsWith('/login')) {
-          window.location.href = '/login';
+          // A revoked session (an administrator changed this account's platform
+          // role, a password reset, a sign-in elsewhere) is not the same as an
+          // idle timeout: bouncing straight to /login left the user staring at a
+          // sign-in screen with no idea why. Explain it first and let THEM click
+          // through; fall back to the silent redirect when no dialog is mounted.
+          const revoked = (error.response?.data as { code?: string } | undefined)?.code === 'SESSION_REVOKED';
+          if (!revoked || !sessionEnded()) window.location.href = '/login';
         }
         return Promise.reject(error);
       }

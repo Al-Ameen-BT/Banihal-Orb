@@ -81,8 +81,8 @@ router.put('/ticket-number-format', requirePermission('tickets.write'), saasAdmi
 
 // Audit surfaces + staff directory ("Audit log, logins & staff directory").
 router.get('/activity', requirePermission('platform_audit.view'), saasAdminController.getSadminActivity);
-router.get('/system-activity', requirePermission('platform_audit.view'), saasAdminController.getSystemActivity);
-router.get('/logins-by-org', requirePermission('platform_audit.view'), saasAdminController.getLoginsByOrg);
+router.get('/system-activity', requirePermission('system_activity.view'), saasAdminController.getSystemActivity);
+router.get('/logins-by-org', requirePermission('system_activity.view'), saasAdminController.getLoginsByOrg);
 router.get('/sadmins', requirePermission('platform_audit.view'), saasAdminController.listSadmins);
 
 // Staff lifecycle. Reading the directory is an audit action; changing a staff

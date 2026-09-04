@@ -10,6 +10,7 @@ import Sidebar from '@/components/ui/Sidebar';
 import Toggle from '@/components/ui/Toggle';
 import GlowButton from '@/components/ui/GlowButton';
 import EnablePushButton from '@/components/EnablePushButton';
+import { roleBadgeFor } from '@/lib/display';
 
 const roleConfig: Record<string, { label: string; cls: string; avatar: string }> = {
   USER:          { label: 'User',          cls: 'text-slate-600 bg-slate-100',  avatar: 'from-slate-400 to-slate-500' },
@@ -63,6 +64,10 @@ export default function ProfilePage() {
   }
 
   const roleCfg = roleConfig[user?.role ?? ''] ?? roleConfig['USER']!;
+  // This page used to render roleCfg.label unconditionally, so an Intern's own
+  // profile told them they were an "Administrator" — and unlike the sidebar, a
+  // reload never corrected it because the platform role was never consulted.
+  const staffBadge = user?.role === 'ADMINISTRATOR' ? roleBadgeFor(user.platformRole) : null;
 
   return (
     <RoleGuard allowedRoles={['USER', 'ORG_ADMIN', 'ADMINISTRATOR']}>
@@ -83,16 +88,18 @@ export default function ProfilePage() {
               <div className="card p-6">
                 {/* Avatar row */}
                 <div className="flex items-center gap-4 mb-6 pb-6 border-b border-slate-100">
-                  <div className={`w-14 h-14 rounded-full bg-gradient-to-br ${roleCfg.avatar} flex items-center justify-center text-2xl font-bold text-white`}>
+                  <div className={`w-14 h-14 rounded-full flex items-center justify-center text-2xl font-bold ${
+                    staffBadge ? `${staffBadge.cls} ring-1 ring-inset ring-current/20` : `bg-gradient-to-br ${roleCfg.avatar} text-white`
+                  }`}>
                     {user?.name?.charAt(0) ?? '?'}
                   </div>
                   <div>
                     <p className="text-lg font-semibold text-slate-900 leading-tight">{user?.name}</p>
                     <p className="text-sm text-slate-500 mt-0.5">{user?.email}</p>
                     {user?.role && (
-                      <span className={`mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-semibold ${roleCfg.cls}`}>
+                      <span className={`mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-semibold ${staffBadge?.cls ?? roleCfg.cls}`}>
                         <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                        {roleCfg.label}
+                        {staffBadge?.label ?? roleCfg.label}
                       </span>
                     )}
                   </div>

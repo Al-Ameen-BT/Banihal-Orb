@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { saasAdminApi, ticketingApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
+import { roleBadgeFor, roleTextCls } from '@/lib/display';
 import RoleGuard from '@/components/guards/RoleGuard';
 import Sidebar from '@/components/ui/Sidebar';
 import KpiCard from '@/components/ui/KpiCard';
@@ -538,6 +539,7 @@ export default function AdminPlatformDashboard() {
   const showOrgs = can('orgs.manage');
   const showServices = can('customer_services.manage');
   const showControlPlane = can('nav.control_plane');
+  const roleBadge = roleBadgeFor(user?.platformRole);
   const showAudit = can('platform_audit.view');
 
   const { data: sla, isLoading: slaLoading } = useQuery<SlaBreachReport>({
@@ -609,12 +611,21 @@ export default function AdminPlatformDashboard() {
             {/* Header */}
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.22 }} className="flex items-start justify-between gap-4 flex-wrap">
               <div>
+                {/* Was a fixed rose dot and the literal "Administrator", shown
+                    identically to an Intern. Dot, colour and name now all come
+                    from the viewer's own platform role. */}
                 <div className="flex items-center gap-2 mb-1.5">
-                  <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse-soft" />
-                  <p className="text-sm font-semibold text-rose-600">Administrator · Platform Monitoring</p>
+                  <span className={`w-2 h-2 rounded-full ${roleBadge.dot} animate-pulse-soft`} />
+                  <p className={`text-sm font-semibold ${roleTextCls(roleBadge)}`}>{roleBadge.label} · Platform Monitoring</p>
                 </div>
                 <h1 className="text-2xl font-bold tracking-tight text-slate-900">Welcome back, {user?.name?.split(' ')[0]}</h1>
-                <p className="mt-1 text-sm text-slate-500">SLA health, account risk, service expiry, and platform activity across every client organization</p>
+                {/* An Intern does not see revenue or every organization, so the
+                    strapline follows what this viewer can actually reach. */}
+                <p className="mt-1 text-sm text-slate-500">
+                  {showControlPlane
+                    ? 'SLA health, account risk, service expiry, and platform activity across every client organization'
+                    : 'SLA health and ticket activity across the organizations you support'}
+                </p>
               </div>
               {showControlPlane && (
                 <Link href="/saas-admin">
