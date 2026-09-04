@@ -131,6 +131,18 @@ describe('can() — seeded platform roles', () => {
     }
   });
 
+  it('gives organization DELETION to Administration and HR Admin only', () => {
+    // Split from orgs.manage on purpose: renaming an org and destroying every
+    // user, ticket and attachment it owns are different decisions. If this ever
+    // flips true for Employee or Intern, that split has been undone.
+    expect(can(reqAs('ADMINISTRATOR', [...ALL_PERMISSION_KEYS]), 'orgs.delete')).toBe(true);
+    expect(can(reqAs('ADMINISTRATOR', SEEDED['hr_admin']!), 'orgs.delete')).toBe(true);
+    expect(can(reqAs('ADMINISTRATOR', SEEDED['employee']!), 'orgs.delete')).toBe(false);
+    expect(can(reqAs('ADMINISTRATOR', SEEDED['intern']!), 'orgs.delete')).toBe(false);
+    // …and no customer role can ever hold it, whatever the database says.
+    expect(can(reqAs('ORG_ADMIN', [...ALL_PERMISSION_KEYS]), 'orgs.delete')).toBe(false);
+  });
+
   it('all four platform roles reach the isolated ticket store', () => {
     // Employee and Intern exist to work the internal escalation queue. Routing
     // them to the shared customer store would give them a self-only scope there

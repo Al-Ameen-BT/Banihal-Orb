@@ -15,6 +15,7 @@ import * as platformRoles from '../platform-roles/platformRoles.service';
 import { PERMISSIONS } from '../../config/permissions';
 import { can } from '../../middleware/rbac.middleware';
 import * as saasAdminService from './saas-admin.service';
+import * as orgDeletion from './orgDeletion.service';
 import { cached, cacheKey, TTL } from '../../lib/cache';
 
 export async function getTicketNumberFormat(_req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -41,8 +42,15 @@ export async function listOrgs(req: Request, res: Response, next: NextFunction):
 export async function updateOrg(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const input = UpdateOrgSchema.parse(req.body);
-    const org = await saasAdminService.updateOrg(req.params['id']!, input);
+    const org = await saasAdminService.updateOrg(req.params['id']!, input, req.user.userId);
     res.json(org);
+  } catch (err) { next(err); }
+}
+
+export async function deleteOrg(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const report = await orgDeletion.deleteOrganization(req.params['id']!, req.user.userId);
+    res.json({ success: true, ...report });
   } catch (err) { next(err); }
 }
 
@@ -372,23 +380,26 @@ export function permissionCatalog(_req: Request, res: Response): void {
 // Matrix writes. The caller's own permission set is passed through so the service
 // can refuse to grant a key the caller does not hold — otherwise roles.manage is
 // a one-step path to every other permission.
+/** The signed-in actor, for audit attribution. */
+const actorOf = (req: Request) => ({ userId: req.user.userId, customerId: req.user.customerId });
+
 export async function createPlatformRole(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const input = CreatePlatformRoleSchema.parse(req.body);
-    res.status(201).json(await platformRoles.createRole(input, req.user.permissions));
+    res.status(201).json(await platformRoles.createRole(input, req.user.permissions, actorOf(req)));
   } catch (err) { next(err); }
 }
 
 export async function updatePlatformRole(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const input = UpdatePlatformRoleSchema.parse(req.body);
-    res.json(await platformRoles.updateRole(req.params['id']!, input, req.user.permissions));
+    res.json(await platformRoles.updateRole(req.params['id']!, input, req.user.permissions, actorOf(req)));
   } catch (err) { next(err); }
 }
 
 export async function deletePlatformRole(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    await platformRoles.deleteRole(req.params['id']!);
+    await platformRoles.deleteRole(req.params['id']!, actorOf(req));
     res.status(200).json({ success: true });
   } catch (err) { next(err); }
 }

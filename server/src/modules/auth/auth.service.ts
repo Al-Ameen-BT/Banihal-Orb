@@ -1,7 +1,7 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import { Role } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 import { prisma } from '../../config/database';
 import { assertPasswordNotReused, passwordFingerprint } from './passwordReuse';
 import { env } from '../../config/env';
@@ -92,15 +92,64 @@ async function createRefreshToken(userId: string, sessionId: string): Promise<st
 // enforces it, so assigning ADMINISTRATOR without one is a failed INSERT, not a
 // degraded account. Resolved by key rather than by the seeded id so a renamed or
 // re-seeded row still matches.
-//
-// Returns null when the role is missing, which is only possible on a database
-// that has not had db/b2b.sql applied. Callers treat null as "cannot mint staff".
-async function administrationRoleId(): Promise<string | null> {
-  const row = await prisma.platformRole.findUnique({
-    where: { key: ADMINISTRATION_ROLE_KEY },
-    select: { id: true },
-  });
-  return row?.id ?? null;
+
+// The transaction client of an EXTENDED Prisma client (config/database.ts adds
+// the tenant extension), which is not Prisma.TransactionClient. Derived from the
+// client we actually hold so it cannot drift from it.
+type SignupTx = Omit<typeof prisma, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>;
+
+/** The platform role granted to a self-registering provider-domain account. */
+const BOOTSTRAP_ROLE_KEY = ADMINISTRATION_ROLE_KEY;   // the very first account
+const SELF_SIGNUP_ROLE_KEY = 'employee';              // everybody after it
+
+const rolesMissing = () => Object.assign(
+  new Error('Platform roles are not provisioned. Run db/provision.sh before registering staff.'),
+  { status: 503, code: 'PLATFORM_ROLES_MISSING' },
+);
+
+/**
+ * Decide which platform role a provider-domain self-registration receives, and
+ * resolve it to an id — INSIDE the caller's transaction, because the decision
+ * depends on a count that the same transaction is about to change.
+ *
+ * The first account on a platform with no Administrator bootstraps itself into
+ * `administration`; without that a fresh install has nobody who could invite
+ * anyone. Every later provider-domain signup lands on `employee` instead:
+ * still platform staff, but without users.manage, roles.manage, orgs.manage or
+ * revenue.view. Promotion past that is an explicit act by an existing
+ * Administrator through the staff-invite / role-assignment paths.
+ *
+ * This is what closes self-service super-admin creation: before it, ANY mailbox
+ * on a domain listed in ADMIN_DOMAINS could register and receive every
+ * permission on the platform.
+ */
+async function selfSignupPlatformRoleId(tx: SignupTx): Promise<string> {
+  const administrators = await tx.user.count({ where: { role: 'ADMINISTRATOR' } });
+  const key = administrators === 0 ? BOOTSTRAP_ROLE_KEY : SELF_SIGNUP_ROLE_KEY;
+  const row = await tx.platformRole.findUnique({ where: { key }, select: { id: true } });
+  if (!row) throw rolesMissing();
+  return row.id;
+}
+
+/**
+ * Run `fn` where reading "how many administrators exist" and then creating one
+ * must be atomic. Serializable, so two simultaneous first-registrations cannot
+ * both observe an empty platform and both mint an Administrator — Postgres
+ * detects the write skew and aborts one. The loser retries, re-reads the count
+ * as 1, and correctly lands on `employee`.
+ */
+async function inSignupTransaction<T>(fn: (tx: SignupTx) => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await prisma.$transaction(fn, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      // P2034 is Prisma's write-conflict/deadlock code; 40001 is Postgres's raw
+      // serialization_failure. Retry is safe: nothing was committed.
+      if (attempt < 3 && (code === 'P2034' || code === '40001')) continue;
+      throw err;
+    }
+  }
 }
 
 export async function register(input: RegisterInput): Promise<RegistrationResult> {
@@ -108,39 +157,37 @@ export async function register(input: RegisterInput): Promise<RegistrationResult
   const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
   const slug = generateSlug(input.organizationName);
 
-  // Self-service platform-admin creation is a hole that P3 closes outright. Until
-  // then it must at least produce a VALID row: ADMINISTRATOR paired with the
-  // Administration platform role.
   const isProviderAdmin = isProviderAdminEmail(input.email);
-  const platformRoleId = isProviderAdmin ? await administrationRoleId() : null;
-  if (isProviderAdmin && !platformRoleId) {
-    throw Object.assign(
-      new Error('Platform roles are not provisioned. Run db/provision.sh before registering staff.'),
-      { status: 503, code: 'PLATFORM_ROLES_MISSING' },
-    );
-  }
+  // Generated before the transaction: it runs its own uniqueness queries, and
+  // holding a serializable transaction open across them buys nothing.
+  const orgCode = await uniqueOrgCode(input.organizationName);
 
-  const customer = await prisma.customer.create({
-    data: {
-      name: input.organizationName,
-      slug,
-      mailId: input.email,
-      contactPerson: input.name,
-      contactNumber: input.contactNumber,
-      domain: deriveDomain(input.email),
-      orgCode: await uniqueOrgCode(input.organizationName),
-      users: {
-        create: {
-          email: input.email,
-          passwordHash,
-          passwordFingerprint: passwordFingerprint(input.password),
-          name: input.name,
-          role: isProviderAdmin ? 'ADMINISTRATOR' : 'ORG_ADMIN',
-          ...(platformRoleId ? { platformRoleId } : {}),
+  // The platform role is chosen and the account written in ONE serializable
+  // transaction, because the choice depends on a count this write changes.
+  const customer = await inSignupTransaction(async (tx) => {
+    const platformRoleId = isProviderAdmin ? await selfSignupPlatformRoleId(tx) : null;
+    return tx.customer.create({
+      data: {
+        name: input.organizationName,
+        slug,
+        mailId: input.email,
+        contactPerson: input.name,
+        contactNumber: input.contactNumber,
+        domain: deriveDomain(input.email),
+        orgCode,
+        users: {
+          create: {
+            email: input.email,
+            passwordHash,
+            passwordFingerprint: passwordFingerprint(input.password),
+            name: input.name,
+            role: isProviderAdmin ? 'ADMINISTRATOR' : 'ORG_ADMIN',
+            ...(platformRoleId ? { platformRoleId } : {}),
+          },
         },
       },
-    },
-    include: { users: true },
+      include: { users: { include: { platformRole: { select: { key: true } } } } },
+    });
   });
 
   const user = customer.users[0]!;
@@ -154,6 +201,7 @@ export async function register(input: RegisterInput): Promise<RegistrationResult
         orgName: customer.name,
         email: user.email,
         role: user.role,
+        ...(user.platformRole ? { platformRole: user.platformRole.key } : {}),
         ...(customer.domain ? { domain: customer.domain } : {}),
       },
     },
@@ -201,26 +249,24 @@ export async function registerUser(input: RegisterUserInput): Promise<Registrati
   await assertPasswordNotReused(input.password);
   const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
 
-  // Same pairing rule as register(): ADMINISTRATOR is invalid without a platform role.
+  // Same bootstrap rule as register(): the first account on a platform with no
+  // Administrator gets `administration`, everyone after gets `employee`.
   const isProviderAdmin = isProviderAdminEmail(input.email);
-  const platformRoleId = isProviderAdmin ? await administrationRoleId() : null;
-  if (isProviderAdmin && !platformRoleId) {
-    throw Object.assign(
-      new Error('Platform roles are not provisioned. Run db/provision.sh before registering staff.'),
-      { status: 503, code: 'PLATFORM_ROLES_MISSING' },
-    );
-  }
 
-  const user = await prisma.user.create({
-    data: {
-      email: input.email,
-      passwordHash,
-      passwordFingerprint: passwordFingerprint(input.password),
-      name: input.name,
-      role: isProviderAdmin ? 'ADMINISTRATOR' : 'USER',
-      ...(platformRoleId ? { platformRoleId } : {}),
-      customerId: customer.id,
-    },
+  const user = await inSignupTransaction(async (tx) => {
+    const platformRoleId = isProviderAdmin ? await selfSignupPlatformRoleId(tx) : null;
+    return tx.user.create({
+      data: {
+        email: input.email,
+        passwordHash,
+        passwordFingerprint: passwordFingerprint(input.password),
+        name: input.name,
+        role: isProviderAdmin ? 'ADMINISTRATOR' : 'USER',
+        ...(platformRoleId ? { platformRoleId } : {}),
+        customerId: customer.id,
+      },
+      include: { platformRole: { select: { key: true } } },
+    });
   });
 
   await prisma.auditLog.create({
@@ -228,7 +274,7 @@ export async function registerUser(input: RegisterUserInput): Promise<Registrati
       action: 'USER_REGISTERED',
       performedById: user.id,
       customerId: customer.id,
-      metadata: { email: user.email, name: user.name, role: user.role, domain },
+      metadata: { email: user.email, name: user.name, role: user.role, ...(user.platformRole ? { platformRole: user.platformRole.key } : {}), domain },
     },
   }).catch(() => {});
 

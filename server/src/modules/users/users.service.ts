@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { prisma } from '../../config/database';
+import { audit } from '../../lib/audit';
 import { assertPasswordNotReused, passwordFingerprint } from '../auth/passwordReuse';
 import { chatPrisma } from '../../config/chatDatabase';
 import { permissionsFor } from '../platform-roles/platformRoles.service';
@@ -38,11 +39,16 @@ export async function getMe(userId: string) {
 }
 
 export async function updateMe(userId: string, input: UpdateMeInput) {
-  return prisma.user.update({ where: { id: userId }, data: input, select: userSelect });
+  const updated = await prisma.user.update({ where: { id: userId }, data: input, select: userSelect });
+  await audit({
+    action: 'USER_PROFILE_UPDATED', performedById: userId, targetId: userId,
+    customerId: updated.customerId, metadata: { changes: input },
+  });
+  return updated;
 }
 
 export async function changeMyPassword(userId: string, input: ChangePasswordInput) {
-  const user = await prisma.user.findUnique({ where: { id: userId }, select: { passwordHash: true } });
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { passwordHash: true, customerId: true } });
   if (!user) throw Object.assign(new Error('User not found'), { status: 404, code: 'NOT_FOUND' });
 
   const valid = await bcrypt.compare(input.currentPassword, user.passwordHash);
@@ -59,6 +65,13 @@ export async function changeMyPassword(userId: string, input: ChangePasswordInpu
   // devices so every browser goes back through MFA on its next login.
   await prisma.refreshToken.deleteMany({ where: { userId } });
   await prisma.trustedDevice.deleteMany({ where: { userId } }).catch(() => {});
+
+  // THAT it changed, never the value. Admin-forced resets were logged while
+  // self-service changes were not, so a stolen session could rotate the password
+  // and leave nothing behind but a LOGIN.
+  await audit({
+    action: 'PASSWORD_CHANGED', performedById: userId, targetId: userId, customerId: user.customerId,
+  });
 }
 
 export async function listUsers(input: PaginationInput) {
@@ -76,7 +89,7 @@ export async function listUsers(input: PaginationInput) {
   return { users, total, page: input.page, limit: input.limit, pages: Math.ceil(total / input.limit) };
 }
 
-export async function inviteUser(input: InviteUserInput, customerId: string) {
+export async function inviteUser(input: InviteUserInput, customerId: string, actorId: string) {
   // 16 random bytes is far past anything a human types, so this is only ever
   // usable via the invitation email below — which is the whole point: before it
   // existed the password was generated, hashed and DISCARDED, leaving an account
@@ -104,6 +117,13 @@ export async function inviteUser(input: InviteUserInput, customerId: string) {
 
   // Read OUTSIDE the tenant extension's reach is unnecessary here — Customer is a
   // global model, and this is the invitee's own org either way.
+  // Account creation on the org side was invisible, while the platform-side
+  // equivalent logged ADMINISTRATOR_STAFF_INVITED. Never the temp password.
+  await audit({
+    action: 'USER_INVITED', performedById: actorId, targetId: user.id, customerId,
+    metadata: { targetEmail: user.email, targetName: user.name, role: input.role },
+  });
+
   const org = await prisma.customer.findUnique({ where: { id: customerId }, select: { name: true } });
   const delivered = await sendInviteEmail(user.email, {
     name: user.name,
@@ -124,12 +144,24 @@ export async function inviteUser(input: InviteUserInput, customerId: string) {
   };
 }
 
-export async function changeRole(targetUserId: string, input: ChangeRoleInput) {
+export async function changeRole(targetUserId: string, input: ChangeRoleInput, actorId: string) {
   // ADMINISTRATOR role is NEVER settable through this path
   if ((input.role as string) === 'ADMINISTRATOR') {
     throw Object.assign(new Error('ADMINISTRATOR role cannot be assigned via API'), { status: 403, code: 'FORBIDDEN' });
   }
-  return prisma.user.update({ where: { id: targetUserId }, data: { role: input.role }, select: userSelect });
+  const before = await prisma.user.findUnique({
+    where: { id: targetUserId }, select: { customerId: true, email: true, role: true },
+  });
+  if (!before) throw Object.assign(new Error('User not found'), { status: 404, code: 'NOT_FOUND' });
+
+  const updated = await prisma.user.update({ where: { id: targetUserId }, data: { role: input.role }, select: userSelect });
+  // USER ↔ ORG_ADMIN is a privilege change and wrote nothing before — while the
+  // platform-side equivalent (saas-admin.updateUser) logged previousRole.
+  await audit({
+    action: 'USER_ROLE_CHANGED', performedById: actorId, targetId: targetUserId, customerId: before.customerId,
+    metadata: { targetEmail: before.email, previousRole: before.role, newRole: input.role },
+  });
+  return updated;
 }
 
 export async function removeUser(targetUserId: string, requestingUserId: string) {

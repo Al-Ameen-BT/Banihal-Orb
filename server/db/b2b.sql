@@ -97,7 +97,7 @@ INSERT INTO "PlatformRole" ("id","key","name","description","system","permission
   ('plr_hr_admin','hr_admin','HR Admin',
    'Business operations: organizations, users, services and the catalog.', true,
    '["nav.control_plane","catalog.manage","customer_services.manage","orgs.manage",
-     "platform_audit.view","revenue.view","users.manage","staff.invite","roles.manage",
+     "platform_audit.view","revenue.view","users.manage","staff.invite","roles.manage","orgs.delete",
      "services.view","nav.chat","tickets.view","tickets.write","ticket.store.admin"]'::jsonb),
 
   ('plr_employee','employee','Employee',
@@ -122,6 +122,11 @@ UPDATE "PlatformRole"
    SET "permissions" = "permissions" || '["revenue.view"]'::jsonb
  WHERE "key" = 'hr_admin'
    AND NOT ("permissions" @> '["revenue.view"]'::jsonb);
+
+UPDATE "PlatformRole"
+   SET "permissions" = "permissions" || '["orgs.delete"]'::jsonb
+ WHERE "key" = 'hr_admin'
+   AND NOT ("permissions" @> '["orgs.delete"]'::jsonb);
 
 -- ─── User ────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS "User" (

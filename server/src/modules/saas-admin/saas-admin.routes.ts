@@ -26,6 +26,9 @@ router.delete('/roles/:id', requirePermission('roles.manage'), saasAdminControll
 router.get('/orgs', requirePermission('orgs.manage'), saasAdminController.listOrgs);
 router.get('/orgs/overview', requirePermission('orgs.manage'), saasAdminController.getOrgsOverview);
 router.patch('/orgs/:id', requirePermission('orgs.manage'), saasAdminController.updateOrg);
+// Deliberately NOT orgs.manage — see the key's comment in config/permissions.ts.
+// Held by Administration (computed) and HR Admin only.
+router.delete('/orgs/:id', requirePermission('orgs.delete'), saasAdminController.deleteOrg);
 router.get('/orgs/:id/detail', requirePermission('orgs.manage'), saasAdminController.getOrgDetail);
 
 // People (org admins / impersonation / cross-org user mgmt)

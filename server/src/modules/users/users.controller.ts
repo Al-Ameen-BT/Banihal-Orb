@@ -36,7 +36,7 @@ export async function listUsers(req: Request, res: Response, next: NextFunction)
 export async function inviteUser(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const input = InviteUserSchema.parse(req.body);
-    const user = await usersService.inviteUser(input, req.user.customerId);
+    const user = await usersService.inviteUser(input, req.user.customerId, req.user.userId);
     res.status(201).json(user);
   } catch (err) { next(err); }
 }
@@ -44,7 +44,7 @@ export async function inviteUser(req: Request, res: Response, next: NextFunction
 export async function changeRole(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const input = ChangeRoleSchema.parse(req.body);
-    const user = await usersService.changeRole(req.params['id']!, input);
+    const user = await usersService.changeRole(req.params['id']!, input, req.user.userId);
     res.json(user);
   } catch (err) { next(err); }
 }

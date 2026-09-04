@@ -7,7 +7,7 @@
 export const SEEDED: Record<string, string[]> = {
   hr_admin: [
     'nav.control_plane', 'catalog.manage', 'customer_services.manage', 'orgs.manage',
-    'platform_audit.view', 'revenue.view', 'users.manage', 'staff.invite', 'roles.manage',
+    'platform_audit.view', 'revenue.view', 'users.manage', 'staff.invite', 'roles.manage', 'orgs.delete',
     'services.view', 'nav.chat', 'tickets.view', 'tickets.write', 'ticket.store.admin',
   ],
   employee: [

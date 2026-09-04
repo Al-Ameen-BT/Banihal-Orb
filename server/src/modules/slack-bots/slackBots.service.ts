@@ -1,5 +1,6 @@
 import type { z } from 'zod';
 import { prisma } from '../../config/database';
+import { audit } from '../../lib/audit';
 import crypto from 'crypto';
 import { encryptSecret, decryptSecret, maskToken, hashApiKey } from '../../config/slackCrypto';
 import { runWithTicketDb } from '../../config/ticketDatabase';
@@ -106,12 +107,19 @@ export async function setEnabled(id: string, enabled: boolean) {
 // Generate (or rotate) the per-bot machine API key used by the AD automation to
 // deliver temporary passwords. The raw key is returned ONCE; only its SHA-256 hash
 // and a masked hint are stored.
-export async function generateApiKey(id: string): Promise<{ apiKey: string; apiKeyHint: string }> {
-  const bot = await prisma.slackBot.findUnique({ where: { id }, select: { id: true } });
+export async function generateApiKey(id: string, actor: { userId: string; customerId: string }): Promise<{ apiKey: string; apiKeyHint: string }> {
+  const bot = await prisma.slackBot.findUnique({ where: { id }, select: { id: true, name: true } });
   if (!bot) throw notFound('Bot');
   const raw = `adk_${crypto.randomBytes(24).toString('hex')}`;
   const apiKeyHint = maskToken(raw);
   await prisma.slackBot.update({ where: { id }, data: { apiKeyHash: hashApiKey(raw), apiKeyHint } });
+  // Minting the credential that authenticates /api/ad-ingest. Its USE was
+  // audited (AD_SECRET_DELIVERED) while its issuance was not — the wrong way
+  // round. The hint only; never the key.
+  await audit({
+    action: 'BOT_API_KEY_GENERATED', performedById: actor.userId, targetId: id, customerId: actor.customerId,
+    metadata: { botName: bot.name, apiKeyHint },
+  });
   return { apiKey: raw, apiKeyHint };
 }
 
@@ -176,8 +184,14 @@ export async function unassignOrg(botId: string, customerId: string): Promise<vo
   await prisma.slackBotOrg.deleteMany({ where: { botId, customerId } });
 }
 
-// Organizations for the assignment picker.
+// Organizations for the assignment picker. Client orgs only — a bot cannot be
+// assigned to the provider's own organization, and offering it there was the same
+// leak the Control Plane list had.
 export async function listCustomers() {
-  const rows = await prisma.customer.findMany({ select: { id: true, name: true, slug: true }, orderBy: { name: 'asc' } });
+  const rows = await prisma.customer.findMany({
+    where: { users: { none: { role: 'ADMINISTRATOR' } } },
+    select: { id: true, name: true, slug: true },
+    orderBy: { name: 'asc' },
+  });
   return rows;
 }

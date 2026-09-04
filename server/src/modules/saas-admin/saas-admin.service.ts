@@ -3,6 +3,8 @@ import crypto from 'crypto';
 import { prisma } from '../../config/database';
 import { chatPrisma } from '../../config/chatDatabase';
 import { signImpersonationToken, isProviderAdminEmail } from '../auth/auth.service';
+import { DEFAULT_SCOPE_ACTIONS, SADMIN_FEED_ACTIONS } from '../../config/auditActions';
+import { audit } from '../../lib/audit';
 import { assertRoleAssignable } from '../platform-roles/platformRoles.service';
 import { sendInviteEmail } from '../mail/mail.service';
 import type { PermissionKey } from '../../config/permissions';
@@ -31,9 +33,25 @@ function deriveStatus(renewsAt: Date): 'ACTIVE' | 'EXPIRING' | 'EXPIRED' {
   return 'ACTIVE';
 }
 
+// ─── The provider's own organization ────────────────────────────────────────
+// It is not a client and must not appear in client lists, counts or pickers.
+//
+// Identified by "holds an ADMINISTRATOR", because that is what actually makes an
+// organization the provider. The previous filter hardcoded the slug
+// 'platform-platform-com', but prisma/seed.ts DERIVES that slug from
+// ADMIN_DOMAINS — so on any deployment configuring a real domain
+// (platform-banihaltechnologies-com) the literal matched nothing and the provider
+// org leaked into every list, silently. A predicate that reads the actual data
+// cannot drift with configuration.
+const CLIENT_ORGS_ONLY = { users: { none: { role: 'ADMINISTRATOR' as const } } };
+
 // ─── Orgs ───────────────────────────────────────────────────────────────────
 export async function listAllOrgs(input: ListOrgsInput) {
   const skip = (input.page - 1) * input.limit;
+  // Deliberately NOT filtered to client orgs. This endpoint feeds only the
+  // organization dropdown on System Activity / System Logs, and platform-staff
+  // audit rows carry the PROVIDER org's customerId — hiding it here would make
+  // every staff action unfilterable in the audit trail.
   const where = {
     ...(input.plan ? { plan: input.plan } : {}),
     ...(input.suspended !== undefined ? { suspended: input.suspended } : {}),
@@ -57,12 +75,21 @@ export async function listAllOrgs(input: ListOrgsInput) {
   return { orgs, total, page: input.page, limit: input.limit, pages: Math.ceil(total / input.limit) };
 }
 
-export async function updateOrg(orgId: string, input: UpdateOrgInput) {
+export async function updateOrg(orgId: string, input: UpdateOrgInput, actorId: string) {
+  const before = await prisma.customer.findUnique({
+    where: { id: orgId }, select: { name: true, plan: true, suspended: true, creditLimit: true },
+  });
   try {
-    return await prisma.customer.update({
+    const updated = await prisma.customer.update({
       where: { id: orgId }, data: input,
       select: { id: true, name: true, slug: true, plan: true, suspended: true, creditLimit: true, orgCode: true, updatedAt: true },
     });
+    // Suspension, plan and credit limit all move through here, unlogged before.
+    await audit({
+      action: 'ORG_UPDATED', performedById: actorId, targetId: orgId, customerId: orgId,
+      metadata: { orgName: updated.name, changes: input, previous: before ?? {} },
+    });
+    return updated;
   } catch (err) {
     // orgCode is @unique — surface a clean conflict instead of a 500.
     if ((err as { code?: string }).code === 'P2002') {
@@ -112,8 +139,8 @@ export async function getPlatformMetrics() {
     openRequests, criticalRequests,
     contractAgg, servicesActive, servicesExpiring, servicesExpired,
   ] = await Promise.all([
-    prisma.customer.count({ where: { suspended: false, slug: { not: 'platform-platform-com' } } }),
-    prisma.customer.groupBy({ by: ['plan'], _count: { id: true }, where: { slug: { not: 'platform-platform-com' } } }),
+    prisma.customer.count({ where: { suspended: false, ...CLIENT_ORGS_ONLY } }),
+    prisma.customer.groupBy({ by: ['plan'], _count: { id: true }, where: CLIENT_ORGS_ONLY }),
     prisma.user.count({ where: { role: 'USER' } }),
     prisma.user.count({ where: { role: 'ORG_ADMIN' } }),
     prisma.serviceRequest.count({ where: { status: { in: ['OPEN', 'IN_PROGRESS', 'ESCALATED'] } } }),
@@ -147,7 +174,7 @@ export async function getPlatformMetrics() {
 // every client org + their admin + service status breakdown + open request counts.
 export async function getOrgsOverview() {
   const orgs = await prisma.customer.findMany({
-    where: { slug: { not: 'platform-platform-com' } },
+    where: CLIENT_ORGS_ONLY,
     select: {
       id: true, name: true, slug: true, plan: true, suspended: true,
       industry: true, contractValue: true, healthScore: true, csm: true,
@@ -193,7 +220,7 @@ export async function getOrgsOverview() {
 // ─── Top clients ────────────────────────────────────────────────────────────
 export async function getTopClients(limit = 10) {
   const orgs = await prisma.customer.findMany({
-    where: { suspended: false, contractValue: { gt: 0 } },
+    where: { suspended: false, contractValue: { gt: 0 }, ...CLIENT_ORGS_ONLY },
     select: {
       id: true, name: true, slug: true, plan: true, industry: true,
       contractValue: true, healthScore: true, csm: true, createdAt: true, suspended: true,
@@ -567,7 +594,10 @@ export async function deleteCatalogService(id: string) {
 }
 
 // ─── Administrator-only: SADMIN activity feed ───────────────────────────────
-const TRACKED_ACTIONS = ['LOGIN', 'LOGOUT', 'ADMIN_PASSWORD_RESET', 'ADMINISTRATOR_SADMIN_PASSWORD_RESET', 'ADMIN_USER_UPDATE', 'ADMINISTRATOR_SADMIN_UPDATE'];
+// Derived from the registry, not hand-listed. The hand-written version omitted
+// IMPERSONATE and every removal — the most destructive things staff can do were
+// missing from the feed whose whole job is showing what staff do.
+const TRACKED_ACTIONS = SADMIN_FEED_ACTIONS;
 
 export async function getSadminActivity(limit = 60) {
   const logs = await prisma.auditLog.findMany({
@@ -587,7 +617,11 @@ export async function getSadminActivity(limit = 60) {
 // ─── Administrator-only: system-wide activity log (audit console) ───────────
 // Default scope is account-lifecycle + session events across ALL orgs:
 // org creation, user registration, and every role's login / logout.
-const SYSTEM_ACTIONS = ['CUSTOMER_CREATED', 'USER_REGISTERED', 'LOGIN', 'LOGOUT'];
+// Derived from the registry's `defaultScope` flag. The hand-written version held
+// four actions out of 28, which is why user deletions were recorded correctly and
+// then filtered out of every default view — visible only to someone who knew to
+// pick "All actions".
+const SYSTEM_ACTIONS = DEFAULT_SCOPE_ACTIONS;
 
 export async function getSystemActivity(input: SystemActivityInput) {
   // action '*' = every audit action (full audit search); a specific action = exact

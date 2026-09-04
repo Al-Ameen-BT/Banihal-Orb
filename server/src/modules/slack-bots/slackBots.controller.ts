@@ -24,7 +24,7 @@ export async function disconnect(req: Request, res: Response, next: NextFunction
   try { res.json(await service.setEnabled(req.params['id']!, false)); } catch (err) { next(err); }
 }
 export async function generateApiKey(req: Request, res: Response, next: NextFunction): Promise<void> {
-  try { res.json(await service.generateApiKey(req.params['id']!)); } catch (err) { next(err); }
+  try { res.json(await service.generateApiKey(req.params['id']!, { userId: req.user.userId, customerId: req.user.customerId })); } catch (err) { next(err); }
 }
 
 // ─── Form fields ────────────────────────────────────────────────────────────

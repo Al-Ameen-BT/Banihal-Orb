@@ -1,4 +1,5 @@
 import { prisma } from '../../config/database';
+import { audit } from '../../lib/audit';
 import {
   ALL_PERMISSION_KEYS,
   ADMINISTRATION_ROLE_KEY,
@@ -134,6 +135,7 @@ export async function assertRoleAssignable(platformRoleId: string, holder: Set<P
 export async function createRole(
   input: { key: string; name: string; description?: string | null; permissions: string[] },
   holder: Set<PermissionKey>,
+  actor: { userId: string; customerId: string },
 ) {
   const keys = validateKeys(input.permissions);
   assertGrantable(keys, holder);
@@ -146,6 +148,12 @@ export async function createRole(
     data: { key: input.key, name: input.name, description: input.description ?? null, permissions: keys, system: false },
     select: { id: true, key: true, name: true, description: true, system: true, permissions: true, createdAt: true },
   });
+  // Creating a role IS a permission grant — it decides who can hold users.manage
+  // or credentials.reveal. Unlogged before this.
+  await audit({
+    action: 'ROLE_CREATED', performedById: actor.userId, targetId: row.id, customerId: actor.customerId,
+    metadata: { key: row.key, name: row.name, permissions: keys },
+  });
   bust();
   return row;
 }
@@ -154,8 +162,9 @@ export async function updateRole(
   id: string,
   input: { name?: string; description?: string | null; permissions?: string[] },
   holder: Set<PermissionKey>,
+  actor: { userId: string; customerId: string },
 ) {
-  const row = await prisma.platformRole.findUnique({ where: { id }, select: { key: true } });
+  const row = await prisma.platformRole.findUnique({ where: { id }, select: { key: true, name: true, permissions: true } });
   if (!row) throw Object.assign(new Error('Role not found'), { status: 404, code: 'NOT_FOUND' });
 
   // Administration is not editable. Its permissions are computed, never stored,
@@ -178,12 +187,18 @@ export async function updateRole(
     where: { id }, data,
     select: { id: true, key: true, name: true, description: true, system: true, permissions: true, createdAt: true },
   });
+  // The BEFORE set is the point: "who can do what changed" is unanswerable from
+  // the after-image alone.
+  await audit({
+    action: 'ROLE_UPDATED', performedById: actor.userId, targetId: id, customerId: actor.customerId,
+    metadata: { key: row.key, changes: input, previousPermissions: row.permissions },
+  });
   bust();
   return updated;
 }
 
-export async function deleteRole(id: string) {
-  const row = await prisma.platformRole.findUnique({ where: { id }, select: { key: true, system: true } });
+export async function deleteRole(id: string, actor: { userId: string; customerId: string }) {
+  const row = await prisma.platformRole.findUnique({ where: { id }, select: { key: true, name: true, system: true, permissions: true } });
   if (!row) throw Object.assign(new Error('Role not found'), { status: 404, code: 'NOT_FOUND' });
   if (row.system) throw badRequest('Seeded roles cannot be deleted', 'ROLE_SYSTEM');
 
@@ -192,6 +207,11 @@ export async function deleteRole(id: string) {
   const inUse = await prisma.user.count({ where: { platformRoleId: id } });
   if (inUse > 0) throw badRequest(`${inUse} staff account(s) still hold this role`, 'ROLE_IN_USE');
 
+  // Captured before the row is gone — otherwise the log cannot say what was lost.
+  await audit({
+    action: 'ROLE_DELETED', performedById: actor.userId, targetId: id, customerId: actor.customerId,
+    metadata: { key: row.key, name: row.name, permissions: row.permissions },
+  });
   await prisma.platformRole.delete({ where: { id } });
   bust();
 }

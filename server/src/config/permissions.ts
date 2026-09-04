@@ -17,6 +17,11 @@ export const PERMISSIONS = [
   { key: 'catalog.manage',           group: 'Platform',    label: 'Service Catalog' },
   { key: 'customer_services.manage', group: 'Platform',    label: 'Customer Services' },
   { key: 'orgs.manage',              group: 'Platform',    label: 'Organizations, flags & impersonation' },
+  // Deliberately NOT part of orgs.manage. Renaming an organization and destroying
+  // it — every user, ticket, attachment and chat session across four databases,
+  // irreversibly — are different decisions, and in an editable matrix they must be
+  // togglable independently. Seeded to Administration (computed) and HR Admin only.
+  { key: 'orgs.delete',              group: 'Platform',    label: 'Delete an organization' },
   { key: 'platform_audit.view',      group: 'Platform',    label: 'Audit log, logins & staff directory' },
   // The System Activity workspace: the cross-tenant audit trail of every action
   // on the platform. Split from platform_audit.view so it can be held ALONE —
