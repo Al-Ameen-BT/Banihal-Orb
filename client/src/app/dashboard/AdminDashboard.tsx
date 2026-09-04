@@ -39,12 +39,6 @@ interface WatchService {
   endDate: string; status: 'ACTIVE' | 'EXPIRING' | 'EXPIRED';
   customer: { id: string; name: string; plan: string };
 }
-interface AuditEntry {
-  id: string; action: string; createdAt: string; targetId: string | null;
-  metadata: Record<string, unknown> | null;
-  performedBy: { id: string; name: string; email: string; role: string } | null;
-  organization: { id: string; name: string; slug: string } | null;
-}
 
 // ─── Presentation config ──────────────────────────────────────────────────────
 const priorityCls: Record<string, string> = {
@@ -58,20 +52,6 @@ const levelCfg: Record<AnnouncementLevel, { cls: string; dot: string; label: str
   WARNING:  { cls: 'text-amber-700 bg-amber-50', dot: 'bg-amber-500', label: 'Warning' },
   CRITICAL: { cls: 'text-red-700 bg-red-50',     dot: 'bg-red-500',   label: 'Critical' },
 };
-const AUDIT_ACTIONS = [
-  { value: '',  label: 'Session & lifecycle (default)' },
-  { value: '*', label: 'All actions' },
-  { value: 'LOGIN', label: 'Logins' },
-  { value: 'LOGOUT', label: 'Logouts' },
-  { value: 'CUSTOMER_CREATED', label: 'Org created' },
-  { value: 'USER_REGISTERED', label: 'User registered' },
-  { value: 'IMPERSONATE', label: 'Impersonations' },
-  { value: 'UPDATE_SERVICE_REQUEST', label: 'Ticket updates' },
-  { value: 'SERVICE_RENEWED', label: 'Service renewals' },
-  { value: 'CUSTOMER_SERVICE_UPDATED', label: 'Service updates' },
-  { value: 'ANNOUNCEMENT_CREATED', label: 'Announcement created' },
-  { value: 'ANNOUNCEMENT_DELETED', label: 'Announcement deleted' },
-];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function humanizeMs(ms: number): string {
@@ -395,132 +375,6 @@ function AnnouncementsManager({ orgs }: { orgs: OrgOverview[] }) {
   );
 }
 
-// ─── Audit log search + CSV export ───────────────────────────────────────────
-function AuditLogSection({ orgs }: { orgs: OrgOverview[] }) {
-  const [action, setAction] = useState('');
-  const [orgId, setOrgId] = useState('');
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-
-  const params = useMemo(() => ({
-    limit: 100,
-    ...(action ? { action } : {}),
-    ...(orgId ? { orgId } : {}),
-    ...(from ? { from: `${from}T00:00:00` } : {}),
-    ...(to ? { to: `${to}T23:59:59` } : {}),
-  }), [action, orgId, from, to]);
-
-  const { data, isLoading } = useQuery<{ items: AuditEntry[]; total: number }>({
-    queryKey: ['admin-audit', params],
-    queryFn: () => saasAdminApi.getSystemActivity(params).then((r) => r.data as { items: AuditEntry[]; total: number }),
-    staleTime: 15_000,
-  });
-
-  const items = data?.items ?? [];
-
-  function exportCsv() {
-    const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const rows = [
-      ['Time', 'Action', 'Performed By', 'Email', 'Role', 'Organization', 'Target ID', 'Metadata'],
-      ...items.map((l) => [
-        new Date(l.createdAt).toISOString(), l.action,
-        l.performedBy?.name ?? '', l.performedBy?.email ?? '', l.performedBy?.role ?? '',
-        l.organization?.name ?? '', l.targetId ?? '',
-        l.metadata ? JSON.stringify(l.metadata) : '',
-      ]),
-    ];
-    const csv = rows.map((r) => r.map(esc).join(',')).join('\r\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `audit-log-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  }
-
-  return (
-    <div className="card overflow-hidden">
-      {/* Filters */}
-      <div className="px-4 py-3 border-b border-slate-100 flex items-end gap-3 flex-wrap">
-        <div>
-          <label htmlFor="audit-action" className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Action</label>
-          <select id="audit-action" value={action} onChange={(e) => setAction(e.target.value)} className="input !py-1.5 text-xs w-auto">
-            {AUDIT_ACTIONS.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
-          </select>
-        </div>
-        <div>
-          <label htmlFor="audit-org" className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Organization</label>
-          <select id="audit-org" value={orgId} onChange={(e) => setOrgId(e.target.value)} className="input !py-1.5 text-xs w-auto">
-            <option value="">All</option>
-            {orgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-          </select>
-        </div>
-        <div>
-          <label htmlFor="audit-from" className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">From</label>
-          <input id="audit-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="input !py-1.5 text-xs w-auto" />
-        </div>
-        <div>
-          <label htmlFor="audit-to" className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">To</label>
-          <input id="audit-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} className="input !py-1.5 text-xs w-auto" />
-        </div>
-        <div className="ml-auto flex items-center gap-3">
-          <span className="text-xs text-slate-400 tabular-nums">{data?.total ?? 0} entries</span>
-          <GlowButton variant="secondary" className="py-1.5 px-3 text-xs" onClick={exportCsv} disabled={items.length === 0}>
-            Export CSV ↓
-          </GlowButton>
-        </div>
-      </div>
-
-      {/* Table */}
-      <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
-        <table className="min-w-full">
-          <thead className="sticky top-0 bg-slate-50">
-            <tr className="border-b border-slate-200">
-              <th className="px-5 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Time</th>
-              <th className="px-5 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Action</th>
-              <th className="px-5 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Performed By</th>
-              <th className="px-5 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Organization</th>
-              <th className="px-5 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Detail</th>
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading ? (
-              Array.from({ length: 5 }).map((_, i) => <tr key={i}><td colSpan={5}><ShimmerRow /></td></tr>)
-            ) : items.length === 0 ? (
-              <tr><td colSpan={5} className="px-5 py-10 text-center text-sm text-slate-500">No audit entries match these filters.</td></tr>
-            ) : (
-              items.map((l) => (
-                <tr key={l.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors">
-                  <td className="px-5 py-2.5 whitespace-nowrap">
-                    <p className="text-xs font-mono tabular-nums text-slate-600">{new Date(l.createdAt).toLocaleString()}</p>
-                  </td>
-                  <td className="px-5 py-2.5">
-                    <span className="inline-flex px-2 py-0.5 rounded-md text-[11px] font-semibold text-slate-600 bg-slate-100">{l.action}</span>
-                  </td>
-                  <td className="px-5 py-2.5">
-                    {l.performedBy ? (
-                      <div>
-                        <p className="text-xs font-medium text-slate-900">{l.performedBy.name}</p>
-                        <p className="text-[11px] text-slate-400">{l.performedBy.email}</p>
-                      </div>
-                    ) : <span className="text-xs text-slate-400">—</span>}
-                  </td>
-                  <td className="px-5 py-2.5 text-xs text-slate-600">{l.organization?.name ?? '—'}</td>
-                  <td className="px-5 py-2.5">
-                    <p className="text-[11px] font-mono text-slate-400 truncate max-w-[260px]">
-                      {l.metadata ? JSON.stringify(l.metadata) : '—'}
-                    </p>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
 // ─── Page ─────────────────────────────────────────────────────────────────────
 export default function AdminPlatformDashboard() {
   const { user, can } = useAuth();
@@ -540,7 +394,6 @@ export default function AdminPlatformDashboard() {
   const showServices = can('customer_services.manage');
   const showControlPlane = can('nav.control_plane');
   const roleBadge = roleBadgeFor(user?.platformRole);
-  const showAudit = can('platform_audit.view');
 
   const { data: sla, isLoading: slaLoading } = useQuery<SlaBreachReport>({
     queryKey: ['admin-sla'],
@@ -855,22 +708,17 @@ export default function AdminPlatformDashboard() {
             </motion.div>
             )}
 
-            {/* ⑤ Communication & Governance — broadcasts + audit trail */}
-            {(showControlPlane || showAudit) && (
+            {/* ⑤ Communication — broadcasts. The audit trail that used to share
+                this group now has its own workspace at /system-logs; it was an
+                unrelated job bolted onto the announcement composer, buried below
+                three other groups on an already-long page. */}
+            {showControlPlane && (
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.15 }} className="space-y-6">
-              <GroupHeader index={step()} title="Communication & Governance" caption="Broadcast to client organizations and review the platform audit trail" />
-              {showControlPlane && (
-                <div>
-                  <SectionHeader title="Platform Announcements" hint="Broadcast maintenance windows and incident notices to client dashboards" />
-                  <AnnouncementsManager orgs={orgs} />
-                </div>
-              )}
-              {showAudit && (
-                <div>
-                  <SectionHeader title="Audit Log" hint="Search the platform audit trail and export filtered results" />
-                  <AuditLogSection orgs={orgs} />
-                </div>
-              )}
+              <GroupHeader index={step()} title="Communication" caption="Broadcast maintenance windows and incident notices to client organizations" />
+              <div>
+                <SectionHeader title="Platform Announcements" hint="Broadcast maintenance windows and incident notices to client dashboards" />
+                <AnnouncementsManager orgs={orgs} />
+              </div>
             </motion.div>
             )}
 

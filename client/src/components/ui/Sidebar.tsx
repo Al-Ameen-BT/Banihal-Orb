@@ -21,6 +21,7 @@ const icons = {
   key:       'M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z',
   profile:   'M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.963 0a9 9 0 10-11.963 0m11.963 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0z',
   activity:  'M2.25 12h3.75l2.25-6 3.75 12 2.25-6h3.75M18 12h3.75',
+  logs:      'M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12',
   logout:    'M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75',
 };
 
@@ -74,6 +75,7 @@ export default function Sidebar() {
     catalog: can('catalog.manage'),
     bots: can('bots.view'),
     systemActivity: can('system_activity.view'),
+    systemLogs: can('system_activity.view'),
   };
   const showPlatform = Object.values(platform).some(Boolean);
   const roleCfg = roleConfig[user?.role ?? ''] ?? roleConfig['USER']!;
@@ -118,6 +120,7 @@ export default function Sidebar() {
             {platform.catalog && <NavItem href="/saas-admin/catalog" label="Service Catalog" icon={icons.catalog} active={path === '/saas-admin/catalog'} />}
             {platform.bots && <NavItem href="/saas-admin/bots" label="Slack Bots" icon={icons.bots} active={path === '/saas-admin/bots'} />}
             {platform.systemActivity && <NavItem href="/system-activity" label="System Activity" icon={icons.activity} active={path === '/system-activity'} />}
+            {platform.systemLogs && <NavItem href="/system-logs" label="System Logs" icon={icons.logs} active={path === '/system-logs'} />}
           </>
         )}
 

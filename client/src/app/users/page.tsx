@@ -7,6 +7,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { usersApi, orgsApi, saasAdminApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { roleBadgeFor } from '@/lib/display';
+// The app's only segmented control. It lives under app/ticketing/ by accident of
+// history, not coupling — a plain generic export the ticketing pages also use.
+import { Segmented } from '../ticketing/shared';
 import { notify } from '@/lib/toast-bus';
 import RoleGuard from '@/components/guards/RoleGuard';
 import Sidebar from '@/components/ui/Sidebar';
@@ -143,8 +146,13 @@ export default function UsersPage() {
   // Confirmation modal state
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string; email: string; type: 'user' | 'sadmin' } | null>(null);
 
-  // Platform admin view state
-  const [platformTab, setPlatformTab] = useState<'USERS' | 'ORG_ADMINS' | 'SADMINS'>('USERS');
+  // Directory state. Two axes, not one: WHOSE people (client organizations vs the
+  // provider's own staff) and, within clients, which role. The old single tab
+  // mixed the two, so "All Users" sat beside "Platform Admins" as if they were
+  // alternatives on the same list — and it filtered to role === 'USER', meaning
+  // the tab claiming to show everyone showed the fewest people.
+  const [audience, setAudience] = useState<'CLIENTS' | 'PLATFORM'>('CLIENTS');
+  const [clientRole, setClientRole] = useState<'ALL' | 'ORG_ADMIN' | 'USER'>('ALL');
 
   const { data: users, isLoading: usersLoading } = useQuery<{ users: User[] }>({
     queryKey: ['users'],
@@ -309,6 +317,27 @@ export default function UsersPage() {
   const orgUserCount  = canManageUsers ? (allUsers ?? []).filter((u) => u.role === 'USER').length : null;
   const totalCount    = staffCount !== null && canManageUsers ? staffCount + (allUsers?.length ?? 0) : null;
   const shown = (v: number | null) => (v === null ? '—' : v);
+
+  // ─── Directory ─────────────────────────────────────────────────────────────
+  // Offer only the audiences whose data this viewer can actually load: `sadmins`
+  // needs platform_audit.view and `allUsers` needs users.manage. Rendering both
+  // regardless gave an Employee two tabs that were permanently, silently empty.
+  const audienceOptions = [
+    ...(canManageUsers ? [{ value: 'CLIENTS' as const, label: 'Clients' }] : []),
+    ...(canAudit ? [{ value: 'PLATFORM' as const, label: 'Platform' }] : []),
+  ];
+  // Fall back to whichever they hold, so the default 'CLIENTS' never strands a
+  // viewer on a tab that is not offered.
+  const activeAudience = audienceOptions.some((o) => o.value === audience)
+    ? audience
+    : audienceOptions[0]?.value ?? 'CLIENTS';
+
+  // ONE expression for both the rows and the header count — they used to be
+  // written separately and could disagree.
+  const directory = activeAudience === 'PLATFORM'
+    ? sadmins ?? []
+    : (allUsers ?? []).filter((u) => clientRole === 'ALL' || u.role === clientRole);
+  const directoryLoading = activeAudience === 'PLATFORM' ? sadminsLoading : allUsersLoading;
 
   return (
     <RoleGuard allowedRoles={['ORG_ADMIN', 'ADMINISTRATOR']}>
@@ -480,124 +509,147 @@ export default function UsersPage() {
                   </div>
                 )}
 
-                {/* Platform Users Directory */}
+                {/* User Roles */}
                 <div>
-                  <h2 className="text-base font-semibold text-slate-900 mb-4">Platform Users Directory</h2>
+                  <h2 className="text-base font-semibold text-slate-900">User Roles</h2>
+                  <p className="text-sm text-slate-500 mb-4">Who holds which role — across your client organizations and your own staff.</p>
                   <div className="card overflow-hidden">
-                    <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50">
-                      <div className="flex gap-2">
-                        {(['USERS', 'ORG_ADMINS', 'SADMINS'] as const).map((tab) => (
-                          <button
-                            key={tab}
-                            onClick={() => setPlatformTab(tab)}
-                            className={`px-3 py-1.5 text-xs font-semibold rounded-full transition-colors ${
-                              platformTab === tab ? 'bg-brand text-white' : 'bg-white text-slate-600 border border-slate-200 hover:border-slate-300'
-                            }`}
-                          >
-                            {tab === 'USERS' ? 'All Users' : tab === 'ORG_ADMINS' ? 'Org Admins' : 'Platform Admins'}
-                          </button>
-                        ))}
+                    <div className="px-4 py-3 border-b border-slate-100 bg-slate-50 flex items-center justify-between gap-3 flex-wrap">
+                      <div className="flex items-center gap-3 flex-wrap">
+                        {/* One option means no choice: don't render a toggle a
+                            viewer cannot move. */}
+                        {audienceOptions.length > 1 && (
+                          <Segmented value={activeAudience} onChange={setAudience} options={audienceOptions} layoutId="usersAudience" />
+                        )}
+                        {activeAudience === 'CLIENTS' && (
+                          <Segmented
+                            value={clientRole}
+                            onChange={setClientRole}
+                            size="sm"
+                            layoutId="usersClientRole"
+                            options={[
+                              { value: 'ALL', label: 'Everyone' },
+                              { value: 'ORG_ADMIN', label: 'Org Admins' },
+                              { value: 'USER', label: 'Users' },
+                            ]}
+                          />
+                        )}
                       </div>
-                      <span className="text-xs text-slate-400">
-                        {platformTab === 'SADMINS' ? sadmins?.length ?? 0 : allUsers?.filter(u => platformTab === 'ORG_ADMINS' ? u.role === 'ORG_ADMIN' : u.role === 'USER').length ?? 0} total
+                      <span className="text-xs text-slate-400 tabular-nums">
+                        {directory.length} {directory.length === 1 ? 'person' : 'people'}
                       </span>
                     </div>
-                    
+
                     <div className="overflow-y-auto max-h-[500px]">
-                      {(platformTab === 'SADMINS' ? sadminsLoading : allUsersLoading) ? (
+                      {directoryLoading ? (
                         <div className="p-4 space-y-3">{Array.from({ length: 4 }).map((_, i) => <ShimmerRow key={i} />)}</div>
+                      ) : directory.length === 0 ? (
+                        /* Sibling of the list, not a child of it — a <p> inside a
+                           <ul> is invalid, and the message now names the audience
+                           instead of the generic "this category". */
+                        <p className="px-5 py-10 text-center text-sm text-slate-400">
+                          {activeAudience === 'PLATFORM'
+                            ? 'No platform staff yet. Invite someone above.'
+                            : clientRole === 'ALL'
+                              ? 'No client users yet.'
+                              : `No ${clientRole === 'ORG_ADMIN' ? 'org admins' : 'users'} in any client organization yet.`}
+                        </p>
                       ) : (
                         <ul className="divide-y divide-slate-50">
-                          {(() => {
-                            const list = platformTab === 'SADMINS'
-                              ? sadmins ?? []
-                              : (allUsers ?? []).filter(u => platformTab === 'ORG_ADMINS' ? u.role === 'ORG_ADMIN' : u.role === 'USER');
-                            
-                            if (list.length === 0) {
-                              return <p className="px-5 py-10 text-center text-sm text-slate-400">No users found in this category.</p>;
-                            }
-
-                            return list.map((u) => {
-                              const lastLogin = u.lastLoginAt ? timeAgo(u.lastLoginAt) : 'Never';
-                              const isOnline = u.lastLoginAt && (Date.now() - new Date(u.lastLoginAt).getTime()) < 30 * 60 * 1000;
-                              return (
-                                <li key={u.id} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition-colors">
-                                  <div className="relative flex-shrink-0">
-                                    <div className={`w-9 h-9 rounded-full bg-gradient-to-br ${u.role === 'ADMINISTRATOR' ? 'from-brand-400 to-brand-600' : u.role === 'ORG_ADMIN' ? 'from-violet-400 to-violet-600' : 'from-slate-300 to-slate-400'} flex items-center justify-center text-sm font-bold text-white`}>
-                                      {u.name.charAt(0)}
-                                    </div>
-                                    {isOnline && <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 rounded-full border-2 border-white" />}
+                          {directory.map((u) => {
+                            const lastLogin = u.lastLoginAt ? timeAgo(u.lastLoginAt) : 'Never';
+                            const isOnline = u.lastLoginAt && (Date.now() - new Date(u.lastLoginAt).getTime()) < 30 * 60 * 1000;
+                            return (
+                              <li key={u.id} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition-colors">
+                                <div className="relative flex-shrink-0">
+                                  <div className={`w-9 h-9 rounded-full bg-gradient-to-br ${u.role === 'ADMINISTRATOR' ? 'from-brand-400 to-brand-600' : u.role === 'ORG_ADMIN' ? 'from-violet-400 to-violet-600' : 'from-slate-300 to-slate-400'} flex items-center justify-center text-sm font-bold text-white`}>
+                                    {u.name.charAt(0)}
                                   </div>
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-baseline gap-2">
-                                      <p className="text-sm font-semibold text-slate-900 truncate">{u.name}</p>
-                                      {!u.mfaEnabled && <span title="MFA disabled" className="text-amber-500 text-xs flex-shrink-0">⚠</span>}
-                                    </div>
-                                    <p className="text-xs text-slate-400 truncate">{u.email}</p>
+                                  {isOnline && <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 rounded-full border-2 border-white" />}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-baseline gap-2">
+                                    <p className="text-sm font-semibold text-slate-900 truncate">{u.name}</p>
+                                    {!u.mfaEnabled && <span title="MFA disabled" className="text-amber-500 text-xs flex-shrink-0">⚠</span>}
                                   </div>
-                                  {/* Actions. The role control used to be a 10px
-                                      unlabelled <select> stacked under the org
-                                      name — it read as metadata, not as the
-                                      permission-granting control it is. */}
-                                  <div className="flex items-center gap-4 flex-shrink-0">
-                                    <div className="text-right hidden sm:block">
-                                      <p className="text-xs font-mono text-slate-500">{lastLogin}</p>
-                                      <p className="text-[11px] text-slate-400 truncate max-w-[140px]" title={u.customer.name}>{u.customer.name}</p>
-                                    </div>
+                                  <p className="text-xs text-slate-400 truncate">{u.email}</p>
+                                </div>
+                                {/* Actions. The role control used to be a 10px
+                                    unlabelled <select> stacked under the org
+                                    name — it read as metadata, not as the
+                                    permission-granting control it is. */}
+                                <div className="flex items-center gap-4 flex-shrink-0">
+                                  <div className="text-right hidden sm:block">
+                                    <p className="text-xs font-mono text-slate-500">{lastLogin}</p>
+                                    <p className="text-[11px] text-slate-400 truncate max-w-[140px]" title={u.customer.name}>{u.customer.name}</p>
+                                  </div>
 
-                                    {u.role === 'ADMINISTRATOR' && (
-                                      <div className="w-[170px]">
-                                        <label
-                                          htmlFor={`role-${u.id}`}
-                                          className="block text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400 mb-1"
-                                        >
-                                          Platform role
-                                        </label>
-                                        {canManageUsers && platformRoles ? (
-                                          <div className="relative">
-                                            <select
-                                              id={`role-${u.id}`}
-                                              className="w-full appearance-none rounded-lg border border-slate-200 bg-white py-1.5 pl-2.5 pr-7 text-xs font-medium text-slate-800 cursor-pointer transition-colors hover:border-slate-300 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30 disabled:opacity-60 disabled:cursor-wait"
-                                              value={u.platformRole?.id ?? ''}
-                                              disabled={assignRoleMutation.isPending}
-                                              onChange={(e) => assignRoleMutation.mutate({ id: u.id, platformRoleId: e.target.value })}
-                                            >
-                                              {platformRoles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                                            </select>
-                                            {/* appearance-none removes the native arrow, so draw one back */}
-                                            <svg className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
-                                            </svg>
-                                          </div>
-                                        ) : (
-                                          // Read-only: still shows WHICH role, so the
-                                          // column reads the same for every viewer.
-                                          <span className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold ${roleBadgeFor(u.platformRole).cls}`}>
-                                            <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                                            {u.platformRole ? roleBadgeFor(u.platformRole).label : '—'}
-                                          </span>
-                                        )}
-                                      </div>
-                                    )}
+                                  {/* Client rows carry no controls, so reserving
+                                      the staff column's width left every one of
+                                      them ending in dead space. Show the role
+                                      instead and let the row close up. */}
+                                  {u.role !== 'ADMINISTRATOR' && (() => {
+                                    const cfg = roleConfig[u.role] ?? { label: u.role, cls: 'text-slate-600 bg-slate-100' };
+                                    return (
+                                      <span className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold ${cfg.cls}`}>
+                                        <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                                        {cfg.label}
+                                      </span>
+                                    );
+                                  })()}
 
-                                    {user?.id !== u.id && u.role === 'ADMINISTRATOR' && canManageUsers && (
-                                      <button
-                                        className="rounded-lg border border-transparent p-1.5 text-slate-400 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600 focus:outline-none focus:ring-2 focus:ring-red-300 disabled:opacity-50 cursor-pointer"
-                                        title={`Remove ${u.name}`}
-                                        aria-label={`Remove ${u.name}`}
-                                        onClick={() => setDeleteTarget({ id: u.id, name: u.name, email: u.email, type: 'sadmin' })}
-                                        disabled={removeSadminMutation.isPending}
+                                  {u.role === 'ADMINISTRATOR' && (
+                                    <div className="w-[170px]">
+                                      <label
+                                        htmlFor={`role-${u.id}`}
+                                        className="block text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400 mb-1"
                                       >
-                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-                                        </svg>
-                                      </button>
-                                    )}
-                                  </div>
-                                </li>
-                              );
-                            });
-                          })()}
+                                        Platform role
+                                      </label>
+                                      {canManageUsers && platformRoles ? (
+                                        <div className="relative">
+                                          <select
+                                            id={`role-${u.id}`}
+                                            className="w-full appearance-none rounded-lg border border-slate-200 bg-white py-1.5 pl-2.5 pr-7 text-xs font-medium text-slate-800 cursor-pointer transition-colors hover:border-slate-300 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30 disabled:opacity-60 disabled:cursor-wait"
+                                            value={u.platformRole?.id ?? ''}
+                                            disabled={assignRoleMutation.isPending}
+                                            onChange={(e) => assignRoleMutation.mutate({ id: u.id, platformRoleId: e.target.value })}
+                                          >
+                                            {platformRoles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                                          </select>
+                                          {/* appearance-none removes the native arrow, so draw one back */}
+                                          <svg className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+                                          </svg>
+                                        </div>
+                                      ) : (
+                                        // Read-only: still shows WHICH role, so the
+                                        // column reads the same for every viewer.
+                                        <span className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold ${roleBadgeFor(u.platformRole).cls}`}>
+                                          <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                                          {u.platformRole ? roleBadgeFor(u.platformRole).label : '—'}
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  {user?.id !== u.id && u.role === 'ADMINISTRATOR' && canManageUsers && (
+                                    <button
+                                      className="rounded-lg border border-transparent p-1.5 text-slate-400 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600 focus:outline-none focus:ring-2 focus:ring-red-300 disabled:opacity-50 cursor-pointer"
+                                      title={`Remove ${u.name}`}
+                                      aria-label={`Remove ${u.name}`}
+                                      onClick={() => setDeleteTarget({ id: u.id, name: u.name, email: u.email, type: 'sadmin' })}
+                                      disabled={removeSadminMutation.isPending}
+                                    >
+                                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                                      </svg>
+                                    </button>
+                                  )}
+                                </div>
+                            </li>
+                          );
+                          })}
                         </ul>
                       )}
                     </div>
