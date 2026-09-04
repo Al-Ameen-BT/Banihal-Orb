@@ -22,6 +22,7 @@ const icons = {
   profile:   'M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.963 0a9 9 0 10-11.963 0m11.963 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0z',
   activity:  'M2.25 12h3.75l2.25-6 3.75 12 2.25-6h3.75M18 12h3.75',
   logs:      'M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12',
+  clients:   'M13.5 21v-7.5a.75.75 0 01.75-.75h3a.75.75 0 01.75.75V21m-9 0V6.75a.75.75 0 00-.75-.75H4.5a.75.75 0 00-.75.75V21m0 0h16.5M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5',
   logout:    'M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75',
 };
 
@@ -68,9 +69,10 @@ export default function Sidebar() {
   const isOrgAdmin = user?.role === 'ORG_ADMIN';
   const isStaff = user?.role === 'ADMINISTRATOR';
   const showServices = isOrgAdmin || (isStaff && can('services.view'));
-  const showUsers = isOrgAdmin || (isStaff && can('users.manage'));
+  const showUsers = isOrgAdmin || (isStaff && (can('users.manage') || can('platform_audit.view')));
   const platform = {
     controlPlane: can('nav.control_plane'),
+    clients: can('users.manage'),
     customerServices: can('customer_services.manage'),
     catalog: can('catalog.manage'),
     bots: can('bots.view'),
@@ -116,6 +118,7 @@ export default function Sidebar() {
           <>
             <SectionDivider label="Platform" />
             {platform.controlPlane && <NavItem href="/saas-admin" label="Control Plane" icon={icons.saas} active={path === '/saas-admin'} />}
+            {platform.clients && <NavItem href="/clients" label="Clients" icon={icons.clients} active={path === '/clients'} />}
             {platform.customerServices && <NavItem href="/saas-admin/services" label="Customer Services" icon={icons.services} active={path === '/saas-admin/services'} />}
             {platform.catalog && <NavItem href="/saas-admin/catalog" label="Service Catalog" icon={icons.catalog} active={path === '/saas-admin/catalog'} />}
             {platform.bots && <NavItem href="/saas-admin/bots" label="Slack Bots" icon={icons.bots} active={path === '/saas-admin/bots'} />}

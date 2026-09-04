@@ -7,9 +7,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { usersApi, orgsApi, saasAdminApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { roleBadgeFor } from '@/lib/display';
-// The app's only segmented control. It lives under app/ticketing/ by accident of
-// history, not coupling — a plain generic export the ticketing pages also use.
-import { Segmented } from '../ticketing/shared';
 import { notify } from '@/lib/toast-bus';
 import RoleGuard from '@/components/guards/RoleGuard';
 import Sidebar from '@/components/ui/Sidebar';
@@ -17,6 +14,7 @@ import DataTable from '@/components/ui/DataTable';
 import GlowButton from '@/components/ui/GlowButton';
 import Toggle from '@/components/ui/Toggle';
 import { ShimmerRow } from '@/components/ui/Shimmer';
+import SummaryTile from '@/components/ui/SummaryTile';
 import type { User, Customer } from '@/lib/schemas';
 
 // ─── Confirmation Modal ─────────────────────────────────────────────────────
@@ -146,13 +144,6 @@ export default function UsersPage() {
   // Confirmation modal state
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string; email: string; type: 'user' | 'sadmin' } | null>(null);
 
-  // Directory state. Two axes, not one: WHOSE people (client organizations vs the
-  // provider's own staff) and, within clients, which role. The old single tab
-  // mixed the two, so "All Users" sat beside "Platform Admins" as if they were
-  // alternatives on the same list — and it filtered to role === 'USER', meaning
-  // the tab claiming to show everyone showed the fewest people.
-  const [audience, setAudience] = useState<'CLIENTS' | 'PLATFORM'>('CLIENTS');
-  const [clientRole, setClientRole] = useState<'ALL' | 'ORG_ADMIN' | 'USER'>('ALL');
 
   const { data: users, isLoading: usersLoading } = useQuery<{ users: User[] }>({
     queryKey: ['users'],
@@ -192,13 +183,6 @@ export default function UsersPage() {
     staleTime: 300_000,
   });
 
-  const { data: allUsers, isLoading: allUsersLoading } = useQuery<PlatformUser[]>({
-    queryKey: ['all-users'],
-    queryFn: () => saasAdminApi.listAllUsers().then((r) => (r.data as { users: PlatformUser[] }).users),
-    enabled: canManageUsers,
-    staleTime: 30_000,
-    refetchInterval: 60_000,
-  });
 
   const secMutation = useMutation({
     mutationFn: (d: { mfaRequired?: boolean }) => orgsApi.updateSecurity(d),
@@ -312,32 +296,11 @@ export default function UsersPage() {
   //
   // null (not 0) when the caller lacks the permission that enables the query.
   // An Employee holds neither key, and a confident "0 users" would be a lie.
-  const staffCount    = canAudit ? sadmins?.length ?? 0 : null;
-  const orgAdminCount = canManageUsers ? (allUsers ?? []).filter((u) => u.role === 'ORG_ADMIN').length : null;
-  const orgUserCount  = canManageUsers ? (allUsers ?? []).filter((u) => u.role === 'USER').length : null;
-  const totalCount    = staffCount !== null && canManageUsers ? staffCount + (allUsers?.length ?? 0) : null;
+  const staffCount = canAudit ? sadmins?.length ?? 0 : null;
   const shown = (v: number | null) => (v === null ? '—' : v);
 
-  // ─── Directory ─────────────────────────────────────────────────────────────
-  // Offer only the audiences whose data this viewer can actually load: `sadmins`
-  // needs platform_audit.view and `allUsers` needs users.manage. Rendering both
-  // regardless gave an Employee two tabs that were permanently, silently empty.
-  const audienceOptions = [
-    ...(canManageUsers ? [{ value: 'CLIENTS' as const, label: 'Clients' }] : []),
-    ...(canAudit ? [{ value: 'PLATFORM' as const, label: 'Platform' }] : []),
-  ];
-  // Fall back to whichever they hold, so the default 'CLIENTS' never strands a
-  // viewer on a tab that is not offered.
-  const activeAudience = audienceOptions.some((o) => o.value === audience)
-    ? audience
-    : audienceOptions[0]?.value ?? 'CLIENTS';
-
-  // ONE expression for both the rows and the header count — they used to be
-  // written separately and could disagree.
-  const directory = activeAudience === 'PLATFORM'
-    ? sadmins ?? []
-    : (allUsers ?? []).filter((u) => clientRole === 'ALL' || u.role === clientRole);
-  const directoryLoading = activeAudience === 'PLATFORM' ? sadminsLoading : allUsersLoading;
+  // Only platform staff live here now; the client roster moved to /clients.
+  const directory = sadmins ?? [];
 
   return (
     <RoleGuard allowedRoles={['ORG_ADMIN', 'ADMINISTRATOR']}>
@@ -366,11 +329,10 @@ export default function UsersPage() {
                 provider organization, which reads as the whole platform. */}
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.04 }}>
               {isPlatformAdmin ? (
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                  <SummaryTile label="Platform Staff" value={shown(staffCount)}    tone="brand"   hint="Provider-side accounts" />
-                  <SummaryTile label="Org Admins"     value={shown(orgAdminCount)} tone="violet"  hint="Across every client org" />
-                  <SummaryTile label="Org Users"      value={shown(orgUserCount)}  tone="emerald" hint="Across every client org" />
-                  <SummaryTile label="Total Users"    value={shown(totalCount)}    tone="amber"   hint="Everyone on the platform" />
+                // One tile, at its own width — a lone card stretched across a
+                // four-column grid would leave three empty cells.
+                <div className="max-w-[240px]">
+                  <SummaryTile label="Platform Staff" value={shown(staffCount)} tone="brand" hint="Provider-side accounts" />
                 </div>
               ) : (
                 <div className="grid grid-cols-3 gap-4">
@@ -512,48 +474,22 @@ export default function UsersPage() {
                 {/* User Roles */}
                 <div>
                   <h2 className="text-base font-semibold text-slate-900">User Roles</h2>
-                  <p className="text-sm text-slate-500 mb-4">Who holds which role — across your client organizations and your own staff.</p>
+                  <p className="text-sm text-slate-500 mb-4">Your own staff and the platform role each of them holds. Client organizations live under Clients.</p>
                   <div className="card overflow-hidden">
-                    <div className="px-4 py-3 border-b border-slate-100 bg-slate-50 flex items-center justify-between gap-3 flex-wrap">
-                      <div className="flex items-center gap-3 flex-wrap">
-                        {/* One option means no choice: don't render a toggle a
-                            viewer cannot move. */}
-                        {audienceOptions.length > 1 && (
-                          <Segmented value={activeAudience} onChange={setAudience} options={audienceOptions} layoutId="usersAudience" />
-                        )}
-                        {activeAudience === 'CLIENTS' && (
-                          <Segmented
-                            value={clientRole}
-                            onChange={setClientRole}
-                            size="sm"
-                            layoutId="usersClientRole"
-                            options={[
-                              { value: 'ALL', label: 'Everyone' },
-                              { value: 'ORG_ADMIN', label: 'Org Admins' },
-                              { value: 'USER', label: 'Users' },
-                            ]}
-                          />
-                        )}
-                      </div>
+                    <div className="px-4 py-2.5 border-b border-slate-100 bg-slate-50 flex items-center justify-between gap-3">
+                      <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Platform staff</span>
                       <span className="text-xs text-slate-400 tabular-nums">
                         {directory.length} {directory.length === 1 ? 'person' : 'people'}
                       </span>
                     </div>
 
                     <div className="overflow-y-auto max-h-[500px]">
-                      {directoryLoading ? (
+                      {sadminsLoading ? (
                         <div className="p-4 space-y-3">{Array.from({ length: 4 }).map((_, i) => <ShimmerRow key={i} />)}</div>
                       ) : directory.length === 0 ? (
                         /* Sibling of the list, not a child of it — a <p> inside a
-                           <ul> is invalid, and the message now names the audience
-                           instead of the generic "this category". */
-                        <p className="px-5 py-10 text-center text-sm text-slate-400">
-                          {activeAudience === 'PLATFORM'
-                            ? 'No platform staff yet. Invite someone above.'
-                            : clientRole === 'ALL'
-                              ? 'No client users yet.'
-                              : `No ${clientRole === 'ORG_ADMIN' ? 'org admins' : 'users'} in any client organization yet.`}
-                        </p>
+                           <ul> is invalid. */
+                        <p className="px-5 py-10 text-center text-sm text-slate-400">No platform staff yet. Invite someone above.</p>
                       ) : (
                         <ul className="divide-y divide-slate-50">
                           {directory.map((u) => {
@@ -583,20 +519,6 @@ export default function UsersPage() {
                                     <p className="text-xs font-mono text-slate-500">{lastLogin}</p>
                                     <p className="text-[11px] text-slate-400 truncate max-w-[140px]" title={u.customer.name}>{u.customer.name}</p>
                                   </div>
-
-                                  {/* Client rows carry no controls, so reserving
-                                      the staff column's width left every one of
-                                      them ending in dead space. Show the role
-                                      instead and let the row close up. */}
-                                  {u.role !== 'ADMINISTRATOR' && (() => {
-                                    const cfg = roleConfig[u.role] ?? { label: u.role, cls: 'text-slate-600 bg-slate-100' };
-                                    return (
-                                      <span className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold ${cfg.cls}`}>
-                                        <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                                        {cfg.label}
-                                      </span>
-                                    );
-                                  })()}
 
                                   {u.role === 'ADMINISTRATOR' && (
                                     <div className="w-[170px]">
@@ -723,20 +645,3 @@ export default function UsersPage() {
   );
 }
 
-function SummaryTile({ label, value, tone, hint }: {
-  label: string; value: number | string; tone: 'emerald' | 'brand' | 'violet' | 'amber'; hint?: string;
-}) {
-  const dot = { emerald: 'bg-emerald-500', brand: 'bg-brand', violet: 'bg-violet-500', amber: 'bg-amber-500' }[tone];
-  return (
-    <div className="card p-5">
-      <div className="flex items-center justify-between mb-3">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500">{label}</p>
-        <span className={`w-2 h-2 rounded-full ${dot}`} />
-      </div>
-      <p className="font-mono text-2xl font-bold text-slate-900 tabular-nums leading-none">{value}</p>
-      {/* Says WHICH population the number counts — four tiles of bare digits
-          side by side are otherwise indistinguishable from one another. */}
-      {hint && <p className="mt-1.5 text-[11px] text-slate-400 leading-tight">{hint}</p>}
-    </div>
-  );
-}
