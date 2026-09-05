@@ -48,6 +48,12 @@ export interface User {
   /** Vendor-staff role. Null for customer accounts (USER / ORG_ADMIN). */
   platformRole: { key: string; name: string } | null;
   /**
+   * The org's MFA enforcement, carried with the user's own flag so callers can
+   * compute EFFECTIVE MFA (see mfaStatus in lib/display). Login has always used
+   * `mfaEnabled || customer.mfaRequired`; the UI now agrees.
+   */
+  customer?: { mfaRequired: boolean } | null;
+  /**
    * Platform permission keys, expanded server-side (Administration arrives as
    * the full list). Empty for customer accounts.
    *

@@ -93,3 +93,22 @@ export function roleBadgeFor(role?: { key: string; name: string } | null): Badge
 
 /** Just the text colour, for headings that aren't pills (dashboard eyebrows). */
 export const roleTextCls = (b: Badge): string => b.cls.split(' ')[0] ?? 'text-slate-600';
+
+// ─── Effective MFA ───────────────────────────────────────────────────────────
+// MFA has TWO switches and only the login combined them:
+//   auth.service.initiateLogin → `user.mfaEnabled || user.customer.mfaRequired`
+// Every display read the first half alone, so a user their organization already
+// forces through MFA was shown as unprotected — a warning that is wrong in the
+// direction that teaches people to ignore warnings.
+//
+// `source` is what makes the copy honest: "they turned it on" and "their
+// organization requires it" are different sentences.
+export type MfaSource = 'user' | 'org' | 'none';
+
+export function mfaStatus(
+  u: { mfaEnabled?: boolean | null; customer?: { mfaRequired?: boolean | null } | null },
+): { on: boolean; source: MfaSource; label: string } {
+  if (u.customer?.mfaRequired) return { on: true, source: 'org', label: 'Required by their organization' };
+  if (u.mfaEnabled) return { on: true, source: 'user', label: 'Two-factor authentication is on' };
+  return { on: false, source: 'none', label: 'Two-factor authentication is off' };
+}

@@ -11,6 +11,7 @@ import Sidebar from '@/components/ui/Sidebar';
 import SummaryTile from '@/components/ui/SummaryTile';
 import { ShimmerRow } from '@/components/ui/Shimmer';
 import { Segmented } from '../ticketing/shared';
+import { mfaStatus } from '@/lib/display';
 
 // Everyone in a CLIENT organization, across all of them at once.
 //
@@ -24,7 +25,7 @@ import { Segmented } from '../ticketing/shared';
 interface ClientUser {
   id: string; name: string; email: string; role: string;
   mfaEnabled: boolean; lastLoginAt: string | null; createdAt: string;
-  customer: { id: string; name: string; slug: string; plan?: string | null };
+  customer: { id: string; name: string; slug: string; plan?: string | null; mfaRequired?: boolean };
 }
 
 const roleConfig: Record<string, { label: string; cls: string }> = {
@@ -165,7 +166,14 @@ export default function ClientsPage() {
                                     <div className="flex-1 min-w-0">
                                       <div className="flex items-baseline gap-2">
                                         <p className="text-sm font-semibold text-slate-900 truncate">{u.name}</p>
-                                        {!u.mfaEnabled && <span title="MFA disabled" className="text-amber-500 text-xs flex-shrink-0">⚠</span>}
+                                        {!mfaStatus(u).on && (
+                                        // role="img" + aria-label because a bare ⚠ with only a
+                                        // title attribute is silent to screen readers and
+                                        // unreachable on touch.
+                                        <span role="img" aria-label="Two-factor authentication is off"
+                                          title="Two-factor authentication is off"
+                                          className="text-amber-500 text-xs flex-shrink-0">⚠</span>
+                                      )}
                                       </div>
                                       <p className="text-xs text-slate-400 truncate">{u.email}</p>
                                     </div>

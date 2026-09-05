@@ -6,7 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { saasAdminApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
-import { roleBadgeFor, roleTextCls } from '@/lib/display';
+import { roleBadgeFor, roleTextCls, mfaStatus } from '@/lib/display';
 import RoleGuard from '@/components/guards/RoleGuard';
 import Sidebar from '@/components/ui/Sidebar';
 import KpiCard from '@/components/ui/KpiCard';
@@ -253,8 +253,12 @@ function OrgRow({ org, onSuspendToggle, suspendPending, onImpersonate, impersona
               <p className="text-sm font-medium text-slate-900 leading-tight truncate">{org.admin.name}</p>
               <p className="text-xs text-slate-400 font-mono truncate">{org.admin.email}</p>
             </div>
-            {!org.admin.mfaEnabled && (
-              <span title="Admin MFA disabled" className="text-amber-500 text-xs font-semibold flex-shrink-0">⚠</span>
+            {/* The row already carried org.mfaRequired and ignored it, so an
+                enforcing org still flagged its admin as unprotected. */}
+            {!mfaStatus({ mfaEnabled: org.admin.mfaEnabled, customer: { mfaRequired: org.mfaRequired } }).on && (
+              <span role="img" aria-label="Admin has two-factor authentication off"
+                title="Admin has two-factor authentication off"
+                className="text-amber-500 text-xs font-semibold flex-shrink-0">⚠</span>
             )}
           </div>
         ) : (

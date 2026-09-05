@@ -10,6 +10,7 @@ import RoleGuard from '@/components/guards/RoleGuard';
 import Sidebar from '@/components/ui/Sidebar';
 import GlowButton from '@/components/ui/GlowButton';
 import { useConfirm } from '@/components/ui/ConfirmDialog';
+import { mfaStatus } from '@/lib/display';
 import { Shimmer } from '@/components/ui/Shimmer';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -213,11 +214,13 @@ function CatalogPickerModal({ orgId, onClose }: { orgId: string; onClose: () => 
 }
 
 // ─── Editable Admin Card ────────────────────────────────────────────────────
-function AdminCard({ admin, onSaved }: { admin: OrgUser | null; onSaved: () => void }) {
+function AdminCard({ admin, onSaved, orgMfaRequired }: { admin: OrgUser | null; onSaved: () => void; orgMfaRequired: boolean }) {
   const qc = useQueryClient();
   const [name, setName] = useState(admin?.name ?? '');
   const [email, setEmail] = useState(admin?.email ?? '');
-  const [mfa, setMfa] = useState(admin?.mfaEnabled ?? false);
+  // Effective, so an enforcing org shows the switch on and locked rather
+  // than off-and-editable while login already forces MFA.
+  const [mfa, setMfa] = useState(orgMfaRequired || (admin?.mfaEnabled ?? false));
   const [tempPw, setTempPw] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
@@ -289,12 +292,17 @@ function AdminCard({ admin, onSaved }: { admin: OrgUser | null; onSaved: () => v
 
         <div className="flex items-center justify-between border-t border-slate-100 pt-4">
           <div>
-            <p className="text-sm font-medium text-slate-900">MFA Enforced</p>
-            <p className="text-xs text-slate-500 mt-0.5">Require multi-factor auth for this admin</p>
+            {/* Was labelled "MFA Enforced". It writes the per-user opt-in flag,
+                not org enforcement — two different switches. */}
+            <p className="text-sm font-medium text-slate-900">Two-factor authentication</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {orgMfaRequired ? 'Required org-wide — cannot be turned off here.' : 'This admin’s own setting'}
+            </p>
           </div>
           <button
             type="button"
-            onClick={() => setMfa(!mfa)}
+            onClick={() => { if (!orgMfaRequired) setMfa(!mfa); }}
+            disabled={orgMfaRequired}
             className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer
               ${mfa ? 'bg-brand' : 'bg-slate-200'}`}
             aria-pressed={mfa}
@@ -644,14 +652,21 @@ export default function OrgDetailPage() {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.07 }} className="lg:col-span-2">
                 <h2 className="text-base font-semibold text-slate-900 mb-4">Organization Admin</h2>
-                <AdminCard admin={admin} onSaved={() => { /* react-query already invalidated */ }} />
+                <AdminCard admin={admin} orgMfaRequired={org.mfaRequired} onSaved={() => { /* react-query already invalidated */ }} />
               </motion.div>
 
               <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.1 }}>
                 <h2 className="text-base font-semibold text-slate-900 mb-4">Security Posture</h2>
                 <div className="card p-5 space-y-4">
-                  <SecurityRow label="MFA Enforced" enabled={org.mfaRequired} />
-                  <SecurityRow label="Admin has MFA" enabled={admin?.mfaEnabled ?? false} />
+                  {/* Shown as two independent rows, an enforcing org whose admin
+                      hadn't opted in read "MFA Enforced: Enabled / Admin has MFA:
+                      Off" — a gap that does not exist, because login uses
+                      `mfaEnabled || mfaRequired`. Qualify the second by the first. */}
+                  <SecurityRow label="MFA enforced org-wide" enabled={org.mfaRequired} />
+                  <SecurityRow
+                    label={org.mfaRequired ? 'Admin signs in with MFA' : 'Admin opted in to MFA'}
+                    enabled={mfaStatus({ mfaEnabled: admin?.mfaEnabled ?? false, customer: { mfaRequired: org.mfaRequired } }).on}
+                  />
                   <div className="pt-3 border-t border-slate-100 space-y-1.5 text-sm">
                     <div className="flex justify-between"><span className="text-slate-500">Credit Limit</span><span className="font-mono tabular-nums font-semibold text-slate-900">{org.creditLimit.toLocaleString()}</span></div>
                     <div className="flex justify-between"><span className="text-slate-500">Open Requests</span><span className="font-mono tabular-nums font-semibold text-slate-900">{org._count.requests}</span></div>

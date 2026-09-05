@@ -6,7 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { usersApi, orgsApi, saasAdminApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
-import { roleBadgeFor } from '@/lib/display';
+import { roleBadgeFor, mfaStatus } from '@/lib/display';
 import { notify } from '@/lib/toast-bus';
 import RoleGuard from '@/components/guards/RoleGuard';
 import Sidebar from '@/components/ui/Sidebar';
@@ -97,7 +97,7 @@ interface PlatformUser {
   id: string; name: string; email: string; role: string;
   mfaEnabled: boolean; lastLoginAt: string | null; createdAt: string;
   platformRole?: { id: string; key: string; name: string } | null;
-  customer: { id: string; name: string; slug: string; domain?: string | null; plan?: string | null };
+  customer: { id: string; name: string; slug: string; domain?: string | null; plan?: string | null; mfaRequired?: boolean };
 }
 interface PlatformRole { id: string; key: string; name: string; description: string | null; system: boolean; permissions: string[] }
 const ACTION_LABEL: Record<string, { label: string; cls: string; icon: string }> = {
@@ -259,9 +259,13 @@ export default function UsersPage() {
     },
     {
       key: 'mfaEnabled', header: 'MFA',
-      render: (row: User) => row.mfaEnabled
-        ? <span className="text-emerald-600 text-sm font-semibold">✓</span>
-        : <span className="text-slate-400 text-sm">—</span>,
+      render: (row: User) => {
+        const m = mfaStatus(row);
+        // 'org' is ticked but muted: on, yet not the member's own choice.
+        return m.on
+          ? <span title={m.label} className={`text-sm font-semibold ${m.source === 'org' ? 'text-slate-500' : 'text-emerald-600'}`}>✓</span>
+          : <span title={m.label} className="text-slate-400 text-sm">—</span>;
+      },
     },
     {
       key: 'actions', header: '',
@@ -288,7 +292,8 @@ export default function UsersPage() {
   // Org-scoped: the signed-in user's OWN organization.
   const userCount  = users?.users.length ?? 0;
   const adminCount = users?.users.filter((u) => u.role === 'ORG_ADMIN').length ?? 0;
-  const mfaCount   = users?.users.filter((u) => u.mfaEnabled).length ?? 0;
+  // Effective, so the tile can never disagree with the column beside it.
+  const mfaCount   = users?.users.filter((u) => mfaStatus(u).on).length ?? 0;
 
   // Platform-wide, for the ADMINISTRATOR view. The two sources are disjoint:
   // listAllOrgUsers excludes ADMINISTRATOR, listSadmins returns only them — so
@@ -506,7 +511,14 @@ export default function UsersPage() {
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-baseline gap-2">
                                     <p className="text-sm font-semibold text-slate-900 truncate">{u.name}</p>
-                                    {!u.mfaEnabled && <span title="MFA disabled" className="text-amber-500 text-xs flex-shrink-0">⚠</span>}
+                                    {!mfaStatus(u).on && (
+                                        // role="img" + aria-label because a bare ⚠ with only a
+                                        // title attribute is silent to screen readers and
+                                        // unreachable on touch.
+                                        <span role="img" aria-label="Two-factor authentication is off"
+                                          title="Two-factor authentication is off"
+                                          className="text-amber-500 text-xs flex-shrink-0">⚠</span>
+                                      )}
                                   </div>
                                   <p className="text-xs text-slate-400 truncate">{u.email}</p>
                                 </div>

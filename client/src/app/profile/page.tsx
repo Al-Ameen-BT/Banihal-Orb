@@ -10,7 +10,7 @@ import Sidebar from '@/components/ui/Sidebar';
 import Toggle from '@/components/ui/Toggle';
 import GlowButton from '@/components/ui/GlowButton';
 import EnablePushButton from '@/components/EnablePushButton';
-import { roleBadgeFor } from '@/lib/display';
+import { roleBadgeFor, mfaStatus } from '@/lib/display';
 
 const roleConfig: Record<string, { label: string; cls: string; avatar: string }> = {
   USER:          { label: 'User',          cls: 'text-slate-600 bg-slate-100',  avatar: 'from-slate-400 to-slate-500' },
@@ -68,6 +68,7 @@ export default function ProfilePage() {
   // profile told them they were an "Administrator" — and unlike the sidebar, a
   // reload never corrected it because the platform role was never consulted.
   const staffBadge = user?.role === 'ADMINISTRATOR' ? roleBadgeFor(user.platformRole) : null;
+  const mfa = mfaStatus(user ?? { mfaEnabled: false });
 
   return (
     <RoleGuard allowedRoles={['USER', 'ORG_ADMIN', 'ADMINISTRATOR']}>
@@ -141,12 +142,18 @@ export default function ProfilePage() {
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.07, ease: [0.4,0,0.2,1] }}>
               <h2 className="text-base font-semibold text-slate-900 mb-4">Security</h2>
               <div className="card px-6">
+                {/* Under org enforcement this shows ON and locks. Before, it could
+                    be switched off while login still challenged on every untrusted
+                    device — the control appeared to work and changed nothing. The
+                    server refuses the write too, so the API can't route around it. */}
                 <Toggle
                   label="Two-Factor Authentication"
-                  description="Add an extra layer of security to your account"
-                  enabled={user?.mfaEnabled ?? false}
+                  description={mfa.source === 'org'
+                    ? 'Required by your organization — this cannot be turned off.'
+                    : 'Add an extra layer of security to your account'}
+                  enabled={mfa.on}
                   onChange={(v) => updateMutation.mutate({ mfaEnabled: v })}
-                  disabled={updateMutation.isPending}
+                  disabled={updateMutation.isPending || mfa.source === 'org'}
                 />
               </div>
             </motion.div>

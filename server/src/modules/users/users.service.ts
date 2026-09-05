@@ -19,6 +19,10 @@ const userSelect = {
   customerId: true,
   emailVerifiedAt: true,
   platformRole: { select: { key: true, name: true } },
+  // The org's enforcement flag travels WITH the user's own. Login decides with
+  // `mfaEnabled || customer.mfaRequired`; every display read only the first half,
+  // so a user their org already forces through MFA showed as unprotected.
+  customer: { select: { mfaRequired: true } },
   // passwordHash intentionally omitted
 } as const;
 
@@ -38,7 +42,28 @@ export async function getMe(userId: string) {
   return { ...rest, permissions };
 }
 
+/**
+ * Turning MFA OFF is refused while the organization requires it. Enabling is
+ * always allowed.
+ *
+ * Without this the toggle was a lie in both directions: the write succeeded, so
+ * the UI showed MFA off, while `initiateLogin` still challenged the user on every
+ * untrusted device because it reads `mfaEnabled || customer.mfaRequired`.
+ */
+async function assertMayDisableMfa(userId: string): Promise<void> {
+  const row = await prisma.user.findUnique({
+    where: { id: userId }, select: { customer: { select: { mfaRequired: true } } },
+  });
+  if (row?.customer?.mfaRequired) {
+    throw Object.assign(
+      new Error('Your organization requires two-factor authentication, so it cannot be turned off.'),
+      { status: 400, code: 'MFA_REQUIRED_BY_ORG' },
+    );
+  }
+}
+
 export async function updateMe(userId: string, input: UpdateMeInput) {
+  if (input.mfaEnabled === false) await assertMayDisableMfa(userId);
   const updated = await prisma.user.update({ where: { id: userId }, data: input, select: userSelect });
   await audit({
     action: 'USER_PROFILE_UPDATED', performedById: userId, targetId: userId,

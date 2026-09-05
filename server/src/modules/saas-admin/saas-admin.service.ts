@@ -266,8 +266,10 @@ export async function listAllOrgUsers() {
     select: {
       id: true, name: true, email: true, role: true, mfaEnabled: true, lastLoginAt: true, createdAt: true,
       customer: {
+        // mfaRequired so the directory can show EFFECTIVE MFA, not just the
+        // user's opt-in — see mfaStatus() on the client.
         select: {
-          id: true, name: true, slug: true, plan: true,
+          id: true, name: true, slug: true, plan: true, mfaRequired: true,
         },
       },
     },
@@ -502,9 +504,22 @@ const userSelect = {
 } as const;
 
 export async function updateUser(targetUserId: string, adminUserId: string, input: UpdateUserInput) {
-  const target = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, customerId: true, role: true, email: true } });
+  const target = await prisma.user.findUnique({
+    where: { id: targetUserId },
+    select: { id: true, customerId: true, role: true, email: true, customer: { select: { mfaRequired: true } } },
+  });
   if (!target) throw Object.assign(new Error('User not found'), { status: 404, code: 'NOT_FOUND' });
   if (target.role === 'ADMINISTRATOR') throw Object.assign(new Error('Platform admin accounts cannot be modified via this endpoint'), { status: 403, code: 'PROTECTED_ACCOUNT' });
+
+  // Same rule as the user's own profile toggle: enforcement outranks the opt-in,
+  // so nobody — not even an admin — can leave the flag saying "off" while login
+  // still challenges them.
+  if (input.mfaEnabled === false && target.customer?.mfaRequired) {
+    throw Object.assign(
+      new Error("This organization requires two-factor authentication, so it cannot be turned off for its members."),
+      { status: 400, code: 'MFA_REQUIRED_BY_ORG' },
+    );
+  }
 
   await prisma.auditLog.create({
     data: {
@@ -721,7 +736,7 @@ const sadminSelect = {
   // Administration is no longer the only assignable platform role.
   platformRoleId: true,
   platformRole: { select: { id: true, key: true, name: true } },
-  customer: { select: { id: true, name: true, slug: true, domain: true } },
+  customer: { select: { id: true, name: true, slug: true, domain: true, mfaRequired: true } },
 } as const;
 
 export async function listSadmins() {
