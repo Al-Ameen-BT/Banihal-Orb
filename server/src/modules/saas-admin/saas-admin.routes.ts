@@ -25,6 +25,11 @@ router.delete('/roles/:id', requirePermission('roles.manage'), saasAdminControll
 // Organizations (the key's label is "Organizations, flags & impersonation").
 router.get('/orgs', requirePermission('orgs.manage'), saasAdminController.listOrgs);
 router.get('/orgs/overview', requirePermission('orgs.manage'), saasAdminController.getOrgsOverview);
+// Admission queue. Declared before '/orgs/:id/...' so 'pending' is never captured
+// as an org id, and gated on orgs.approve rather than orgs.manage: deciding which
+// organizations exist at all is a narrower right than administering existing ones.
+router.get('/orgs/pending', requirePermission('orgs.approve'), saasAdminController.listPendingOrgs);
+router.post('/orgs/:id/reissue-approval', requirePermission('orgs.approve'), saasAdminController.reissueOrgApproval);
 router.patch('/orgs/:id', requirePermission('orgs.manage'), saasAdminController.updateOrg);
 // Deliberately NOT orgs.manage — see the key's comment in config/permissions.ts.
 // Held by Administration (computed) and HR Admin only.

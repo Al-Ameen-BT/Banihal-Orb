@@ -66,6 +66,34 @@ export async function permissionsFor(platformRoleId: string | null): Promise<Set
   return byId.get(platformRoleId) ?? new Set();
 }
 
+/**
+ * Every platform staff member who holds `key` — the people to notify when a
+ * decision needs one of them.
+ *
+ * Resolved through the same snapshot `permissionsFor` uses, so Administration is
+ * included automatically: its permissions are computed as the whole registry, and
+ * re-deriving that rule in a JSONB query would mean a second place to keep in sync
+ * (and would silently miss administrators, since their stored column is '[]').
+ *
+ * The `role: 'ADMINISTRATOR'` filter is a security boundary, not an optimisation.
+ * can() in rbac.middleware refuses every customer role before it looks at
+ * permissions, so an ORG_ADMIN carrying a stale platformRoleId must never be
+ * selected here — otherwise a customer would receive platform-staff mail.
+ */
+export async function usersWithPermission(key: PermissionKey): Promise<
+  { id: string; name: string; email: string; customerId: string }[]
+> {
+  const { byId } = await current();
+  const roleIds = [...byId.entries()].filter(([, keys]) => keys.has(key)).map(([id]) => id);
+  if (roleIds.length === 0) return [];
+
+  return prisma.user.findMany({
+    where: { role: 'ADMINISTRATOR', platformRoleId: { in: roleIds } },
+    select: { id: true, name: true, email: true, customerId: true },
+    orderBy: { email: 'asc' },
+  });
+}
+
 // ─── Reads for the roles matrix ──────────────────────────────────────────────
 
 export async function listRoles() {

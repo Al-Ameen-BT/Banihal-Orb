@@ -4,7 +4,13 @@ import { Role } from '@prisma/client';
 import app from '../src/app';
 import { prisma } from '../src/config/database';
 
-export async function createTestOrg(name: string) {
+/**
+ * `approved` is stamped for the same reason `emailVerifiedAt` is on createTestUser:
+ * login (and every authenticated request) is blocked while an org is awaiting
+ * platform approval, so an un-approved fixture would fail every test that signs in.
+ * Tests exercising the approval gate itself should set `approved: false` explicitly.
+ */
+export async function createTestOrg(name: string, approved = true) {
   const slug = name.toLowerCase().replace(/\s+/g, '-') + '-' + Math.random().toString(36).slice(2, 8);
   return prisma.customer.create({
     data: {
@@ -13,6 +19,8 @@ export async function createTestOrg(name: string) {
       mailId: `contact@${slug}.test`,
       contactPerson: 'Test Contact',
       contactNumber: '+1-555-0000',
+      approved,
+      ...(approved ? { approvedAt: new Date() } : {}),
     },
   });
 }
@@ -79,12 +87,27 @@ export async function registerAndLogin(orgName: string, email: string) {
   });
   if (res.status !== 201) throw new Error(`register failed (${res.status}): ${JSON.stringify(res.body)}`);
   await verifyUser(email);
+  await approveOrgOf(email);
   return loginAs(email);
 }
 
 /** Mark an account's email confirmed, the way redeeming the link would. */
 export async function verifyUser(email: string): Promise<void> {
   await prisma.user.update({ where: { email }, data: { emailVerifiedAt: new Date() } });
+}
+
+/**
+ * Admit the organization this account belongs to, the way a staff member handing
+ * over the approval code would. Self-registration now creates a PENDING org, so
+ * without this every registerAndLogin fixture would stop at ORG_NOT_APPROVED.
+ */
+export async function approveOrgOf(email: string): Promise<void> {
+  const user = await prisma.user.findUnique({ where: { email }, select: { customerId: true } });
+  if (!user) return;
+  await prisma.customer.update({
+    where: { id: user.customerId },
+    data: { approved: true, approvedAt: new Date() },
+  });
 }
 
 /**

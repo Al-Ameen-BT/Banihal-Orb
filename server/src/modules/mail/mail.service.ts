@@ -403,3 +403,126 @@ export async function sendVerificationEmail(to: string, verifyLink: string, ttlH
     return false;
   }
 }
+
+// ─── Organization approval code ──────────────────────────────────────────────
+// Sent to a PLATFORM STAFF member, not to a customer. They are the approver: the
+// code in this email is what admits a newly-registered organization, and they are
+// expected to read it aloud to that organization's admin once satisfied the
+// signup is genuine.
+//
+// The details of the registering org are included precisely because that decision
+// cannot be made from a bare code — the recipient needs to know who is asking.
+export interface OrgApprovalDetails {
+  orgName: string;
+  contactPerson: string;
+  contactEmail: string;
+  domain: string | null;
+}
+
+export function buildOrgApprovalEmail(
+  to: string,
+  code: string,
+  org: OrgApprovalDetails,
+  ttlMinutes: number,
+): { subject: string; html: string; text: string } {
+  const row = (label: string, value: string) => `
+    <tr>
+      <td style="padding:6px 0;font-size:13px;color:${FAINT};width:130px;">${label}</td>
+      <td style="padding:6px 0;font-size:13px;color:${INK};font-weight:600;">${value}</td>
+    </tr>`;
+
+  const bodyHtml = `
+    <h1 style="margin:0 0 8px;font-size:20px;font-weight:700;color:${INK};">Approve a new organization</h1>
+    <p style="margin:0 0 22px;font-size:14px;line-height:1.6;color:${MUTED};">
+      <strong>${org.orgName}</strong> has registered and confirmed its email address. It cannot sign in
+      until you pass the code below to its administrator.
+    </p>
+
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 22px;border-collapse:collapse;">
+      ${row('Organization', org.orgName)}
+      ${row('Administrator', org.contactPerson)}
+      ${row('Email', org.contactEmail)}
+      ${row('Domain', org.domain ?? '&mdash;')}
+    </table>
+
+    <p style="margin:0 0 8px;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:${BRAND_COLOR};">Approval code</p>
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 10px;">
+      <tr>
+        <td align="center" style="background:${BRAND_TINT};border:1px solid ${BRAND_BORDER};border-radius:12px;padding:22px 12px;">
+          <div style="font-family:${MONO};font-size:42px;font-weight:700;letter-spacing:12px;color:${BRAND_DARK};line-height:1;-webkit-user-select:all;-moz-user-select:all;user-select:all;">${code}</div>
+        </td>
+      </tr>
+    </table>
+    <p style="margin:0 0 24px;text-align:center;font-size:12px;color:${FAINT};">Valid for ${ttlMinutes} minutes. The administrator can request a new one if it expires.</p>
+
+    ${noticeBox([
+      `<strong>Verify who you are speaking to before sharing this code.</strong> It is the only thing standing between a stranger and an account on this platform.`,
+      `Read it aloud on a call you initiated, or send it through a channel you already trust. <strong>Do not forward this email.</strong>`,
+      `Share it only with the administrator named above &mdash; never with anyone who contacts you asking for it.`,
+      `<strong>If you do not recognise this organization,</strong> do nothing. Withholding the code is how a registration is refused; it expires on its own.`,
+    ])}`;
+
+  const text = [
+    `${BRAND_NAME} — approve a new organization`,
+    ``,
+    `${org.orgName} has registered and confirmed its email address. It cannot sign in`,
+    `until you pass the code below to its administrator.`,
+    ``,
+    `  Organization:   ${org.orgName}`,
+    `  Administrator:  ${org.contactPerson}`,
+    `  Email:          ${org.contactEmail}`,
+    `  Domain:         ${org.domain ?? '-'}`,
+    ``,
+    `Approval code:`,
+    ``,
+    `    ${code}`,
+    ``,
+    `Valid for ${ttlMinutes} minutes. The administrator can request a new one if it expires.`,
+    ``,
+    `SECURITY NOTICE`,
+    `- Verify who you are speaking to before sharing this code.`,
+    `- Read it aloud on a call you initiated, or use a channel you already trust. Do not forward this email.`,
+    `- Share it only with the administrator named above.`,
+    `- If you do not recognise this organization, do nothing. Withholding the code refuses the registration.`,
+    textFooter(to),
+  ].join('\n');
+
+  // The code is never in the subject line — subjects surface in lock-screen
+  // previews, and this one admits an entire organization.
+  return {
+    subject: `Approval needed: ${org.orgName} wants to join ${BRAND_NAME}`,
+    html: emailShell({ bodyHtml, to }),
+    text,
+  };
+}
+
+/**
+ * Send one approver their copy of the code. REPORTS delivery rather than swallowing
+ * it, like sendVerificationEmail: the whole approval flow is gated on at least one
+ * of these arriving, so the caller needs to know whether any did.
+ */
+export async function sendOrgApprovalEmail(
+  to: string,
+  code: string,
+  org: OrgApprovalDetails,
+  ttlMinutes: number,
+): Promise<boolean> {
+  const { subject, html, text } = buildOrgApprovalEmail(to, code, org, ttlMinutes);
+
+  if (!isSmtpConfigured()) {
+    console.log(`\n=============================================`);
+    console.log(`[Email Mock - SMTP Not Configured] Org approval code for ${to}:`);
+    console.log(`   ${code}   (${org.orgName}, expires in ${ttlMinutes} minutes)`);
+    console.log(`=============================================\n`);
+    return false;
+  }
+
+  try {
+    await transporter.sendMail({ from: `"${BRAND_NAME} Security" <${env.MAIL_FROM}>`, to, subject, html, text });
+    console.log(`Org approval email sent to ${to}`);
+    return true;
+  } catch (error) {
+    console.error('Error sending org approval email:', error);
+    return false;
+  }
+}

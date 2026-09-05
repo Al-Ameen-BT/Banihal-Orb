@@ -13,6 +13,13 @@ model Customer {
   slug          String                @unique
   plan          Plan                  @default(FREE)
   suspended     Boolean               @default(false)
+  // Platform admission. `suspended` is opt-OUT (default false, revokes an org that
+  // already works); this is opt-IN — a self-registered org cannot sign in until a
+  // staff member holding `orgs.approve` hands its admin a code out of band.
+  // Orgs on an ADMIN_DOMAINS address are created already approved, and every org
+  // that predates this column was backfilled to true (see db/b2b.sql).
+  approved      Boolean               @default(false)
+  approvedAt    DateTime?
   ssoEnabled    Boolean               @default(false)
   mfaRequired   Boolean               @default(false)
   creditLimit   Int                   @default(1000)
@@ -39,9 +46,36 @@ model Customer {
   services      CustomerService[]
   announcements Announcement[]
   escalations   TicketEscalation[]
+  approvalChallenge OrgApprovalChallenge?
 
   @@index([slug])
   @@map("customers")
+}
+
+// Short-lived code that admits a newly-registered organization to the platform.
+// Issued when the org admin confirms their email; the plaintext code is emailed to
+// the individual mailboxes of every staff user holding `orgs.approve` (Administration
+// + HR Admin), who read it to the org admin human-to-human.
+//
+// Deliberately shaped like EmailMfaChallenge: bcrypt-hashed so a database read cannot
+// be replayed, attempt-counted so the 6 digits cannot be walked, and short-lived. The
+// raw code is returned by no endpoint and set in no cookie — the browser only ever
+// holds `id`, which is useless without the code.
+//
+// NOT added to the tenant extension's globalModels in config/database.ts: it carries a
+// customerId, and the two paths that touch it (pre-auth approval, control plane) run
+// with no tenant context, so nothing is injected. Leaving it scoped is the fail-safe
+// default should it ever be read from inside a tenant-scoped request.
+model OrgApprovalChallenge {
+  id         String   @id @default(cuid())
+  // One live challenge per organization: re-issuing replaces the previous code.
+  customerId String   @unique
+  codeHash   String
+  attempts   Int      @default(0)
+  expiresAt  DateTime
+  lastSentAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 }
 
 // Global, platform-wide ticket-number format — a single row (id = "default"),

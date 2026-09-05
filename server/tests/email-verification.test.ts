@@ -11,6 +11,14 @@ const db = {
     create: vi.fn().mockResolvedValue({}), deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
   },
   auditLog: { create: vi.fn().mockResolvedValue({}) },
+  // verifyEmail checks whether the account's org still needs platform approval.
+  // Approved by default here so these tests keep exercising the verification gate
+  // alone; the approval path has its own file (org-approval.test.ts).
+  customer: {
+    findUnique: vi.fn().mockResolvedValue({
+      id: 'c1', name: 'Acme', mailId: 'a@b.com', contactPerson: 'A', domain: 'b.com', approved: true,
+    }),
+  },
   refreshToken: {
     findMany: vi.fn().mockResolvedValue([]),
     findFirst: vi.fn().mockResolvedValue(null),      // no competing active session
@@ -119,7 +127,7 @@ describe('initiateLogin — verification gate', () => {
   const user = async (emailVerifiedAt: Date | null) => ({
     id: 'u1', email: 'a@b.com', customerId: 'c1', role: 'USER', platformRoleId: null,
     passwordHash: await bcrypt.hash('pw', 4), mfaEnabled: false, emailVerifiedAt,
-    customer: { mfaRequired: false },
+    customer: { mfaRequired: false, approved: true, suspended: false },
   });
 
   it('blocks an unverified account even with the right password', async () => {

@@ -14,6 +14,7 @@ import AdminTicketing from './AdminTicketing';
 import {
   NewTicketForm, StatusBadge, PriorityBadge, SlaBadge, TypeBadge, PageHeader, StatStrip,
   Toolbar, Segmented, SearchInput, EmptyState, TicketBoard, Avatar, Modal, Icons, statusCfg, timeAgo,
+  apiErrorMessage,
 } from './shared';
 import TicketDetail from './TicketDetail';
 import type { TicketDTO, TicketProject, TicketStatus } from '@/lib/schemas';
@@ -28,7 +29,7 @@ function UserTicketing() {
     staleTime: 60_000,
   });
 
-  const { data: mineData, isLoading } = useQuery<{ tickets: TicketDTO[] }>({
+  const { data: mineData, isLoading, isError, error, refetch } = useQuery<{ tickets: TicketDTO[] }>({
     queryKey: ['ticketing', 'my-tickets'],
     queryFn: () => ticketingApi.listTickets({ mine: true }).then((r) => r.data as { tickets: TicketDTO[] }),
     staleTime: 15_000,
@@ -96,6 +97,19 @@ function UserTicketing() {
 
         {isLoading ? (
           <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <ShimmerCard key={i} />)}</div>
+        ) : isError ? (
+          /* Without this branch a failed request fell through to "No tickets yet",
+             so an outage or a rejected query was indistinguishable from an empty
+             queue — and invited the user to raise a duplicate ticket. */
+          <div className="card p-8 text-center">
+            <p className="text-sm font-medium text-slate-900">Couldn&apos;t load your tickets</p>
+            <p className="mt-1.5 text-sm text-slate-500">
+              {apiErrorMessage(error, 'The ticket service did not respond. Your tickets are safe — this is only a display problem.')}
+            </p>
+            <div className="mt-4">
+              <GlowButton variant="secondary" className="py-1.5 px-3 text-xs" onClick={() => void refetch()}>Try again</GlowButton>
+            </div>
+          </div>
         ) : tickets.length === 0 ? (
           <EmptyState icon={Icons.ticket({ className: 'w-6 h-6' })} title="No tickets yet"
             hint="Raise your first IT support ticket and track it here."

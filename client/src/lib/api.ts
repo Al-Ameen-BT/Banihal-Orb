@@ -113,6 +113,11 @@ export const authApi = {
   resendMfa: (data: { challengeId: string }) => api.post('/auth/mfa/resend', data),
   verifyEmail: (data: { token: string }) => api.post('/auth/verify-email', data),
   resendVerification: (data: { email: string }) => api.post('/auth/resend-verification', data),
+  // Organization approval. A successful verify sets session cookies — it IS a login.
+  // The code itself never travels in either direction of these calls except as the
+  // user's own typed input; the server only ever hands back a challenge id.
+  verifyOrgApproval: (data: { challengeId: string; code: string }) => api.post('/auth/org-approval/verify', data),
+  resendOrgApproval: (data: { challengeId: string }) => api.post('/auth/org-approval/resend', data),
   logout: () => api.post('/auth/logout'),
   forgotPassword: (data: { email: string }) => api.post('/auth/forgot-password', data),
   resetPassword: (data: { token: string; newPassword: string }) => api.post('/auth/reset-password', data),
@@ -331,6 +336,8 @@ export const chatApi = {
 export const saasAdminApi = {
   listOrgs: (params?: Record<string, unknown>) => api.get('/saas-admin/orgs', { params }),
   updateOrg: (id: string, data: unknown) => api.patch(`/saas-admin/orgs/${id}`, data),
+  listPendingOrgs: () => api.get('/saas-admin/orgs/pending'),
+  reissueOrgApproval: (id: string) => api.post(`/saas-admin/orgs/${id}/reissue-approval`),
   impersonate: (userId: string) => api.post(`/saas-admin/impersonate/${userId}`),
   getMetrics: () => api.get('/saas-admin/metrics'),
   getTopClients: (limit?: number) => api.get('/saas-admin/top-clients', { params: limit ? { limit } : undefined }),

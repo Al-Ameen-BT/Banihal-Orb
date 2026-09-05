@@ -100,7 +100,11 @@ export function TypeBadge({ type }: { type: string }) {
   );
 }
 export function SlaBadge({ status, remainingSeconds }: { status: SlaStatus; remainingSeconds: number | null }) {
-  const cfg = slaCfg[status];
+  // Same hazard SlaBar guards against below: an unknown/absent status yields
+  // undefined here, and reading cfg.cls then throws — which unmounts the whole
+  // page to the app error boundary over one malformed ticket. Every sibling
+  // badge in this file already falls back; this one did not.
+  const cfg = slaCfg[status] ?? slaCfg['none']!;
   const extra = status !== 'none' && status !== 'paused' && remainingSeconds != null
     ? ` · ${remainingSeconds <= 0 ? 'overdue' : formatDuration(remainingSeconds)}`
     : '';
@@ -202,6 +206,23 @@ export function formatDuration(seconds: number): string {
   return `${Math.round(s / 86400)}d`;
 }
 
+// ─── API error text ─────────────────────────────────────────────────────────────
+// The server answers a rejected query with { error, code, details }, where a Zod
+// failure puts the useful part in details.fieldErrors and leaves `error` as the
+// bare string "Validation failed". Reading only `error` therefore tells the user
+// nothing about WHICH filter was rejected, so name the offending fields too.
+type ApiError = {
+  response?: { data?: { error?: string; details?: { fieldErrors?: Record<string, string[]> } } };
+};
+export function apiErrorMessage(err: unknown, fallback: string): string {
+  const data = (err as ApiError)?.response?.data;
+  if (!data) return fallback;
+  const fields = Object.entries(data.details?.fieldErrors ?? {})
+    .map(([field, msgs]) => `${field}: ${msgs?.[0] ?? 'invalid'}`);
+  const base = data.error ?? fallback;
+  return fields.length ? `${base} — ${fields.join('; ')}` : base;
+}
+
 // ─── Page header ────────────────────────────────────────────────────────────────
 export function PageHeader({ eyebrow, title, subtitle, icon, actions }: {
   eyebrow: string; title: string; subtitle?: string; icon?: React.ReactNode; actions?: React.ReactNode;
@@ -268,8 +289,10 @@ export function SearchInput({ value, onChange, placeholder = 'Search…' }: { va
   return (
     <div className="relative flex-1 min-w-[180px]">
       <Icons.search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+      {/* ListTicketsSchema caps `search` at 200 chars — without this the box lets
+          you type past the limit and every further keystroke fires a 400. */}
       <input type="search" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
-        className="input !pl-9 !py-2 text-xs" />
+        maxLength={200} className="input !pl-9 !py-2 text-xs" />
     </div>
   );
 }

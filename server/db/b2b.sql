@@ -52,6 +52,38 @@ CREATE UNIQUE INDEX IF NOT EXISTS "customers_slug_key"    ON "customers" ("slug"
 CREATE UNIQUE INDEX IF NOT EXISTS "customers_domain_key"  ON "customers" ("domain");
 CREATE UNIQUE INDEX IF NOT EXISTS "customers_orgCode_key" ON "customers" ("orgCode");
 
+-- Platform admission gate. Added after the table already existed, so the two
+-- statements below do the backfill AND set the go-forward default, in that order:
+--
+--   1. ADD COLUMN ... DEFAULT true  → every organization that predates this feature
+--      is stamped approved. They are live customers; locking them out on deploy
+--      would be a self-inflicted outage.
+--   2. SET DEFAULT false            → every organization created from now on starts
+--      pending and must be admitted.
+--
+-- Both are idempotent, which matters because provision.sh re-runs on every deploy:
+-- step 1 no-ops once the column exists (so it can never re-approve a pending org),
+-- and step 2 is a no-op when the default is already false.
+ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "approved" BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE "customers" ALTER COLUMN "approved" SET DEFAULT false;
+ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "approvedAt" TIMESTAMPTZ;
+
+-- ─── OrgApprovalChallenge ────────────────────────────────────────────────────
+-- The code that admits a new organization. Same shape as EmailMfaChallenge —
+-- bcrypt-hashed, attempt-counted, short-lived. UNIQUE on customerId: one live
+-- challenge per org, so re-issuing replaces rather than accumulates.
+CREATE TABLE IF NOT EXISTS "OrgApprovalChallenge" (
+  "id"         TEXT PRIMARY KEY,
+  "customerId" TEXT NOT NULL REFERENCES "customers" ("id") ON DELETE CASCADE,
+  "codeHash"   TEXT NOT NULL,
+  "attempts"   INTEGER NOT NULL DEFAULT 0,
+  "expiresAt"  TIMESTAMPTZ NOT NULL,
+  "lastSentAt" TIMESTAMPTZ NOT NULL DEFAULT now(),
+  "createdAt"  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS "OrgApprovalChallenge_customerId_key"
+  ON "OrgApprovalChallenge" ("customerId");
+
 -- ─── TicketNumberSetting ─────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS "TicketNumberSetting" (
   "id"             TEXT PRIMARY KEY DEFAULT 'default',
@@ -97,7 +129,7 @@ INSERT INTO "PlatformRole" ("id","key","name","description","system","permission
   ('plr_hr_admin','hr_admin','HR Admin',
    'Business operations: organizations, users, services and the catalog.', true,
    '["nav.control_plane","catalog.manage","customer_services.manage","orgs.manage",
-     "platform_audit.view","revenue.view","users.manage","staff.invite","roles.manage","orgs.delete",
+     "platform_audit.view","revenue.view","users.manage","staff.invite","roles.manage","orgs.delete","orgs.approve",
      "services.view","nav.chat","tickets.view","tickets.write","ticket.store.admin"]'::jsonb),
 
   ('plr_employee','employee','Employee',
@@ -127,6 +159,11 @@ UPDATE "PlatformRole"
    SET "permissions" = "permissions" || '["orgs.delete"]'::jsonb
  WHERE "key" = 'hr_admin'
    AND NOT ("permissions" @> '["orgs.delete"]'::jsonb);
+
+UPDATE "PlatformRole"
+   SET "permissions" = "permissions" || '["orgs.approve"]'::jsonb
+ WHERE "key" = 'hr_admin'
+   AND NOT ("permissions" @> '["orgs.approve"]'::jsonb);
 
 -- ─── User ────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS "User" (

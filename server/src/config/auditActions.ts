@@ -22,6 +22,16 @@ export const AUDIT_ACTIONS = [
   { key: 'CUSTOMER_CREATED',                    group: 'Accounts', label: 'Org created',           defaultScope: true,  sadminFeed: false },
   { key: 'ORG_DELETED',                         group: 'Accounts', label: 'Org deleted',           defaultScope: true,  sadminFeed: true  },
   { key: 'ORG_UPDATED',                         group: 'Accounts', label: 'Org updated',           defaultScope: true,  sadminFeed: true  },
+  // ── Platform admission. sadminFeed on all four: admitting an organization is a
+  //    staff decision made off-platform, so the audit trail is the only record
+  //    that it happened and who was in a position to make it.
+  { key: 'ORG_APPROVAL_REQUESTED',              group: 'Accounts', label: 'Approval code issued',  defaultScope: true,  sadminFeed: true  },
+  { key: 'ORG_APPROVED',                        group: 'Accounts', label: 'Org approved',          defaultScope: true,  sadminFeed: true  },
+  { key: 'ORG_APPROVAL_FAILED',                 group: 'Accounts', label: 'Approval code rejected', defaultScope: true, sadminFeed: true  },
+  // Fires when NO staff member holds `orgs.approve`, which means no one can admit
+  // the org and the signup is stranded. Surfaced in the feed rather than only in
+  // logs, because nothing else would reveal it until a customer complained.
+  { key: 'ORG_APPROVAL_NO_RECIPIENTS',          group: 'Accounts', label: 'No approvers available', defaultScope: true, sadminFeed: true  },
   { key: 'USER_REGISTERED',                     group: 'Accounts', label: 'User registered',       defaultScope: true,  sadminFeed: false },
   { key: 'USER_INVITED',                        group: 'Accounts', label: 'User invited',          defaultScope: true,  sadminFeed: false },
   { key: 'USER_REMOVED',                        group: 'Accounts', label: 'User removed',          defaultScope: true,  sadminFeed: false },

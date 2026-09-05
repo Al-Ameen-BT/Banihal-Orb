@@ -8,6 +8,7 @@ import { env } from '../../config/env';
 import { uniqueOrgCode } from '../../utils/orgCode';
 import { ADMINISTRATION_ROLE_KEY } from '../../config/permissions';
 import * as mailService from '../mail/mail.service';
+import * as orgApproval from './orgApproval.service';
 import type { RegisterInput, RegisterUserInput, LoginInput, ForgotPasswordInput, ResetPasswordInput } from './auth.schema';
 
 const BCRYPT_ROUNDS = 12;
@@ -175,6 +176,11 @@ export async function register(input: RegisterInput): Promise<RegistrationResult
         contactNumber: input.contactNumber,
         domain: deriveDomain(input.email),
         orgCode,
+        // Orgs on a provider domain admit themselves — they ARE the vendor, so
+        // there is no one above them to ask. Everyone else starts pending and is
+        // admitted by a staff member with `orgs.approve` (orgApproval.service).
+        approved: isProviderAdmin,
+        ...(isProviderAdmin ? { approvedAt: new Date() } : {}),
         users: {
           create: {
             email: input.email,
@@ -243,6 +249,16 @@ export async function registerUser(input: RegisterUserInput): Promise<Registrati
     throw Object.assign(
       new Error('This organization is suspended. Contact your administrator.'),
       { status: 403, code: 'ORG_SUSPENDED' },
+    );
+  }
+  // An organization that has not been admitted yet cannot grow. Without this, a
+  // pending org's domain would still accept new members — who would each then be
+  // blocked at login, and who would dilute the "one admin waiting on a code" story
+  // the approval flow assumes.
+  if (!customer.approved) {
+    throw Object.assign(
+      new Error('This organization is still awaiting approval from the platform team. Try again once it has been admitted.'),
+      { status: 403, code: 'ORG_NOT_APPROVED' },
     );
   }
 
@@ -418,8 +434,18 @@ export async function issueEmailVerification(userId: string, email: string): Pro
   return mailService.sendVerificationEmail(email, link, EMAIL_VERIFICATION_TTL_HOURS);
 }
 
-/** Redeem a verification link. Idempotent: an already-verified account succeeds. */
-export async function verifyEmail(rawToken: string): Promise<{ email: string }> {
+/**
+ * Redeem a verification link. Idempotent: an already-verified account succeeds.
+ *
+ * When the user's organization is still awaiting platform approval, this also
+ * issues the approval challenge and returns its id — confirming the mailbox is
+ * what starts the 10-minute clock, so it begins when the org admin is actually
+ * looking at the screen rather than whenever they got round to reading the email.
+ */
+export async function verifyEmail(rawToken: string): Promise<{
+  email: string;
+  approval?: { challengeId: string; expiresAt: Date; organizationName: string };
+}> {
   const row = await prisma.emailVerificationToken.findUnique({
     where: { tokenHash: sha256(rawToken) },
     include: { user: { select: { id: true, email: true, customerId: true, emailVerifiedAt: true } } },
@@ -441,6 +467,21 @@ export async function verifyEmail(rawToken: string): Promise<{ email: string }> 
 
   // Burn every token for this user, so the link cannot be replayed.
   await prisma.emailVerificationToken.deleteMany({ where: { userId: row.user.id } }).catch(() => {});
+
+  // Pending organization → hand back a challenge so the client can show the code
+  // screen. Only the org's own admin starts this: a member joining an existing org
+  // has nothing to approve, and re-confirming an already-approved org must not
+  // re-issue a code.
+  const org = await prisma.customer.findUnique({
+    where: { id: row.user.customerId },
+    select: { id: true, name: true, mailId: true, contactPerson: true, domain: true, approved: true },
+  });
+  if (org && !org.approved) {
+    const { approved: _approved, ...details } = org;
+    const { challengeId, expiresAt } = await orgApproval.issueApprovalChallenge(details);
+    return { email: row.user.email, approval: { challengeId, expiresAt, organizationName: org.name } };
+  }
+
   return { email: row.user.email };
 }
 
@@ -526,7 +567,7 @@ export async function initiateLogin(
 ): Promise<LoginOutcome> {
   const user = await prisma.user.findUnique({
     where: { email: input.email },
-    select: { id: true, email: true, customerId: true, role: true, platformRoleId: true, passwordHash: true, mfaEnabled: true, emailVerifiedAt: true, customer: { select: { mfaRequired: true } } },
+    select: { id: true, email: true, customerId: true, role: true, platformRoleId: true, passwordHash: true, mfaEnabled: true, emailVerifiedAt: true, customer: { select: { mfaRequired: true, approved: true, suspended: true } } },
   });
   if (!user) throw invalidCredentials();
 
@@ -535,10 +576,31 @@ export async function initiateLogin(
 
   // Placed AFTER the password check on purpose: answering this before the password
   // is verified would turn login into an oracle for which addresses are registered.
+  // Every org-state check below inherits that ordering for the same reason.
   if (!user.emailVerifiedAt) {
     throw Object.assign(
       new Error('Confirm your email address before signing in. Check your inbox for the confirmation link.'),
       { status: 403, code: 'EMAIL_NOT_VERIFIED' },
+    );
+  }
+
+  // The approval gate. The client-side code screen is UX; THIS is the enforcement —
+  // a pending org cannot obtain a session by any route that does not go through
+  // orgApproval.verifyApprovalCode.
+  if (!user.customer.approved) {
+    throw Object.assign(
+      new Error('Your organization is awaiting approval from the platform team. You will be able to sign in once it has been admitted.'),
+      { status: 403, code: 'ORG_NOT_APPROVED' },
+    );
+  }
+
+  // Suspension was previously enforced only per-request (auth.middleware), so a
+  // suspended org completed login, received cookies, and then 403'd on its very
+  // next call. Checking it here means the block lands where the user can read it.
+  if (user.customer.suspended) {
+    throw Object.assign(
+      new Error('Your organization\'s account is suspended. Contact your administrator.'),
+      { status: 403, code: 'CUSTOMER_SUSPENDED' },
     );
   }
 
@@ -608,6 +670,47 @@ export async function verifyMfa(challengeId: string, code: string): Promise<Toke
   await prisma.emailMfaChallenge.delete({ where: { id: challenge.id } }).catch(() => {});
   const tokens = await finalizeLogin(challenge.user);
   return { ...tokens, userId: challenge.user.id };
+}
+
+/**
+ * Step 2 of onboarding a new organization: validate the staff-issued approval code
+ * and sign the org admin straight in.
+ *
+ * Issuing a session here is a deliberate exception to this module's "signing up is
+ * never a login" rule (see register()). The exception is bounded by what has been
+ * proven at this point: the caller controls the registered mailbox (they redeemed
+ * the verification link to get this challenge) AND holds a code that only a vendor
+ * staff member could have given them. That is a higher bar than forgotPassword,
+ * which already grants full account access on mailbox control alone.
+ *
+ * The org is approved by verifyApprovalCode before this returns, so finalizeLogin
+ * is issuing a session for an org that is, by then, admitted.
+ */
+export async function verifyOrgApproval(
+  challengeId: string,
+  code: string,
+): Promise<TokenPair & { userId: string; organizationName: string }> {
+  const { userId, orgName } = await orgApproval.verifyApprovalCode(challengeId, code);
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, customerId: true, role: true, platformRoleId: true },
+  });
+  if (!user) throw invalidCredentials();
+
+  const tokens = await finalizeLogin(user);
+  return { ...tokens, userId: user.id, organizationName: orgName };
+}
+
+/**
+ * Re-issue the approval code. Unlike resendMfaCode the challenge id CHANGES, because
+ * the row is keyed by organization and upserted — the caller must use the id returned
+ * here for the next verify.
+ */
+export async function resendOrgApprovalCode(
+  challengeId: string,
+): Promise<{ challengeId: string; expiresAt: Date }> {
+  return orgApproval.resendApprovalCode(challengeId);
 }
 
 // Re-send a fresh code for an in-flight challenge (subject to a short cooldown).

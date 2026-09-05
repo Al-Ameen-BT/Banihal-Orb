@@ -15,6 +15,8 @@ router.post('/refresh', authController.refresh);
 router.post('/logout', authController.logout);
 router.post('/verify-email', authController.verifyEmail);
 router.post('/resend-verification', authController.resendVerification);
+router.post('/org-approval/verify', authController.verifyOrgApproval);
+router.post('/org-approval/resend', authController.resendOrgApproval);
 router.post('/forgot-password', authController.forgotPassword);
 router.post('/reset-password', authController.resetPassword);
 

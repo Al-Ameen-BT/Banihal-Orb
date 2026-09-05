@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { RegisterSchema, RegisterUserSchema, LoginSchema, ForgotPasswordSchema, ResetPasswordSchema, VerifyMfaSchema, ResendMfaSchema, VerifyEmailSchema, ResendVerificationSchema } from './auth.schema';
+import { RegisterSchema, RegisterUserSchema, LoginSchema, ForgotPasswordSchema, ResetPasswordSchema, VerifyMfaSchema, ResendMfaSchema, VerifyEmailSchema, ResendVerificationSchema, VerifyOrgApprovalSchema, ResendOrgApprovalSchema } from './auth.schema';
 import * as authService from './auth.service';
 import { env } from '../../config/env';
 
@@ -73,8 +73,54 @@ export async function registerUser(req: Request, res: Response, next: NextFuncti
 export async function verifyEmail(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { token } = VerifyEmailSchema.parse(req.body);
-    const { email } = await authService.verifyEmail(token);
+    const { email, approval } = await authService.verifyEmail(token);
+
+    // A pending organization gets the approval step instead of "you can sign in".
+    // `approval` carries the challenge id and its expiry so the client can run the
+    // countdown — never the code, which exists only in the approvers' mailboxes.
+    if (approval) {
+      res.json({
+        message: 'Email confirmed. Your organization is awaiting approval.',
+        email: maskEmail(email),
+        approval: {
+          challengeId: approval.challengeId,
+          expiresAt: approval.expiresAt.toISOString(),
+          organizationName: approval.organizationName,
+        },
+      });
+      return;
+    }
+
     res.json({ message: 'Email confirmed. You can sign in now.', email: maskEmail(email) });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─── Organization approval ───────────────────────────────────────────────────
+// The org admin submits the code a staff member read to them. On success this is
+// a login: cookies are set and the client redirects to the dashboard.
+export async function verifyOrgApproval(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = VerifyOrgApprovalSchema.parse(req.body);
+    const result = await authService.verifyOrgApproval(input.challengeId, input.code);
+    setTokenCookies(res, result);
+    res.json({ message: 'Organization approved.', organizationName: result.organizationName });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function resendOrgApproval(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = ResendOrgApprovalSchema.parse(req.body);
+    const { challengeId, expiresAt } = await authService.resendOrgApprovalCode(input.challengeId);
+    // The challenge id changes on re-issue, so hand back the new one. Still no code.
+    res.json({
+      message: 'A new code has been sent to the platform team.',
+      challengeId,
+      expiresAt: expiresAt.toISOString(),
+    });
   } catch (err) {
     next(err);
   }

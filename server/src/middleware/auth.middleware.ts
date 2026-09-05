@@ -56,10 +56,10 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     prisma.refreshToken.update({ where: { id: session.id }, data: { lastUsedAt: new Date() } }).catch(() => {});
   }
 
-  // Verify customer is not suspended
+  // Verify the customer is still both un-suspended and admitted
   const customer = await prisma.customer.findUnique({
     where: { id: payload.customerId },
-    select: { suspended: true },
+    select: { suspended: true, approved: true },
   });
 
   if (!customer) {
@@ -69,6 +69,15 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
 
   if (customer.suspended) {
     res.status(403).json({ error: 'Customer is suspended', code: 'CUSTOMER_SUSPENDED' });
+    return;
+  }
+
+  // Login already refuses an unapproved org, so this should be unreachable — which
+  // is the point. It bounds the damage of any future path that mints a session
+  // without going through initiateLogin, and it means revoking an org's approval
+  // takes effect on the next request rather than at the next login.
+  if (!customer.approved) {
+    res.status(403).json({ error: 'Organization is awaiting approval', code: 'ORG_NOT_APPROVED' });
     return;
   }
 

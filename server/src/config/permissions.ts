@@ -22,6 +22,14 @@ export const PERMISSIONS = [
   // irreversibly — are different decisions, and in an editable matrix they must be
   // togglable independently. Seeded to Administration (computed) and HR Admin only.
   { key: 'orgs.delete',              group: 'Platform',    label: 'Delete an organization' },
+  // Admitting a newly self-registered organization to the platform. Holders receive
+  // the approval code by email and decide, off-platform, whether to pass it on — so
+  // this key is the entire admission control for the product. Separate from
+  // orgs.manage for the same reason orgs.delete is: letting someone edit an existing
+  // customer is a different decision from letting them create new ones.
+  //
+  // Seeded to Administration (computed) and HR Admin.
+  { key: 'orgs.approve',             group: 'Platform',    label: 'Approve new organizations' },
   { key: 'platform_audit.view',      group: 'Platform',    label: 'Audit log, logins & staff directory' },
   // The System Activity workspace: the cross-tenant audit trail of every action
   // on the platform. Split from platform_audit.view so it can be held ALONE —

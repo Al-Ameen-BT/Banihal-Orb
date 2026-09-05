@@ -23,6 +23,7 @@ const icons = {
   activity:  'M2.25 12h3.75l2.25-6 3.75 12 2.25-6h3.75M18 12h3.75',
   logs:      'M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12',
   clients:   'M13.5 21v-7.5a.75.75 0 01.75-.75h3a.75.75 0 01.75.75V21m-9 0V6.75a.75.75 0 00-.75-.75H4.5a.75.75 0 00-.75.75V21m0 0h16.5M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5',
+  pending:   'M9 12.75l2.25 2.25 4.5-4.5M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292',
   logout:    'M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75',
 };
 
@@ -72,6 +73,7 @@ export default function Sidebar() {
   const showUsers = isOrgAdmin || (isStaff && (can('users.manage') || can('platform_audit.view')));
   const platform = {
     controlPlane: can('nav.control_plane'),
+    pendingOrgs: can('orgs.approve'),
     clients: can('users.manage'),
     customerServices: can('customer_services.manage'),
     catalog: can('catalog.manage'),
@@ -118,6 +120,7 @@ export default function Sidebar() {
           <>
             <SectionDivider label="Platform" />
             {platform.controlPlane && <NavItem href="/saas-admin" label="Control Plane" icon={icons.saas} active={path === '/saas-admin'} />}
+            {platform.pendingOrgs && <NavItem href="/saas-admin/pending" label="Pending Orgs" icon={icons.pending} active={path === '/saas-admin/pending'} />}
             {platform.clients && <NavItem href="/clients" label="Clients" icon={icons.clients} active={path === '/clients'} />}
             {platform.customerServices && <NavItem href="/saas-admin/services" label="Customer Services" icon={icons.services} active={path === '/saas-admin/services'} />}
             {platform.catalog && <NavItem href="/saas-admin/catalog" label="Service Catalog" icon={icons.catalog} active={path === '/saas-admin/catalog'} />}

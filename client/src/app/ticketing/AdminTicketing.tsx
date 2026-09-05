@@ -14,7 +14,7 @@ import { useToast } from '@/components/ui/Toast';
 import {
   NewTicketForm, StatusBadge, PriorityBadge, TypeBadge, SlaBar, PageHeader,
   Toolbar, Segmented, SearchInput, EmptyState, Avatar, Icons,
-  priorityCls, timeAgo, STATUS_OPTIONS, PRIORITY_OPTIONS, staffLabel,
+  priorityCls, timeAgo, STATUS_OPTIONS, PRIORITY_OPTIONS, staffLabel, apiErrorMessage,
 } from './shared';
 import AdminTicketDetail from './AdminTicketDetail';
 import type { TicketDTO, TicketProject, TicketSla, TicketStats, TicketAnalytics, TicketReport, TicketStatus, TicketPriority } from '@/lib/schemas';
@@ -358,8 +358,7 @@ function TicketsTab({ projectFilter, onClearProject, initialTicketId }: { projec
           <div className="card p-8 text-center">
             <p className="text-sm font-medium text-slate-900">Couldn&apos;t load tickets</p>
             <p className="mt-1.5 text-sm text-slate-500">
-              {(error as { response?: { data?: { error?: string } } })?.response?.data?.error
-                ?? 'The ticket service did not respond. Your filters have not been changed.'}
+              {apiErrorMessage(error, 'The ticket service did not respond. Your filters have not been changed.')}
             </p>
             <div className="mt-4 flex items-center justify-center gap-2">
               <GlowButton variant="secondary" className="py-1.5 px-3 text-xs" onClick={() => void refetch()}>Try again</GlowButton>
@@ -571,6 +570,7 @@ function SlasTab() {
 
 // ─── Reports ───────────────────────────────────────────────────────────────────
 function ReportsTab() {
+  const toast = useToast();
   const [type, setType] = useState<'status' | 'priority' | 'type' | 'project' | 'assignee'>('status');
   const [report, setReport] = useState<TicketReport | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -578,7 +578,14 @@ function ReportsTab() {
 
   async function generate() {
     setGenerating(true);
-    try { const { data } = await ticketingApi.getReport({ type }); setReport(data as TicketReport); } finally { setGenerating(false); }
+    try {
+      const { data } = await ticketingApi.getReport({ type });
+      setReport(data as TicketReport);
+    } catch (err) {
+      // Called as `void generate()`, so without this catch a failed report was an
+      // unhandled rejection: the button simply reset and nothing ever appeared.
+      toast(apiErrorMessage(err, 'Could not generate the report'), 'error');
+    } finally { setGenerating(false); }
   }
   function exportCsv() {
     if (!report) return;

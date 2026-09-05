@@ -89,6 +89,14 @@ const EnvSchema = z.object({
   MFA_CODE_TTL_MINUTES: z.coerce.number().min(1).default(10),
   MFA_MAX_ATTEMPTS: z.coerce.number().min(1).default(5),
   MFA_RESEND_COOLDOWN_SECONDS: z.coerce.number().min(0).default(30),
+  // Organization approval: the code a staff member reads to a new org's admin.
+  // The TTL is short by design — it is handed over during a live conversation, and
+  // the org admin can request a fresh one (subject to the cooldown) if the call runs
+  // long. Attempts are capped for the same reason MFA's are: 6 digits only resist
+  // guessing while the number of guesses is bounded.
+  ORG_APPROVAL_TTL_MINUTES: z.coerce.number().min(1).default(10),
+  ORG_APPROVAL_MAX_ATTEMPTS: z.coerce.number().min(1).default(5),
+  ORG_APPROVAL_RESEND_COOLDOWN_SECONDS: z.coerce.number().min(0).default(60),
   // Web Push (VAPID, RFC 8292). Optional: when unset, push sending is disabled and
   // the API responds 503 PUSH_NOT_CONFIGURED. Generate with:
   //   npx web-push generate-vapid-keys

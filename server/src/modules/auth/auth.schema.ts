@@ -56,6 +56,18 @@ export const ResendMfaSchema = z.object({
   challengeId: z.string().min(1, 'Challenge is required'),
 });
 
+// Organization approval: the code a platform staff member hands to a new org's
+// admin. Same shape as the MFA code, and validated the same way — the regex means
+// a malformed body is rejected before it can consume one of the five attempts.
+export const VerifyOrgApprovalSchema = z.object({
+  challengeId: z.string().min(1, 'Challenge is required'),
+  code: z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit approval code'),
+});
+
+export const ResendOrgApprovalSchema = z.object({
+  challengeId: z.string().min(1, 'Challenge is required'),
+});
+
 // Email verification: redeem the link, or ask for a fresh one.
 export const VerifyEmailSchema = z.object({
   token: z.string().min(1, 'Token is required'),

@@ -156,6 +156,10 @@ async function main() {
       mailId: adminEmail, contactPerson: 'Alex Chen',
       contactNumber: '+1-555-0100', domain: deriveDomain(adminEmail),
       orgCode: codeFor('Tech'),
+      // Seeded orgs are pre-approved. `approved` defaults to false so that SELF-
+      // registration lands in the admission queue; demo data is not self-registered,
+      // and without this every seeded account would be locked out at login.
+      approved: true, approvedAt: new Date(),
     },
   });
   const sadmin = await prisma.user.create({
@@ -395,6 +399,7 @@ async function main() {
         contactNumber: `+1-555-${String(101 + created.length).padStart(4, '0')}`,
         domain: deriveDomain(spec.adminEmail),
         orgCode: codeFor(spec.name),
+        approved: true, approvedAt: new Date(),   // see the Tech org above
       },
     });
 

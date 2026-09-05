@@ -16,6 +16,7 @@ import { PERMISSIONS } from '../../config/permissions';
 import { can } from '../../middleware/rbac.middleware';
 import * as saasAdminService from './saas-admin.service';
 import * as orgDeletion from './orgDeletion.service';
+import * as orgApproval from '../auth/orgApproval.service';
 import { cached, cacheKey, TTL } from '../../lib/cache';
 
 export async function getTicketNumberFormat(_req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -51,6 +52,22 @@ export async function deleteOrg(req: Request, res: Response, next: NextFunction)
   try {
     const report = await orgDeletion.deleteOrganization(req.params['id']!, req.user.userId);
     res.json({ success: true, ...report });
+  } catch (err) { next(err); }
+}
+
+// ─── Organization admission queue ────────────────────────────────────────────
+export async function listPendingOrgs(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const orgs = await orgApproval.listPendingOrgs();
+    res.json({ orgs });
+  } catch (err) { next(err); }
+}
+
+export async function reissueOrgApproval(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { expiresAt } = await orgApproval.reissueForCustomer(req.params['id']!, req.user.userId);
+    // The code goes to the approvers' mailboxes, never through this response.
+    res.json({ message: 'A new approval code has been sent.', expiresAt: expiresAt.toISOString() });
   } catch (err) { next(err); }
 }
 
