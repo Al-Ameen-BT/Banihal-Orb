@@ -110,8 +110,12 @@ export function SlaBadge({ status, remainingSeconds }: { status: SlaStatus; rema
 // Dual SLA progress bar (matches the reference images: a labelled bar + a status pill
 // that reads "<Response|Resolution> SLA Stopped" when the clock is not running —
 // i.e. paused (client_pending) or the ticket is completed).
-export function SlaBar({ label, evaluation }: { label: 'Response' | 'Resolution'; evaluation: SlaEvaluation }) {
-  const { status, budgetSeconds, remainingSeconds } = evaluation;
+export function SlaBar({ label, evaluation }: { label: 'Response' | 'Resolution'; evaluation?: SlaEvaluation | null }) {
+  // Destructuring an absent evaluation throws, and a throw here takes the whole
+  // page to the error boundary — one ticket missing SLA data would unmount the
+  // list. A ticket without an SLA is a normal state, so render it as one.
+  const { status, budgetSeconds, remainingSeconds } = evaluation
+    ?? { status: 'none' as SlaEvaluation['status'], budgetSeconds: null, remainingSeconds: null };
   const none = budgetSeconds == null;
   const stopped = status === 'paused' || (budgetSeconds != null && remainingSeconds == null);
   const overdue = !none && remainingSeconds != null && remainingSeconds <= 0;

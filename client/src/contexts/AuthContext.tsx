@@ -4,6 +4,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import api, { authApi } from '@/lib/api';
 import { notify } from '@/lib/toast-bus';
 import { syncSubscription } from '@/lib/push-client';
+import { sessionEnded } from '@/lib/session-bus';
 // api used directly for the initial auth check (validateStatus suppresses 401 console errors)
 import type { User } from '@/lib/schemas';
 
@@ -50,6 +51,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         });
         if (refreshed.status === 200) {
           res = await api.get('/users/me', { validateStatus: (s) => s < 500 });
+        } else if ((res.data as { code?: string } | undefined)?.code === 'SESSION_REVOKED') {
+          // The dialog is raised from the axios error interceptor — but
+          // `validateStatus` above makes a 401 a SUCCESS, so that interceptor
+          // never sees this one. This is the commonest path by far (every page
+          // load and refresh goes through AuthContext first), so without raising
+          // it here an administrator changing someone's role produced a silent
+          // bounce to /login instead of the explanation.
+          sessionEnded();
         }
       }
 

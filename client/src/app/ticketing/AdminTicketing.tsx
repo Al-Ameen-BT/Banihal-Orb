@@ -262,6 +262,11 @@ function AdminTicketCard({ ticket, onOpen }: { ticket: TicketDTO; onOpen: () => 
 
 type Category = 'all' | 'escalated';
 
+// Assignee ids are ticket-store UUIDs. A deep link carrying anything else (the
+// ops dashboard's synthetic '__unassigned__' bucket, a stale id) must fall back
+// to "no filter" rather than reach the API and fail validation.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function TicketsTab({ projectFilter, onClearProject, initialTicketId }: { projectFilter: string | null; onClearProject: () => void; initialTicketId?: string | null }) {
   const searchParams = useSearchParams();
   const [category, setCategory] = useState<Category>('all');
@@ -270,9 +275,13 @@ function TicketsTab({ projectFilter, onClearProject, initialTicketId }: { projec
   // /ticketing?assignee=<id> lands pre-filtered — the deep link the ops
   // dashboard's assignee scorecards point at. Seeded once; the select owns it
   // afterwards, so clearing the filter does not fight the URL.
-  const [assigneeFilter, setAssigneeFilter] = useState<'ALL' | string>(
-    () => searchParams.get('assignee') ?? 'ALL',
-  );
+  const [assigneeFilter, setAssigneeFilter] = useState<'ALL' | string>(() => {
+    // `??` does NOT catch an empty string, so `?assignee=` seeded the filter with
+    // '' — which is not 'ALL', so it was sent as `assigneeId=''` and 400'd the
+    // whole list. Anything that is not a real assignee id means "no filter".
+    const raw = searchParams.get('assignee')?.trim();
+    return raw && UUID_RE.test(raw) ? raw : 'ALL';
+  });
   const [search, setSearch] = useState('');
   const [view, setView] = useState<'list' | 'grid'>('list');
   const [detailId, setDetailId] = useState<string | null>(initialTicketId ?? null);
@@ -284,7 +293,7 @@ function TicketsTab({ projectFilter, onClearProject, initialTicketId }: { projec
     queryKey: ['ticketing', 'projects'], queryFn: () => ticketingApi.listProjects().then((r) => r.data as { projects: TicketProject[] }), staleTime: 60_000,
   });
 
-  const { data, isLoading } = useQuery<{ tickets: TicketDTO[] }>({
+  const { data, isLoading, isError, error, refetch } = useQuery<{ tickets: TicketDTO[] }>({
     queryKey: ['ticketing', 'tickets', category, statusFilter, priorityFilter, assigneeFilter, projectFilter, search],
     queryFn: () => ticketingApi.listTickets({
       ...(category === 'escalated' ? { escalatedOnly: true } : {}),
@@ -342,6 +351,24 @@ function TicketsTab({ projectFilter, onClearProject, initialTicketId }: { projec
 
         {isLoading ? (
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">{Array.from({ length: 4 }).map((_, i) => <ShimmerCard key={i} />)}</div>
+        ) : isError ? (
+          /* A failed fetch used to render as "No tickets match this filter" —
+             indistinguishable from an empty result, so a rejected filter looked
+             like an empty queue. Say what happened and offer a way out. */
+          <div className="card p-8 text-center">
+            <p className="text-sm font-medium text-slate-900">Couldn&apos;t load tickets</p>
+            <p className="mt-1.5 text-sm text-slate-500">
+              {(error as { response?: { data?: { error?: string } } })?.response?.data?.error
+                ?? 'The ticket service did not respond. Your filters have not been changed.'}
+            </p>
+            <div className="mt-4 flex items-center justify-center gap-2">
+              <GlowButton variant="secondary" className="py-1.5 px-3 text-xs" onClick={() => void refetch()}>Try again</GlowButton>
+              <GlowButton variant="ghost" className="py-1.5 px-3 text-xs"
+                onClick={() => { setStatusFilter('ALL'); setPriorityFilter('ALL'); setAssigneeFilter('ALL'); setSearch(''); onClearProject(); }}>
+                Clear filters
+              </GlowButton>
+            </div>
+          </div>
         ) : tickets.length === 0 ? (
           <EmptyState icon={Icons.ticket({ className: 'w-6 h-6' })}
             title={category === 'escalated' ? 'No escalated tickets' : 'No tickets match this filter'}

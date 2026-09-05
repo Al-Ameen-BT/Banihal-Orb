@@ -5,15 +5,32 @@ export const PriorityEnum = z.enum(['low', 'medium', 'high', 'urgent']);
 export const TypeEnum = z.enum(['bug', 'feature', 'task', 'story']);
 export const TimeUnitEnum = z.enum(['minutes', 'hours', 'days']);
 
+/**
+ * A cleared filter arrives as `?status=` — an EMPTY string, not an absent key.
+ * `.optional()` does not accept that: it rejects, the whole request 400s, and the
+ * ticket list dies because someone set a dropdown back to "All".
+ *
+ * Blank means "no filter" in every UI convention, so normalise it to `undefined`
+ * BEFORE the enum/uuid check. Applied here rather than at each call site because
+ * every filter funnels through this schema — fixing it once covers the filters
+ * that do not exist yet.
+ *
+ * A non-blank but malformed value still fails: `?assigneeId=nonsense` is a real
+ * error, and silently ignoring it would show EVERY ticket to someone who asked
+ * for one person's queue — wrong data that looks right.
+ */
+const blank = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), schema.optional());
+
 export const ListTicketsSchema = z.object({
-  status: StatusEnum.optional(),
-  priority: PriorityEnum.optional(),
-  type: TypeEnum.optional(),
-  projectId: z.string().uuid().optional(),
-  assigneeId: z.string().uuid().optional(),
-  mine: z.coerce.boolean().optional(),
-  escalatedOnly: z.coerce.boolean().optional(),
-  search: z.string().max(200).optional(),
+  status: blank(StatusEnum),
+  priority: blank(PriorityEnum),
+  type: blank(TypeEnum),
+  projectId: blank(z.string().uuid()),
+  assigneeId: blank(z.string().uuid()),
+  mine: blank(z.coerce.boolean()),
+  escalatedOnly: blank(z.coerce.boolean()),
+  search: blank(z.string().max(200)),
 });
 
 export const CreateTicketSchema = z.object({
