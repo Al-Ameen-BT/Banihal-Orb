@@ -7,7 +7,7 @@ import { corsOptions } from './config/security';
 import { env } from './config/env';
 import { prisma } from './config/database';
 import { chatPrisma } from './config/chatDatabase';
-import { ticketingPrisma } from './config/ticketingDatabase';
+import { ticketPrisma, adminTicketPrisma } from './config/ticketDatabase';
 import { globalRateLimiter } from './middleware/rateLimiter';
 import { authMiddleware } from './middleware/auth.middleware';
 import { tenantMiddleware } from './middleware/tenant.middleware';
@@ -68,21 +68,24 @@ app.use('/api/auth', authRoutes);
 // session), so it is mounted before the cookie auth middleware.
 app.use('/api/ad-ingest', adIngestRoutes);
 
-// ─── Health check (verifies all three databases) ─────────────────────────────
+// ─── Health check ────────────────────────────────────────────────────────────
+// Pings the stores the app actually SERVES FROM. It used to ping b2b_ticketing —
+// which nothing but this line and the boot $connect still reads — while the two
+// stores every ticketing request depends on (b2b_ticket and b2b_ticketing_admin)
+// went unmonitored, so the whole ticketing module could be down and /health green.
 app.get('/health', async (_req, res) => {
   const ping = async (fn: () => Promise<unknown>): Promise<'connected' | 'down'> => {
     try { await fn(); return 'connected'; } catch { return 'down'; }
   };
-  const [main, chat, ticketing] = await Promise.all([
+  const [main, chat, ticket, ticketAdmin] = await Promise.all([
     ping(() => prisma.$queryRaw`SELECT 1`),
     ping(() => chatPrisma.$queryRaw`SELECT 1`),
-    ping(() => ticketingPrisma.$queryRaw`SELECT 1`),
+    ping(() => ticketPrisma.$queryRaw`SELECT 1`),
+    ping(() => adminTicketPrisma.$queryRaw`SELECT 1`),
   ]);
-  const ok = main === 'connected' && chat === 'connected' && ticketing === 'connected';
-  res.status(ok ? 200 : 503).json({
-    status: ok ? 'ok' : 'degraded',
-    databases: { main, chat, ticketing },
-  });
+  const databases = { main, chat, ticket, ticketAdmin };
+  const ok = Object.values(databases).every((s) => s === 'connected');
+  res.status(ok ? 200 : 503).json({ status: ok ? 'ok' : 'degraded', databases });
 });
 
 // ─── Protected routes ────────────────────────────────────────────────────────

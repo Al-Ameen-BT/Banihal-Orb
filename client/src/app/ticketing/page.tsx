@@ -14,7 +14,7 @@ import AdminTicketing from './AdminTicketing';
 import {
   NewTicketForm, StatusBadge, PriorityBadge, SlaBadge, TypeBadge, PageHeader, StatStrip,
   Toolbar, Segmented, SearchInput, EmptyState, TicketBoard, Avatar, Modal, Icons, statusCfg, timeAgo,
-  apiErrorMessage,
+  apiErrorMessage, useTicketProjects,
 } from './shared';
 import TicketDetail from './TicketDetail';
 import type { TicketDTO, TicketProject, TicketStatus } from '@/lib/schemas';
@@ -23,11 +23,7 @@ type StatusFilter = 'ALL' | TicketStatus;
 type View = 'list' | 'board';
 
 function UserTicketing() {
-  const { data: projectsData } = useQuery<{ projects: TicketProject[] }>({
-    queryKey: ['ticketing', 'projects'],
-    queryFn: () => ticketingApi.listProjects().then((r) => r.data as { projects: TicketProject[] }),
-    staleTime: 60_000,
-  });
+  const { data: projects = [] } = useTicketProjects();
 
   const { data: mineData, isLoading, isError, error, refetch } = useQuery<{ tickets: TicketDTO[] }>({
     queryKey: ['ticketing', 'my-tickets'],
@@ -68,7 +64,7 @@ function UserTicketing() {
       {detailId && <TicketDetail ticketId={detailId} onClose={() => setDetailId(null)} />}
 
       <Modal open={showForm} onClose={() => setShowForm(false)} title="Raise a ticket" width="max-w-2xl">
-        <NewTicketForm projects={projectsData?.projects ?? []} role="USER"
+        <NewTicketForm projects={projects} role="USER"
           onCreated={() => setShowForm(false)} onCancel={() => setShowForm(false)} />
       </Modal>
 

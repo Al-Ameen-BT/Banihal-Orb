@@ -79,7 +79,17 @@ self.addEventListener('push', (event) => {
     icon: payload.icon || '/banihal-logo.png',
     badge: payload.badge || '/banihal-logo.png',
     tag: payload.tag || undefined,
+    // renotify MUST stay paired with a tag: Chrome throws on renotify without one,
+    // and a throw here means the notification never renders at all. With it, a repeat
+    // notification that replaces an existing one re-alerts (sound + vibration) instead
+    // of swapping in silently.
     renotify: Boolean(payload.tag),
+    // Explicitly NOT silent, so the platform plays its default notification sound.
+    // There is no cross-browser way to name a sound from a service worker — the OS
+    // default is the only "system" sound available, and this is what declares we want
+    // it. (The in-app tone in NotificationBell.tsx covers the focused-tab case.)
+    silent: false,
+    vibrate: [200, 100, 200],
     data: { url: payload.url || '/', ...(payload.data || {}) },
   };
 

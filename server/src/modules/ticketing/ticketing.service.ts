@@ -22,7 +22,6 @@ type CreateTicketInput = z.infer<typeof CreateTicketSchema>;
 type UpdateTicketInput = z.infer<typeof UpdateTicketSchema>;
 
 const notFound = (what: string) => Object.assign(new Error(`${what} not found`), { status: 404, code: 'NOT_FOUND' });
-const badRequest = (msg: string) => Object.assign(new Error(msg), { status: 400, code: 'BAD_REQUEST' });
 
 // ─── Tickets ─────────────────────────────────────────────────────────────────
 export const listTickets = (filters: TicketFilters = {}) => db.listTickets(filters);
@@ -257,12 +256,42 @@ export async function updateProject(id: string, input: z.infer<typeof UpdateProj
   return (await db.getProjectById(id))!;
 }
 
-export async function deleteProject(id: string): Promise<void> {
-  const existing = await db.getProjectSettings(id);
-  if (!existing) throw notFound('Project');
-  const tickets = await db.countProjectTickets(id);
-  if (tickets > 0) throw badRequest(`Project has ${tickets} ticket(s); reassign or close them before deleting.`);
-  await db.deleteProjectById(id);
+/**
+ * Delete a project and everything under it. IRREVERSIBLE.
+ *
+ * This used to refuse outright whenever the project held any ticket, telling the
+ * caller to "reassign or close them" — which was doubly wrong: the count ignores
+ * status so closing changed nothing, and there is no reassign UI. Every project in
+ * both stores holds hundreds of tickets, so in practice nothing was ever deletable.
+ *
+ * The guard is now a typed-name confirmation instead of an impossible precondition.
+ * It is checked HERE, not only in the dialog: a destructive endpoint that trusts the
+ * client to have asked is not confirmed, it is merely inconvenient to call by hand.
+ */
+export async function deleteProject(id: string, confirmName: string): Promise<{ name: string; tickets: number; attachments: number }> {
+  const project = await db.getProjectForDelete(id);
+  if (!project) throw notFound('Project');
+
+  if (confirmName.trim() !== project.name.trim()) {
+    throw Object.assign(new Error('The typed name does not match this project.'), {
+      status: 400, code: 'CONFIRM_MISMATCH',
+    });
+  }
+
+  // An escalated ticket has a COPY in the other database joined only by a `src:` label
+  // with no foreign key. Taking this side out leaves that copy alive and permanently
+  // unresolvable, with nothing surfacing the break — so refuse, exactly as deleteTicket
+  // does for the single-ticket case.
+  const escalated = await db.countEscalatedInProject(id);
+  if (escalated > 0) {
+    throw Object.assign(
+      new Error(`${escalated} ticket(s) in this project have been escalated to the platform team; the project cannot be deleted.`),
+      { status: 409, code: 'PROJECT_HAS_ESCALATIONS' },
+    );
+  }
+
+  const { tickets, attachments } = await db.deleteProjectCascade(id);
+  return { name: project.name, tickets, attachments };
 }
 
 // ─── SLAs ──────────────────────────────────────────────────────────────────────

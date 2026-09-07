@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request, type Response, type NextFunction } from 'express';
 import * as ticketingController from './ticketing.controller';
 import { can, requireRole, requirePermission, requirePermissionIfPlatform } from '../../middleware/rbac.middleware';
 import { runWithTicketDb } from '../../config/ticketDatabase';
@@ -25,8 +25,13 @@ const adminStore = requirePermission('ticket.store.admin');     // platform admi
 // can() returns false for USER / ORG_ADMIN whatever the database says, so the
 // customer side is structurally pinned to the shared store — the same guarantee
 // the old role check gave, now expressed by the key that documents it.
-router.use((req, _res, next) =>
-  runWithTicketDb(can(req, 'ticket.store.admin') ? 'admin' : 'default', () => next()));
+//
+// Named rather than inline because it has to be mounted TWICE — see the upload
+// routes below.
+const scopeStore = (req: Request, _res: Response, next: NextFunction) =>
+  runWithTicketDb(can(req, 'ticket.store.admin') ? 'admin' : 'default', () => next());
+
+router.use(scopeStore);
 
 // Ticketing at all is tickets.view for platform staff. Customers fall straight
 // through — their access was already decided by being in the org. Without this a
@@ -44,10 +49,16 @@ router.get('/mention-candidates', ticketingController.listMentionCandidates);
 
 // Collaboration — comments, attachments, watchers, activity history (any authed user).
 router.get('/tickets/:id/comments', ticketingController.getComments);
-router.post('/tickets/:id/comments', upload.array('files', 5), ticketingController.addComment);
+// scopeStore AGAIN after multer: multer calls next() from a busboy 'finish' event
+// driven by socket reads, whose async context predates the router-level scopeStore
+// above — so getTicketDbScope() can fall back to 'default' and an ADMINISTRATOR's
+// upload would be looked up in the CLIENT store (b2b_ticket) instead of theirs.
+// It only survives today when the whole body arrived in one packet. Re-entering is
+// two words and makes the store selection unconditional.
+router.post('/tickets/:id/comments', upload.array('files', 5), scopeStore, ticketingController.addComment);
 router.get('/tickets/:id/activity', ticketingController.getActivity);
 router.get('/tickets/:id/attachments', ticketingController.getTicketAttachments);
-router.post('/tickets/:id/attachments', upload.array('files', 5), ticketingController.uploadTicketAttachments);
+router.post('/tickets/:id/attachments', upload.array('files', 5), scopeStore, ticketingController.uploadTicketAttachments);
 router.get('/attachments/:id/download', ticketingController.downloadAttachment);
 router.get('/tickets/:id/watchers', ticketingController.getWatchers);
 router.post('/tickets/:id/watch', ticketingController.watchTicket);
@@ -80,6 +91,9 @@ router.delete('/tickets/:id', requirePermissionIfPlatform('tickets.write'), tick
 router.post('/projects', staffWrite, ticketingController.createProject);
 router.patch('/projects/:id', staffWrite, ticketingController.updateProject);
 router.delete('/projects/:id', staffWrite, ticketingController.deleteProject);
+// Cross-ticket activity feed (the Activity Log tab). staffRead, and scoped to the
+// caller's own store + organization inside the handler — see activityFeed.
+router.get('/activity', staffRead, ticketingController.activityFeed);
 router.get('/slas', staffRead, ticketingController.listSlas);
 router.post('/slas', staffWrite, ticketingController.createSla);
 router.patch('/slas/:id', staffWrite, ticketingController.updateSla);

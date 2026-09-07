@@ -96,6 +96,22 @@ export const UpdateTicketSchema = z.object({
   resolvedMethods: z.string().max(2000).nullable().optional(),
 }).refine((d) => Object.keys(d).length > 0, { message: 'At least one field required' });
 
+// Activity Log feed. Every filter goes through blank() for the same reason the
+// ticket list does: a cleared dropdown sends `?type=`, and .optional() rejects the
+// empty string — which would 400 the whole page because someone chose "All".
+export const ActivityFeedSchema = z.object({
+  type: blank(z.enum([
+    'created', 'updated', 'commented', 'status_changed',
+    'priority_changed', 'assigned', 'attachment_added', 'mentioned',
+  ])),
+  ticketId: blank(z.string().uuid()),
+  from: blank(z.coerce.date()),
+  to: blank(z.coerce.date()),
+  search: blank(z.string().max(200)),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  cursor: blank(z.string().uuid()),
+});
+
 export const CreateProjectSchema = z.object({
   name: z.string().min(2).max(255),
   description: z.string().max(2000).optional(),

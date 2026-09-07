@@ -10,6 +10,51 @@ import type { TicketDTO, TicketUpdateAlert, NotificationDTO } from '@/lib/schema
 const POLL_MS = 10_000;
 const priorityDot: Record<string, string> = { urgent: 'bg-red-500', high: 'bg-amber-500', medium: 'bg-cyan-500', low: 'bg-slate-400' };
 
+// ─── Arrival tone ─────────────────────────────────────────────────────────────
+// A web-push notification gets the OS notification sound (sw.js sets silent:false),
+// but only when the browser actually raises one — with the tab already focused the
+// platform commonly suppresses it, and these polled in-app items never go through
+// the push path at all. Two oscillator notes cover that gap with no audio asset to
+// ship, cache or 404.
+//
+// The context is created lazily and reused: constructing one per notification leaks
+// hardware audio contexts (browsers cap them at ~6 and then throw).
+let audioCtx: AudioContext | null = null;
+
+function playArrivalTone(): void {
+  // Nothing to announce when the user isn't looking — the OS notification already
+  // covers the backgrounded case, and a hidden tab pinging is just noise.
+  if (typeof document === 'undefined' || document.visibilityState !== 'visible') return;
+  try {
+    const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctor) return;
+    audioCtx ??= new Ctor();
+    // Autoplay policy: a context created before any gesture starts 'suspended'. The
+    // user has necessarily interacted by now (they signed in), so this resolves.
+    if (audioCtx.state === 'suspended') void audioCtx.resume();
+
+    const ctx = audioCtx;
+    const gain = ctx.createGain();
+    gain.connect(ctx.destination);
+    // Ramp rather than a hard stop: an abrupt gain cut is an audible click.
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.06, ctx.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.34);
+
+    for (const [freq, at] of [[880, 0], [1174.66, 0.11]] as const) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      osc.connect(gain);
+      osc.start(ctx.currentTime + at);
+      osc.stop(ctx.currentTime + at + 0.22);
+    }
+  } catch {
+    // No audio hardware, a blocked context, a browser without WebAudio — a missing
+    // ping must never break the notification it was announcing.
+  }
+}
+
 // A normalized notification. `action` (optional) renders a button (e.g. "Claim")
 // whose async `run` resolves → the item is removed, rejects → an inline error shows.
 export interface NotifItem {
@@ -40,6 +85,8 @@ function Bell({ label, emptyText, storageKey, queryKey, accent = 'brand', fetchI
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState('');
   const seen = useRef<Set<string>>(new Set());
+  // False until the first poll has established the baseline — see playArrivalTone below.
+  const primed = useRef(false);
 
   useQuery({
     queryKey,
@@ -51,6 +98,10 @@ function Bell({ label, emptyText, storageKey, queryKey, accent = 'brand', fetchI
       if (fresh.length > 0) {
         for (const i of fresh) seen.current.add(i.id);
         localStorage.setItem(storageKey, now);
+        // The first poll is a catch-up against the stored watermark, so everything in
+        // it is "fresh" — chiming there would ping on every page load. Only announce
+        // what actually arrived while the session was open.
+        if (primed.current) playArrivalTone();
         setUnread((p) => [...fresh, ...p].slice(0, 25));
         const pop = fresh.slice(0, 3);
         setToasts((p) => [...pop, ...p].slice(0, 3));
@@ -58,6 +109,9 @@ function Bell({ label, emptyText, storageKey, queryKey, accent = 'brand', fetchI
       } else if (items.length === 0) {
         localStorage.setItem(storageKey, now); // advance watermark to keep the window small
       }
+      // Set unconditionally: a first poll that happened to be empty must still count
+      // as the baseline, or the next arrival would be the one silently swallowed.
+      primed.current = true;
       return { items, now };
     },
     refetchInterval: POLL_MS, refetchIntervalInBackground: false, retry: false,

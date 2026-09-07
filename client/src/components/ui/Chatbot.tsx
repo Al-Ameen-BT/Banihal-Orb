@@ -5,7 +5,8 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ticketingApi } from '@/lib/api';
-import type { TicketProject, TicketType, TicketPriority, TicketDTO } from '@/lib/schemas';
+import { useTicketProjects } from '@/app/ticketing/shared';
+import type { TicketType, TicketPriority, TicketDTO } from '@/lib/schemas';
 
 interface TicketMeta {
   ticketNumber: string;
@@ -511,13 +512,11 @@ export default function Chatbot({ onUserMessage, initialMessages, onNewChat, use
   const [tkSubmitting, setTkSubmitting] = useState(false);
   const [tkError, setTkError] = useState<string | null>(null);
 
-  // Fetch projects on-demand when the ticket form opens.
-  const { data: tkProjects } = useQuery<TicketProject[]>({
-    queryKey: ['ticketing', 'projects'],
-    queryFn: () => ticketingApi.listProjects().then((r) => (r.data as { projects: TicketProject[] }).projects),
-    enabled: showTicketForm,
-    staleTime: 60_000,
-  });
+  // Fetch projects on-demand when the ticket form opens. Shares the ['ticketing',
+  // 'projects'] cache entry with the ticketing views, so it MUST go through the same
+  // hook — an inline query here with a different shape is what emptied their project
+  // pickers.
+  const { data: tkProjects } = useTicketProjects(showTicketForm);
 
   // The org/user queries usually resolve after first paint — refresh the greeting
   // in place so it doesn't permanently miss the org name.

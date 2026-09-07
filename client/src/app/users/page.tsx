@@ -199,6 +199,14 @@ export default function UsersPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
   });
 
+  // Both removals can be refused server-side (SELF_REMOVE, PROVIDER_ORG, …). Without
+  // onError the modal just sat there with its spinner finished and nothing said, so a
+  // refusal was indistinguishable from a no-op.
+  const removeFailed = (err: unknown) => {
+    setDeleteTarget(null);
+    notify((err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Could not remove that account.', 'error');
+  };
+
   const removeMutation = useMutation({
     mutationFn: (id: string) => usersApi.remove(id),
     onSuccess: () => {
@@ -206,6 +214,7 @@ export default function UsersPage() {
       qc.invalidateQueries({ queryKey: ['users'] });
       router.push('/users');
     },
+    onError: removeFailed,
   });
 
   const removeSadminMutation = useMutation({
@@ -215,6 +224,7 @@ export default function UsersPage() {
       qc.invalidateQueries({ queryKey: ['sadmin-list'] });
       router.push('/users');
     },
+    onError: removeFailed,
   });
 
   const inviteStaffMutation = useMutation({
@@ -270,6 +280,12 @@ export default function UsersPage() {
     {
       key: 'actions', header: '',
       render: (row: User) => {
+        // Nobody acts on their own row. removeUser already refuses with 400 SELF_REMOVE
+        // (users.service.ts), so the button was only ever a dead end — and the same cell
+        // renders Demote, which has NO server-side self-guard: an org admin could demote
+        // themselves to USER and lock their organisation out of user management. The
+        // platform-staff list below already guards this way (`user?.id !== u.id`).
+        if (row.id === user?.id) return <span className="text-xs text-slate-400">You</span>;
         if (row.role === 'ADMINISTRATOR') return <span className="text-xs text-slate-400">Protected</span>;
         const nextRole = row.role === 'USER' ? 'ORG_ADMIN' : 'USER';
         return (

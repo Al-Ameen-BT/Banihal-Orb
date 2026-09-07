@@ -8,25 +8,25 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, Area, Bar
 import { agentApi, ticketingApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import GlowButton from '@/components/ui/GlowButton';
-import { ShimmerCard } from '@/components/ui/Shimmer';
+import { ShimmerCard, ShimmerRow } from '@/components/ui/Shimmer';
 import { useConfirm } from '@/components/ui/ConfirmDialog';
 import { useToast } from '@/components/ui/Toast';
 import {
   NewTicketForm, StatusBadge, PriorityBadge, TypeBadge, SlaBar, PageHeader,
   Toolbar, Segmented, SearchInput, EmptyState, Avatar, Icons,
   priorityCls, timeAgo, STATUS_OPTIONS, PRIORITY_OPTIONS, staffLabel, apiErrorMessage,
-  TicketActionsMenu, EditTicketModal, useDeleteTicket,
+  TicketActionsMenu, EditTicketModal, useDeleteTicket, useTicketProjects, useTicketAssignees,
 } from './shared';
 import AdminTicketDetail from './AdminTicketDetail';
-import type { TicketDTO, TicketProject, TicketSla, TicketStats, TicketAnalytics, TicketReport, TicketStatus, TicketPriority } from '@/lib/schemas';
+import type { TicketDTO, TicketProject, TicketSla, TicketStats, TicketAnalytics, TicketReport, TicketStatus, TicketPriority, TicketActivityLogRow } from '@/lib/schemas';
 
-type Staff = { id: string; name: string; email: string; role: string };
 const STATUS_TONES: Record<string, string> = { todo: '#64748b', in_progress: '#06b6d4', client_pending: '#f59e0b', completed: '#10b981' };
 
-const TABS = ['overview', 'tickets', 'projects', 'slas', 'reports', 'new'] as const;
+const TABS = ['overview', 'tickets', 'projects', 'slas', 'logs', 'reports', 'new'] as const;
 type Tab = typeof TABS[number];
 const TAB_LABELS: Record<Tab, string> = {
-  overview: 'Overview', tickets: 'Tickets', projects: 'Projects', slas: 'SLAs', reports: 'Reports', new: '+ New Ticket',
+  overview: 'Overview', tickets: 'Tickets', projects: 'Projects', slas: 'SLAs',
+  logs: 'Activity Log', reports: 'Reports', new: '+ New Ticket',
 };
 
 function StatTile({ label, value, tone, sub }: { label: string; value: number | string; tone: string; sub?: string }) {
@@ -297,12 +297,8 @@ function TicketsTab({ projectFilter, onClearProject, initialTicketId }: { projec
   const [view, setView] = useState<'list' | 'grid'>('list');
   const [detailId, setDetailId] = useState<string | null>(initialTicketId ?? null);
 
-  const { data: staffData } = useQuery<{ assignees: Staff[] }>({
-    queryKey: ['ticketing', 'assignees'], queryFn: () => ticketingApi.listAssignees().then((r) => r.data as { assignees: Staff[] }), staleTime: 60_000,
-  });
-  const { data: projectsData } = useQuery<{ projects: TicketProject[] }>({
-    queryKey: ['ticketing', 'projects'], queryFn: () => ticketingApi.listProjects().then((r) => r.data as { projects: TicketProject[] }), staleTime: 60_000,
-  });
+  const { data: staff = [] } = useTicketAssignees();
+  const { data: projects = [] } = useTicketProjects();
 
   const { data, isLoading, isError, error, refetch } = useQuery<{ tickets: TicketDTO[] }>({
     queryKey: ['ticketing', 'tickets', category, statusFilter, priorityFilter, assigneeFilter, projectFilter, search],
@@ -318,7 +314,6 @@ function TicketsTab({ projectFilter, onClearProject, initialTicketId }: { projec
   });
 
   const tickets = data?.tickets ?? [];
-  const projects = projectsData?.projects ?? [];
   const projectName = projectFilter ? projects.find((p) => p.id === projectFilter)?.name : null;
 
   const statusOptions: { value: 'ALL' | TicketStatus; label: string }[] = [{ value: 'ALL', label: 'All' }, ...STATUS_OPTIONS];
@@ -348,7 +343,7 @@ function TicketsTab({ projectFilter, onClearProject, initialTicketId }: { projec
           </select>
           <select value={assigneeFilter} onChange={(e) => setAssigneeFilter(e.target.value)} className="input !py-1.5 text-xs w-auto">
             <option value="ALL">All assignees</option>
-            {(staffData?.assignees ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            {staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
           {projectName && (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-brand bg-brand-50">
@@ -424,25 +419,20 @@ function ProjectsTab({ onViewTickets }: { onViewTickets: (projectId: string) => 
   const [rrEnabled, setRrEnabled] = useState(false);
   const [rrAssignees, setRrAssignees] = useState<string[]>([]);
 
-  const { data, isLoading } = useQuery<{ projects: TicketProject[] }>({
-    queryKey: ['ticketing', 'projects'], queryFn: () => ticketingApi.listProjects().then((r) => r.data as { projects: TicketProject[] }), staleTime: 30_000,
-  });
-  const { data: staffData } = useQuery<{ assignees: Staff[] }>({
-    queryKey: ['ticketing', 'assignees'], queryFn: () => ticketingApi.listAssignees().then((r) => r.data as { assignees: Staff[] }), staleTime: 60_000,
-  });
+  const { data: projects = [], isLoading } = useTicketProjects();
+  const { data: staff = [] } = useTicketAssignees();
 
   const createMut = useMutation({
     mutationFn: (payload: unknown) => ticketingApi.createProject(payload),
     onSuccess: () => { setShowForm(false); setName(''); setDescription(''); setRrEnabled(false); setRrAssignees([]); void qc.invalidateQueries({ queryKey: ['ticketing'] }); },
   });
   const deleteMut = useMutation({
-    mutationFn: (id: string) => ticketingApi.deleteProject(id),
+    mutationFn: ({ id, confirm }: { id: string; confirm: string }) => ticketingApi.deleteProject(id, confirm),
+    // Carries PROJECT_HAS_ESCALATIONS and CONFIRM_MISMATCH — both are things the
+    // administrator has to read, not a generic failure.
     onError: (e: unknown) => toast((e as { response?: { data?: { error?: string } } }).response?.data?.error ?? 'Could not delete project', 'error'),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['ticketing'] }); },
   });
-
-  const projects = data?.projects ?? [];
-  const staff = staffData?.assignees ?? [];
 
   return (
     <div className="space-y-4">
@@ -493,7 +483,25 @@ function ProjectsTab({ onViewTickets }: { onViewTickets: (projectId: string) => 
             <div key={p.id} className="card p-5 border-t-2 border-t-brand/60 flex flex-col hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-200">
               <div className="flex items-start justify-between gap-2">
                 <h3 className="text-base font-semibold text-slate-900">{p.name}</h3>
-                <button type="button" aria-label={`Delete ${p.name}`} onClick={async () => { if (await confirm({ title: 'Delete project', message: <>&ldquo;{p.name}&rdquo; and its links to tickets will be removed. This can&rsquo;t be undone.</>, confirmText: 'Delete', variant: 'danger' })) deleteMut.mutate(p.id); }}
+                {/* Double verification: the dialog will not enable Delete until the
+                    project's name is typed back, and the server re-checks the same
+                    value. Deleting a project now takes its tickets with it, so the
+                    message states the real count rather than "links to tickets". */}
+                <button type="button" aria-label={`Delete ${p.name}`} onClick={async () => {
+                  const ok = await confirm({
+                    title: 'Delete project',
+                    message: (
+                      <>
+                        &ldquo;{p.name}&rdquo; and its <span className="font-semibold text-slate-800">{p.ticketCount} ticket{p.ticketCount === 1 ? '' : 's'}</span> —
+                        including every comment, attachment and activity record — will be permanently deleted. This can&rsquo;t be undone.
+                      </>
+                    ),
+                    confirmText: 'Delete project',
+                    variant: 'danger',
+                    requireText: p.name,
+                  });
+                  if (ok) deleteMut.mutate({ id: p.id, confirm: p.name });
+                }}
                   className="text-slate-300 hover:text-red-500 transition-colors cursor-pointer">
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
                 </button>
@@ -510,6 +518,188 @@ function ProjectsTab({ onViewTickets }: { onViewTickets: (projectId: string) => 
               </div>
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Activity Log ──────────────────────────────────────────────────────────────
+// Every recorded action on every ticket in THIS store, newest first.
+//
+// Reads the ticket store's own Activities table rather than the platform AuditLog:
+// it carries the fine-grained events (status/priority changes, assignment, comments,
+// mentions, attachments) that the audit trail's five TICKET_* actions do not. The
+// trade-off is that these rows cascade away with their ticket — the audit log in
+// System Logs is the copy that survives a deletion, and the two are complementary.
+//
+// The server scopes the feed to the caller's own store and organization, so this one
+// component serves ORG_ADMIN (their org, b2b_ticket) and ADMINISTRATOR (the whole
+// admin store) with no branch here.
+const ACTIVITY_TYPES = [
+  { value: '', label: 'All activity' },
+  { value: 'created', label: 'Created' },
+  { value: 'updated', label: 'Edited' },
+  { value: 'status_changed', label: 'Status changed' },
+  { value: 'priority_changed', label: 'Priority changed' },
+  { value: 'assigned', label: 'Assigned' },
+  { value: 'commented', label: 'Commented' },
+  { value: 'attachment_added', label: 'Attachment added' },
+  { value: 'mentioned', label: 'Mentioned' },
+];
+
+const ACTIVITY_TONE: Record<string, string> = {
+  created: 'text-emerald-700 bg-emerald-50',
+  updated: 'text-slate-600 bg-slate-100',
+  status_changed: 'text-cyan-700 bg-cyan-50',
+  priority_changed: 'text-amber-700 bg-amber-50',
+  assigned: 'text-violet-700 bg-violet-50',
+  commented: 'text-blue-700 bg-blue-50',
+  attachment_added: 'text-slate-600 bg-slate-100',
+  mentioned: 'text-fuchsia-700 bg-fuchsia-50',
+};
+
+const activityLabel = (t: string) => ACTIVITY_TYPES.find((a) => a.value === t)?.label ?? t;
+
+// oldValue/newValue are Json columns, so they arrive as whatever was written —
+// a string, a bool, an id, or null. Render something readable for each.
+function valueText(v: unknown): string {
+  if (v === null || v === undefined || v === '') return '—';
+  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v);
+  return JSON.stringify(v);
+}
+
+function ActivityLogTab({ onOpenTicket }: { onOpenTicket: (id: string) => void }) {
+  const [type, setType] = useState('');
+  const [search, setSearch] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  // Cursor pages are a stack so "Previous" can pop back without re-querying forward.
+  const [cursors, setCursors] = useState<string[]>([]);
+
+  const cursor = cursors[cursors.length - 1];
+  const params = useMemo(() => ({
+    limit: 50,
+    ...(type ? { type } : {}),
+    ...(search.trim() ? { search: search.trim() } : {}),
+    ...(from ? { from: `${from}T00:00:00` } : {}),
+    ...(to ? { to: `${to}T23:59:59` } : {}),
+    ...(cursor ? { cursor } : {}),
+  }), [type, search, from, to, cursor]);
+
+  const { data, isLoading, isError, error, refetch } = useQuery<{ activity: TicketActivityLogRow[]; nextCursor: string | null }>({
+    queryKey: ['ticketing', 'activity-log', params],
+    queryFn: () => ticketingApi.listActivityLog(params).then((r) => r.data as { activity: TicketActivityLogRow[]; nextCursor: string | null }),
+    staleTime: 15_000,
+  });
+
+  const rows = data?.activity ?? [];
+
+  // Any filter change invalidates the paging position — page 3 of the old filter is
+  // meaningless under the new one.
+  const resetPaging = () => setCursors([]);
+
+  function exportCsv() {
+    const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const csv = [
+      ['Time', 'Ticket', 'Title', 'Action', 'By', 'Field', 'From', 'To', 'Detail'],
+      ...rows.map((a) => [
+        new Date(a.createdAt).toISOString(), a.ticket?.ticketNumber ?? '', a.ticket?.title ?? '',
+        activityLabel(a.type), a.user?.name ?? '', a.field ?? '',
+        valueText(a.oldValue), valueText(a.newValue), a.description ?? '',
+      ]),
+    ].map((r) => r.map(esc).join(',')).join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `ticket-activity-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  }
+
+  return (
+    <div className="space-y-4">
+      <Toolbar>
+        <select value={type} onChange={(e) => { setType(e.target.value); resetPaging(); }} className="input !py-1.5 text-xs w-auto" aria-label="Activity type">
+          {ACTIVITY_TYPES.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
+        </select>
+        <SearchInput value={search} onChange={(v) => { setSearch(v); resetPaging(); }} placeholder="Search ticket number or title…" />
+        <label className="flex items-center gap-1.5 text-xs text-slate-500">
+          From
+          <input type="date" value={from} onChange={(e) => { setFrom(e.target.value); resetPaging(); }} className="input !py-1.5 text-xs w-auto" />
+        </label>
+        <label className="flex items-center gap-1.5 text-xs text-slate-500">
+          To
+          <input type="date" value={to} onChange={(e) => { setTo(e.target.value); resetPaging(); }} className="input !py-1.5 text-xs w-auto" />
+        </label>
+        <GlowButton variant="secondary" className="py-1.5 px-3 text-xs" onClick={exportCsv} disabled={rows.length === 0}>
+          Export CSV
+        </GlowButton>
+      </Toolbar>
+
+      {isLoading ? (
+        <div className="card divide-y divide-slate-100">{Array.from({ length: 8 }).map((_, i) => <ShimmerRow key={i} />)}</div>
+      ) : isError ? (
+        <div className="card p-8 text-center space-y-3">
+          <p className="text-sm text-slate-600">{apiErrorMessage(error, 'The activity log could not be loaded.')}</p>
+          <GlowButton variant="secondary" className="py-1.5 px-4 text-xs" onClick={() => void refetch()}>Try again</GlowButton>
+        </div>
+      ) : rows.length === 0 ? (
+        <EmptyState title="No activity" hint="Nothing matches these filters yet." />
+      ) : (
+        <div className="card overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                <tr>
+                  <th className="px-4 py-2.5 text-left">When</th>
+                  <th className="px-4 py-2.5 text-left">Ticket</th>
+                  <th className="px-4 py-2.5 text-left">Action</th>
+                  <th className="px-4 py-2.5 text-left">By</th>
+                  <th className="px-4 py-2.5 text-left">Detail</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {rows.map((a) => (
+                  <tr key={a.id} className="hover:bg-slate-50/70">
+                    <td className="px-4 py-2.5 whitespace-nowrap text-xs text-slate-500" title={new Date(a.createdAt).toLocaleString()}>
+                      {timeAgo(a.createdAt)}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      {a.ticket ? (
+                        <button type="button" onClick={() => onOpenTicket(a.ticket!.id)}
+                          className="text-left cursor-pointer group">
+                          <span className="font-mono text-xs font-semibold text-brand group-hover:underline">{a.ticket.ticketNumber}</span>
+                          <span className="block max-w-[280px] truncate text-xs text-slate-500">{a.ticket.title}</span>
+                        </button>
+                      ) : <span className="text-xs text-slate-400">—</span>}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <span className={`inline-flex px-2 py-0.5 rounded-md text-[11px] font-semibold ${ACTIVITY_TONE[a.type] ?? 'text-slate-600 bg-slate-100'}`}>
+                        {activityLabel(a.type)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-slate-600 whitespace-nowrap">{a.user?.name ?? '—'}</td>
+                    <td className="px-4 py-2.5 text-xs text-slate-500">
+                      {a.field
+                        ? <span className="font-mono">{a.field}: {valueText(a.oldValue)} → {valueText(a.newValue)}</span>
+                        : <span className="line-clamp-2 max-w-[420px]">{a.description ?? '—'}</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex items-center justify-between border-t border-slate-100 px-4 py-2.5">
+            <span className="text-xs text-slate-400">{rows.length} entries{cursors.length > 0 ? ` · page ${cursors.length + 1}` : ''}</span>
+            <div className="flex gap-2">
+              <GlowButton variant="secondary" className="py-1 px-3 text-xs" disabled={cursors.length === 0}
+                onClick={() => setCursors((c) => c.slice(0, -1))}>Previous</GlowButton>
+              <GlowButton variant="secondary" className="py-1 px-3 text-xs" disabled={!data?.nextCursor}
+                onClick={() => data?.nextCursor && setCursors((c) => [...c, data.nextCursor!])}>Next</GlowButton>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -654,10 +844,11 @@ export default function AdminTicketing() {
     initialTab && TABS.includes(initialTab) ? initialTab : deepLinkTickets ? 'tickets' : 'overview',
   );
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
+  // Set when a row in the Activity Log is clicked: TicketsTab opens that ticket's
+  // detail on mount, the same way the ?ticket= deep link does.
+  const [logTicketId, setLogTicketId] = useState<string | null>(null);
 
-  const { data: projectsData } = useQuery<{ projects: TicketProject[] }>({
-    queryKey: ['ticketing', 'projects'], queryFn: () => ticketingApi.listProjects().then((r) => r.data as { projects: TicketProject[] }), staleTime: 60_000,
-  });
+  const { data: projects = [] } = useTicketProjects();
   const visibleTabs = useMemo(() => TABS, []);
 
   return (
@@ -683,9 +874,10 @@ export default function AdminTicketing() {
 
       <motion.div key={tab} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
         {tab === 'overview' && <OverviewTab />}
-        {tab === 'tickets' && <TicketsTab projectFilter={projectFilter} onClearProject={() => setProjectFilter(null)} initialTicketId={deepLinkTicket} />}
+        {tab === 'tickets' && <TicketsTab projectFilter={projectFilter} onClearProject={() => setProjectFilter(null)} initialTicketId={logTicketId ?? deepLinkTicket} />}
         {tab === 'projects' && <ProjectsTab onViewTickets={(id) => { setProjectFilter(id); setTab('tickets'); }} />}
         {tab === 'slas' && <SlasTab />}
+        {tab === 'logs' && <ActivityLogTab onOpenTicket={(id) => { setLogTicketId(id); setTab('tickets'); }} />}
         {tab === 'reports' && <ReportsTab />}
         {/* `user` is guaranteed by the RoleGuard wrapping this page, so waiting on it
             costs nothing — but defaulting the role would not be free: ROLE_FIELDS keys
@@ -696,7 +888,7 @@ export default function AdminTicketing() {
           <div className="max-w-[820px]">
             <div className="card p-6 sm:p-8">
               <h3 className="text-lg font-bold tracking-tight text-slate-900 mb-5">Create new ticket</h3>
-              <NewTicketForm projects={projectsData?.projects ?? []} role={user.role} onCreated={() => setTab('tickets')} onCancel={() => setTab('tickets')} />
+              <NewTicketForm projects={projects} role={user.role} onCreated={() => setTab('tickets')} onCancel={() => setTab('tickets')} />
             </div>
           </div>
         )}

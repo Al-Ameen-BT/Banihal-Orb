@@ -288,6 +288,12 @@ export interface TicketActivity {
   createdAt: string;
 }
 
+// One row of the cross-ticket Activity Log — a TicketActivity plus the ticket it
+// belongs to, which the per-ticket feed doesn't need to say.
+export interface TicketActivityLogRow extends TicketActivity {
+  ticket: { id: string; ticketNumber: string; title: string } | null;
+}
+
 export interface TicketProject {
   id: string;
   name: string;

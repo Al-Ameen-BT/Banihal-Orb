@@ -3,7 +3,7 @@ import path from 'path';
 import { UPLOAD_DIR, SERVEABLE_TYPES } from './uploads';
 import {
   ListTicketsSchema, CreateTicketSchema, UpdateTicketSchema, AddCommentSchema,
-  CreateProjectSchema, UpdateProjectSchema, CreateSlaSchema, ReportSchema,
+  CreateProjectSchema, UpdateProjectSchema, CreateSlaSchema, ReportSchema, ActivityFeedSchema,
 } from './ticketing.schema';
 import * as service from './ticketing.service';
 import * as db from './ticketing.client';
@@ -12,7 +12,7 @@ import { listAdminAssignees } from './services/adminAssignees';
 import { listMentionCandidates as listPlatformMentionCandidates } from './services/mentionCandidates';
 import { resolveTicketActor } from './identity';
 import { aggregate } from './services/dashboardAggregate';
-import { cached, cacheKey, TTL } from '../../lib/cache';
+import { cached, cacheKey, TTL, invalidate } from '../../lib/cache';
 import { audit } from '../../lib/audit';
 import type { AuditAction } from '../../config/auditActions';
 
@@ -186,19 +186,48 @@ export async function createProject(req: Request, res: Response, next: NextFunct
   try {
     const input = CreateProjectSchema.parse(req.body);
     const me = await actor(req);
-    res.status(201).json(await service.createProject(me.id, input));
+    const project = await service.createProject(me.id, input);
+    await invalidate('projects');
+    res.status(201).json(project);
   } catch (err) { next(err); }
 }
 
 export async function updateProject(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const input = UpdateProjectSchema.parse(req.body);
-    res.json(await service.updateProject(req.params['id']!, input));
+    const project = await service.updateProject(req.params['id']!, input);
+    await invalidate('projects');
+    res.json(project);
   } catch (err) { next(err); }
 }
 
+/**
+ * Delete a project and every ticket under it. Irreversible.
+ *
+ * The confirmation travels as `?confirm=<exact project name>` rather than a body:
+ * DELETE bodies are unevenly supported by proxies and clients, and a query param is
+ * visible in the access log, which is the right place for a record of a destructive
+ * call. The service re-checks it — this handler does not decide anything.
+ */
 export async function deleteProject(req: Request, res: Response, next: NextFunction): Promise<void> {
-  try { await service.deleteProject(req.params['id']!); res.status(204).end(); } catch (err) { next(err); }
+  try {
+    const confirm = typeof req.query['confirm'] === 'string' ? req.query['confirm'] : '';
+    const id = req.params['id']!;
+    const report = await service.deleteProject(id, confirm);
+    // The project's tickets took their own Activities history with them; this row in
+    // the main database is now the only record that any of it existed.
+    await audit({
+      action: 'PROJECT_DELETED',
+      performedById: req.user.userId,
+      customerId: req.user.customerId,
+      targetId: id,
+      metadata: { project: report.name, tickets: report.tickets, attachments: report.attachments },
+    });
+    // Without this the deleted project keeps coming back from the 60s reference cache
+    // and stays selectable in the New Ticket form — where picking it 404s the submit.
+    await invalidate('projects');
+    res.status(204).end();
+  } catch (err) { next(err); }
 }
 
 export async function listSlas(_req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -349,6 +378,35 @@ export async function getActivity(req: Request, res: Response, next: NextFunctio
     res.json({ activity: await service.listActivities(req.params['id']!) });
   } catch (err) { next(err); }
 }
+/**
+ * Cross-ticket activity feed — the Activity Log tab.
+ *
+ * Scoped twice over, and both matter: the router already pinned the STORE
+ * (b2b_ticketing_admin for platform staff, b2b_ticket for everyone else), and
+ * ticketAccessScope narrows within the shared store to the caller's own
+ * organization. Skipping the second would hand an ORG_ADMIN every other client's
+ * activity, since the client store is shared across organizations.
+ *
+ * Deliberately NOT cached: a log served from a 60s cache is worse than no log.
+ */
+export async function activityFeed(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = ActivityFeedSchema.parse(req.query);
+    const scope = await service.ticketAccessScope(req.user);
+    const { items, nextCursor } = await db.listActivityFeed({
+      ...(input.type ? { type: input.type } : {}),
+      ...(input.ticketId ? { ticketId: input.ticketId } : {}),
+      ...(input.from ? { from: input.from } : {}),
+      ...(input.to ? { to: input.to } : {}),
+      ...(input.search ? { search: input.search } : {}),
+      ...(input.cursor ? { cursor: input.cursor } : {}),
+      limit: input.limit,
+      scope,
+    });
+    res.json({ activity: items, nextCursor });
+  } catch (err) { next(err); }
+}
+
 export async function getTicketAttachments(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     await service.assertTicketAccess(await service.ticketAccessScope(req.user), req.params['id']!);

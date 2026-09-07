@@ -24,6 +24,11 @@ model Activities {
 
   @@index([ticketId])
   @@index([userId])
+  // The Activity Log feed reads this table ordered by time, not by ticket, with id
+  // as the tie-break that makes cursor pagination deterministic. Created by
+  // db/2026-09-07-activities-createdat-index.sql; declared here so a schema pull
+  // does not propose dropping it.
+  @@index([createdAt, id])
 }
 
 model CommentAttachments {

@@ -504,12 +504,7 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
   const has = (f: FormField) => fields.includes(f);
   const isOrgAdmin = role === 'ORG_ADMIN';
 
-  const { data: assignees } = useQuery<{ id: string; name: string; email: string; role: string }[]>({
-    queryKey: ['ticketing', 'assignees'],
-    queryFn: () => ticketingApi.listAssignees().then((r) => (r.data as { assignees: { id: string; name: string; email: string; role: string }[] }).assignees),
-    enabled: has('assignee'),
-    staleTime: 60_000,
-  });
+  const { data: assignees } = useTicketAssignees(has('assignee'));
   // Administrators pick the ticket's client from the admin store's Customers table.
   const { data: customers } = useQuery<TicketCustomer[]>({
     queryKey: ['ticketing', 'customers'],
@@ -740,7 +735,7 @@ export function NewTicketForm({ projects, onCreated, onCancel, role = 'USER' }: 
             <FieldLabel htmlFor="tk-assignee">Assignee</FieldLabel>
             <select id="tk-assignee" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} className="input">
               <option value="">— Unassigned (round-robin) —</option>
-              {(Array.isArray(assignees) ? assignees : []).map((a) => (
+              {(assignees ?? []).map((a) => (
                 <option key={a.id} value={a.id}>{a.id === ESCALATE_ADMINS_ID ? `⤴ ${a.name}` : staffLabel(a, role)}</option>
               ))}
             </select>
@@ -944,6 +939,42 @@ export function useMentionCandidates() {
   return useQuery<MentionCandidate[]>({
     queryKey: ['ticketing', 'mention-candidates'],
     queryFn: () => ticketingApi.listMentionCandidates().then((r) => (r.data as { candidates: MentionCandidate[] }).candidates),
+    staleTime: 60_000,
+  });
+}
+
+// ─── Shared reference pools ───────────────────────────────────────────────────
+// React Query keeps ONE cache entry per key, so a key fetched with two different
+// `queryFn` shapes stores whichever shape ran last. That is exactly what happened
+// here: NewTicketForm unwrapped `['ticketing','assignees']` to a bare array while
+// four other components stored `{ assignees: [...] }` under the same key, and the
+// Chatbot did the mirror-image thing to `['ticketing','projects']`. Whichever
+// component fetched last inside the 60s staleTime decided what everyone else read —
+// so opening the Tickets tab and then New Ticket within a minute handed the form an
+// object where it expected an array (`.find is not a function`, straight into
+// error.tsx), while the Chatbot's ticket form emptied the project picker and left
+// the submit button inert.
+//
+// One hook per key is the fix: with a single definition the shapes cannot diverge,
+// which is why these live beside useMentionCandidates rather than being inlined at
+// each call site again. Both return a plain array — never wrap them back up.
+
+export function useTicketProjects(enabled = true) {
+  return useQuery<TicketProject[]>({
+    queryKey: ['ticketing', 'projects'],
+    queryFn: () => ticketingApi.listProjects().then((r) => (r.data as { projects: TicketProject[] }).projects),
+    enabled,
+    staleTime: 60_000,
+  });
+}
+
+export interface TicketAssignee { id: string; name: string; email: string; role: string }
+
+export function useTicketAssignees(enabled = true) {
+  return useQuery<TicketAssignee[]>({
+    queryKey: ['ticketing', 'assignees'],
+    queryFn: () => ticketingApi.listAssignees().then((r) => (r.data as { assignees: TicketAssignee[] }).assignees),
+    enabled,
     staleTime: 60_000,
   });
 }

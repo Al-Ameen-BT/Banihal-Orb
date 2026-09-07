@@ -11,13 +11,13 @@ import {
   StatusBadge, PriorityBadge, SlaBadge, TypeBadge, Avatar, Drawer, Icons,
   STATUS_OPTIONS, PRIORITY_OPTIONS, fmtDate, timeAgo, AttachmentGrid, ACCEPTED_IMAGE_ACCEPT,
   MentionTextarea, CommentBody, useMentionCandidates, useCanEditTicket,
+  useTicketProjects, useTicketAssignees,
 } from './shared';
 import type {
   TicketDTO, TicketComment, TicketActivity, TicketAttachment, TicketProject,
   PersonRef, TicketStatus, TicketPriority,
 } from '@/lib/schemas';
 
-type Staff = { id: string; name: string; email: string; role: string };
 
 // ─── Staff quick-edit row ───────────────────────────────────────────────────────
 function QuickEdit({ ticket }: { ticket: TicketDTO }) {
@@ -32,12 +32,8 @@ function QuickEdit({ ticket }: { ticket: TicketDTO }) {
     setAssigneeId(ticket.assignee?.id ?? ''); setProjectId(ticket.projectId);
   }, [ticket]);
 
-  const { data: projectsData } = useQuery<{ projects: TicketProject[] }>({
-    queryKey: ['ticketing', 'projects'], queryFn: () => ticketingApi.listProjects().then((r) => r.data as { projects: TicketProject[] }), staleTime: 60_000,
-  });
-  const { data: staffData } = useQuery<{ assignees: Staff[] }>({
-    queryKey: ['ticketing', 'assignees'], queryFn: () => ticketingApi.listAssignees().then((r) => r.data as { assignees: Staff[] }), staleTime: 60_000,
-  });
+  const { data: projects = [] } = useTicketProjects();
+  const { data: staff = [] } = useTicketAssignees();
 
   const mut = useMutation({
     mutationFn: (payload: unknown) => ticketingApi.updateTicket(ticket.id, payload),
@@ -67,13 +63,13 @@ function QuickEdit({ ticket }: { ticket: TicketDTO }) {
           <span className="block text-[11px] font-medium text-slate-500 mb-1">Assignee</span>
           <select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} className="input !py-1.5 text-xs">
             <option value="">Unassigned</option>
-            {(staffData?.assignees ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            {staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </label>
         <label className="block">
           <span className="block text-[11px] font-medium text-slate-500 mb-1">Project</span>
           <select value={projectId} onChange={(e) => setProjectId(e.target.value)} className="input !py-1.5 text-xs">
-            {(projectsData?.projects ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </label>
       </div>

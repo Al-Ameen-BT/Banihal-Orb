@@ -9,11 +9,10 @@ import {
   Modal, StatusBadge, PriorityBadge, TypeBadge, SlaBar, Avatar, Icons,
   STATUS_OPTIONS, PRIORITY_OPTIONS, fmtDate, timeAgo, AttachmentGrid, Person, ACCEPTED_IMAGE_ACCEPT,
   TicketActionsMenu, EditTicketModal, useDeleteTicket, MentionTextarea, CommentBody,
-  useMentionCandidates, useCanEditTicket,
+  useMentionCandidates, useCanEditTicket, useTicketAssignees,
 } from './shared';
 import type { TicketDTO, TicketComment, TicketAttachment, TicketStatus, TicketPriority } from '@/lib/schemas';
 
-type Staff = { id: string; name: string; email: string; role: string };
 
 // A single labelled read-only fact (Branch, On Site, Client Name, …).
 function Fact({ label, value }: { label: string; value: React.ReactNode }) {
@@ -40,7 +39,7 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
   const { data: ticket } = useQuery<TicketDTO>({ queryKey: ['ticketing', 'ticket', ticketId], queryFn: () => ticketingApi.getTicket(ticketId).then((r) => r.data as TicketDTO) });
   const { data: commentsData } = useQuery<{ comments: TicketComment[] }>({ queryKey: ['ticketing', 'comments', ticketId], queryFn: () => ticketingApi.getComments(ticketId).then((r) => r.data as { comments: TicketComment[] }) });
   const { data: attData } = useQuery<{ attachments: TicketAttachment[] }>({ queryKey: ['ticketing', 'attachments', ticketId], queryFn: () => ticketingApi.getTicketAttachments(ticketId).then((r) => r.data as { attachments: TicketAttachment[] }) });
-  const { data: staffData } = useQuery<{ assignees: Staff[] }>({ queryKey: ['ticketing', 'assignees'], queryFn: () => ticketingApi.listAssignees().then((r) => r.data as { assignees: Staff[] }), staleTime: 60_000 });
+  const { data: staff = [] } = useTicketAssignees();
   const { data: mentionCandidates } = useMentionCandidates();
 
   // Manage (status / priority / assignee)
@@ -235,7 +234,7 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
                   <span className="block text-[11px] font-medium text-slate-500 mb-1">Assignee</span>
                   <select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} disabled={!canEdit} className="input !py-1.5 text-xs disabled:opacity-60">
                     <option value="">Unassigned</option>
-                    {(staffData?.assignees ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    {staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 </label>
                 <GlowButton className="w-full py-1.5 text-xs" disabled={!canEdit || !manageDirty || patchMut.isPending} loading={patchMut.isPending}

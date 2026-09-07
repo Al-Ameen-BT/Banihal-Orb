@@ -1,6 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import api, { authApi } from '@/lib/api';
 import { notify } from '@/lib/toast-bus';
 import { syncSubscription } from '@/lib/push-client';
@@ -35,6 +36,15 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+
+  // One QueryClient lives for the whole SPA session (app/providers.tsx), so without
+  // this the previous account's cached data outlives them. That is not merely stale:
+  // the ticketing module serves an ADMINISTRATOR from b2b_ticketing_admin and everyone
+  // else from b2b_ticket, so signing out of one role and into another in the same tab
+  // leaves the new user holding the OTHER database's project / assignee / customer ids
+  // — and posting one of those back returns "Project not found".
+  const resetCache = useCallback(() => queryClient.clear(), [queryClient]);
 
   const refresh = useCallback(async () => {
     try {
@@ -108,6 +118,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const res = await authApi.login({ email, password });
     const data = res.data as { mfaRequired: boolean; challengeId?: string; email?: string };
     if (data.mfaRequired === false) {
+      resetCache();    // drop whoever was signed in here before
       await refresh(); // session cookies are set — load the user
       return { mfaRequired: false };
     }
@@ -118,6 +129,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // we load the user. rememberDevice sets the 7-day trusted-device cookie.
   const verifyMfa = async (challengeId: string, code: string, rememberDevice = false) => {
     await authApi.verifyMfa({ challengeId, code, rememberDevice });
+    resetCache();
     await refresh();
   };
 
@@ -129,6 +141,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = async () => {
     await authApi.logout();
     setUser(null);
+    // Also on the way out, so a signed-out browser holds nothing to leak into the
+    // next session (or to flash on screen before the next user's data loads).
+    resetCache();
   };
 
   return (

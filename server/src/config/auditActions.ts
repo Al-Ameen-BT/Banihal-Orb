@@ -93,6 +93,11 @@ export const AUDIT_ACTIONS = [
   { key: 'TICKET_DELETED',                      group: 'Ticketing', label: 'Ticket deleted',       defaultScope: true,  sadminFeed: true  },
   { key: 'TICKET_ESCALATED',                    group: 'Ticketing', label: 'Ticket escalated',     defaultScope: true,  sadminFeed: false },
   { key: 'TICKET_CLAIMED',                      group: 'Ticketing', label: 'Escalated ticket claimed', defaultScope: false, sadminFeed: true },
+  // Deleting a project takes every ticket under it — in the admin store that spans
+  // several client organizations at once. defaultScope + sadminFeed for the same
+  // reason TICKET_DELETED carries both: irreversible, and previously unlogged
+  // entirely, so nothing recorded that a thousand tickets had ever existed.
+  { key: 'PROJECT_DELETED',                     group: 'Ticketing', label: 'Project deleted',      defaultScope: true,  sadminFeed: true  },
 
   // ── Configuration.
   { key: 'ANNOUNCEMENT_CREATED',                group: 'Config',   label: 'Announcement created',  defaultScope: false, sadminFeed: false },

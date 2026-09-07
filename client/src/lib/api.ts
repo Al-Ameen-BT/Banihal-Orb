@@ -217,7 +217,10 @@ export const ticketingApi = {
   listCustomers: () => api.get('/ticketing/customers'), // ADMINISTRATOR only (403 otherwise)
   createProject: (data: unknown) => api.post('/ticketing/projects', data),
   updateProject: (id: string, data: unknown) => api.patch(`/ticketing/projects/${id}`, data),
-  deleteProject: (id: string) => api.delete(`/ticketing/projects/${id}`),
+  // `confirm` must be the project's exact name — the server rejects a mismatch with
+  // 400 CONFIRM_MISMATCH. Deleting a project takes every ticket under it with it.
+  deleteProject: (id: string, confirm: string) =>
+    api.delete(`/ticketing/projects/${id}`, { params: { confirm } }),
   listSlas: () => api.get('/ticketing/slas'),
   createSla: (data: unknown) => api.post('/ticketing/slas', data),
   updateSla: (id: string, data: unknown) => api.patch(`/ticketing/slas/${id}`, data),
@@ -232,6 +235,9 @@ export const ticketingApi = {
   // browser set multipart/form-data with its own boundary.
   addComment: (id: string, form: FormData) => api.post(`/ticketing/tickets/${id}/comments`, form, MULTIPART),
   getActivity: (id: string) => api.get(`/ticketing/tickets/${id}/activity`),
+  // Cross-ticket activity feed (Activity Log tab). Scoped server-side to the caller's
+  // own ticket store and organization.
+  listActivityLog: (params?: Record<string, unknown>) => api.get('/ticketing/activity', { params }),
   getTicketAttachments: (id: string) => api.get(`/ticketing/tickets/${id}/attachments`),
   uploadAttachments: (id: string, form: FormData) => api.post(`/ticketing/tickets/${id}/attachments`, form, MULTIPART),
   downloadAttachment: (id: string) => api.get(`/ticketing/attachments/${id}/download`, { responseType: 'blob' }),

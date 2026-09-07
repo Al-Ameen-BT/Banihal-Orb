@@ -1,4 +1,8 @@
+import fs from 'fs/promises';
+import path from 'path';
+import type { enum_Activities_type } from '@prisma/ticket-client';
 import { ticketPrisma, getTicketDb } from '../../config/ticketDatabase';
+import { UPLOAD_DIR } from './uploads';
 import { evaluateSla, evaluateResponseSla, convertToSeconds, type TimeUnit } from './services/slaService';
 import type {
   TicketDTO, ProjectDTO, SlaDTO, TicketFilters, PersonRef,
@@ -298,9 +302,61 @@ export function updateProjectRow(id: string, data: Parameters<typeof ticketPrism
 export function countProjectTickets(id: string) {
   return getTicketDb().tickets.count({ where: { projectId: id } });
 }
-export async function deleteProjectById(id: string): Promise<void> {
-  // Tickets.projectId is NOT NULL — the service blocks deletion when tickets exist.
-  await getTicketDb().projects.delete({ where: { id } });
+
+/** Name + ticket count, read BEFORE the delete — both are gone afterwards and both
+ *  are needed: the name to check the typed confirmation against, the count for the
+ *  audit row that becomes the only surviving record of what was destroyed. */
+export async function getProjectForDelete(id: string) {
+  const row = await getTicketDb().projects.findUnique({
+    where: { id },
+    select: { id: true, name: true, _count: { select: { Tickets: true } } },
+  });
+  return row ? { id: row.id, name: row.name, tickets: row._count.Tickets } : null;
+}
+
+/** Do any of this project's tickets have a copy in the OTHER store? Escalation joins
+ *  the two by a `src:<ticketNumber>` label with no foreign key, so deleting this side
+ *  orphans the copy permanently and silently — the same reason deleteTicket refuses. */
+export function countEscalatedInProject(id: string) {
+  return getTicketDb().tickets.count({ where: { projectId: id, labels: { has: 'escalated' } } });
+}
+
+/**
+ * Delete a project AND every ticket under it.
+ *
+ * Tickets.projectId is NOT NULL, so the tickets cannot be orphaned — they go or the
+ * project stays. Comments, comment attachments, ticket attachments, activities and
+ * watchers all cascade in-database from the ticket delete (db/b2b_ticket.sql:196-257),
+ * and ProjectMembers cascades from the project.
+ *
+ * FILES BEFORE ROWS, for the same reason as orgDeletion.service.ts: attachments are
+ * random filenames in a flat directory whose only pointer is the row about to be
+ * deleted. Delete the rows first and the bytes on disk are unreachable forever.
+ */
+export async function deleteProjectCascade(id: string): Promise<{ tickets: number; attachments: number }> {
+  const db = getTicketDb();
+  const tickets = await db.tickets.findMany({ where: { projectId: id }, select: { id: true } });
+  const ticketIds = tickets.map((t) => t.id);
+
+  let attachments = 0;
+  if (ticketIds.length) {
+    const files = [
+      ...(await db.ticketAttachments.findMany({ where: { ticketId: { in: ticketIds } }, select: { filename: true } })),
+      ...(await db.commentAttachments.findMany({ where: { Comments: { ticketId: { in: ticketIds } } }, select: { filename: true } })),
+    ];
+    // filename is nullable on both tables — a row without one has no file to unlink.
+    const names = files.map((f) => f.filename).filter((n): n is string => !!n);
+    attachments = names.length;
+    await Promise.all(names.map((name) =>
+      // Best-effort per file: a missing file must not abort the teardown, and
+      // basename() keeps a crafted stored name from escaping UPLOAD_DIR.
+      fs.unlink(path.join(UPLOAD_DIR, path.basename(name))).catch(() => {})));
+
+    await db.tickets.deleteMany({ where: { id: { in: ticketIds } } });
+  }
+
+  await db.projects.delete({ where: { id } });
+  return { tickets: ticketIds.length, attachments };
 }
 
 // ─── Ticket deletion ───────────────────────────────────────────────────────────
@@ -508,6 +564,75 @@ export async function listActivities(ticketId: string): Promise<ActivityDTO[]> {
     id: a.id, type: a.type as string, field: a.field, oldValue: a.oldValue, newValue: a.newValue,
     description: a.description, user: person(a.Users), createdAt: a.createdAt.toISOString(),
   }));
+}
+
+// ─── Activity log feed ─────────────────────────────────────────────────────────
+// The same Activities rows listActivities returns per ticket, read the other way
+// round: the whole store ordered by time. Backs the ticketing Activity Log tab.
+//
+// Reads the CURRENT store only, like every other ticketing query — an ADMINISTRATOR
+// sees b2b_ticketing_admin and an ORG_ADMIN sees b2b_ticket. The two are separate
+// databases with no join, so there is nothing to merge and nothing that could leak
+// across by accident.
+export interface ActivityFeedFilters {
+  /** The generated enum, not a string: a value ActivityFeedSchema forgot to allow is
+   *  then a compile error rather than a silent zero-row filter. */
+  type?: enum_Activities_type;
+  ticketId?: string;
+  from?: Date;
+  to?: Date;
+  search?: string;
+  limit: number;
+  cursor?: string;
+  /** From ticketAccessScope(): the ticket-store user ids whose tickets the caller may
+   *  see, or null for "the whole store" (an administrator in the isolated admin one).
+   *  Passed in rather than derived here so this stays the same guard assertTicketAccess
+   *  applies per ticket — an ORG_ADMIN must never read the other organizations sharing
+   *  b2b_ticket. */
+  scope: string[] | null;
+}
+
+export interface ActivityFeedRow extends ActivityDTO {
+  ticket: { id: string; ticketNumber: string; title: string } | null;
+}
+
+export async function listActivityFeed(f: ActivityFeedFilters): Promise<{ items: ActivityFeedRow[]; nextCursor: string | null }> {
+  const ticketWhere = {
+    ...(f.scope ? { OR: [{ reporterId: { in: f.scope } }, { assigneeId: { in: f.scope } }] } : {}),
+    ...(f.search ? {
+      OR: [
+        { ticketNumber: { contains: f.search, mode: 'insensitive' as const } },
+        { title: { contains: f.search, mode: 'insensitive' as const } },
+      ],
+    } : {}),
+  };
+
+  const rows = await getTicketDb().activities.findMany({
+    where: {
+      ...(f.type ? { type: f.type } : {}),
+      ...(f.ticketId ? { ticketId: f.ticketId } : {}),
+      ...(f.from || f.to ? { createdAt: { ...(f.from ? { gte: f.from } : {}), ...(f.to ? { lte: f.to } : {}) } } : {}),
+      // An empty object here would be a no-op filter, so only attach it when it
+      // actually constrains something — otherwise every row pays for a join.
+      ...(Object.keys(ticketWhere).length ? { Tickets: ticketWhere } : {}),
+    },
+    include: { Users: userSel, Tickets: { select: { id: true, ticketNumber: true, title: true } } },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    // One extra row is how we know whether a next page exists without a second
+    // count(*) over a table this size.
+    take: f.limit + 1,
+    ...(f.cursor ? { cursor: { id: f.cursor }, skip: 1 } : {}),
+  });
+
+  const page = rows.slice(0, f.limit);
+  return {
+    items: page.map((a) => ({
+      id: a.id, type: a.type as string, field: a.field, oldValue: a.oldValue, newValue: a.newValue,
+      description: a.description, user: person(a.Users), createdAt: a.createdAt.toISOString(),
+      ticket: a.Tickets ? { id: a.Tickets.id, ticketNumber: a.Tickets.ticketNumber, title: a.Tickets.title } : null,
+    })),
+    nextCursor: rows.length > f.limit ? (page[page.length - 1]?.id ?? null) : null,
+  };
 }
 
 // Updates on tickets the user reported (their notification feed) — status changes,

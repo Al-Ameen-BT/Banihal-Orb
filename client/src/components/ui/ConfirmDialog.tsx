@@ -30,6 +30,18 @@ export interface ConfirmOptions {
   rememberKey?: string;
   /** Checkbox wording; defaults to "Don't ask me again". */
   rememberLabel?: string;
+  /**
+   * Second verification for the genuinely irreversible: the confirm button stays
+   * disabled until the user types this string back exactly. Use it for actions that
+   * destroy data a click cannot undo — the server must re-check the same value, or
+   * this is theatre rather than a guard.
+   *
+   * Mutually exclusive with `rememberKey` in practice: nothing that warrants typing
+   * a name back should ever be skippable.
+   */
+  requireText?: string;
+  /** Prompt above the input; defaults to "Type <requireText> to confirm". */
+  requireLabel?: string;
 }
 
 type ConfirmFn = (options: ConfirmOptions) => Promise<boolean>;
@@ -68,6 +80,7 @@ function rememberSkip(key: string): void {
 export function ConfirmProvider({ children }: { children: React.ReactNode }) {
   const [options, setOptions] = useState<ConfirmOptions | null>(null);
   const [remember, setRemember] = useState(false);
+  const [typed, setTyped] = useState('');
   // Mirrored in refs so `close` stays referentially stable — it is a dependency of
   // the focus/scroll-lock effect, and re-running that on every checkbox tick would
   // yank focus off the checkbox and back onto Cancel.
@@ -76,6 +89,7 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
   const resolverRef = useRef<((ok: boolean) => void) | null>(null);
   const confirmBtnRef = useRef<HTMLButtonElement>(null);
   const cancelBtnRef = useRef<HTMLButtonElement>(null);
+  const requireInputRef = useRef<HTMLInputElement>(null);
   const reduce = useReducedMotion();
 
   const confirm = useCallback<ConfirmFn>((opts) => {
@@ -84,6 +98,7 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
     rememberKeyRef.current = opts.rememberKey;
     rememberRef.current = false;
     setRemember(false);
+    setTyped('');
     setOptions(opts);
     return new Promise<boolean>((resolve) => { resolverRef.current = resolve; });
   }, []);
@@ -94,26 +109,35 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
     if (result && rememberRef.current && rememberKeyRef.current) rememberSkip(rememberKeyRef.current);
     resolverRef.current?.(result);
     resolverRef.current = null;
+    setTyped('');
     setOptions(null);
   }, []);
 
   const open = options !== null;
   const isDanger = options?.variant === 'danger';
+  // Trimmed on both sides: the user is retyping a name that may itself carry spaces,
+  // and failing them over a trailing one teaches nothing.
+  const confirmBlocked = !!options?.requireText && typed.trim() !== options.requireText.trim();
 
-  // Focus management, Escape to cancel, a two-button focus trap, and scroll lock.
+  // Focus management, Escape to cancel, a focus trap, and scroll lock.
   useEffect(() => {
     if (!open) return;
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    // Focus Cancel on destructive prompts (safer default), Confirm otherwise.
+    // With a confirmation to type, the input is the only useful landing spot — the
+    // confirm button is disabled until it is filled in. Otherwise: Cancel on
+    // destructive prompts (safer default), Confirm elsewhere.
     const focusTimer = window.setTimeout(() => {
-      (isDanger ? cancelBtnRef : confirmBtnRef).current?.focus();
+      const target = requireInputRef.current ?? (isDanger ? cancelBtnRef : confirmBtnRef).current;
+      target?.focus();
     }, 20);
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { e.preventDefault(); close(false); return; }
       if (e.key === 'Tab') {
-        const els = [cancelBtnRef.current, confirmBtnRef.current].filter(Boolean) as HTMLElement[];
+        // The trap preventDefaults Tab, so anything focusable inside the dialog has to
+        // be listed here or it becomes unreachable by keyboard.
+        const els = [requireInputRef.current, cancelBtnRef.current, confirmBtnRef.current].filter(Boolean) as HTMLElement[];
         if (els.length < 2) return;
         e.preventDefault();
         const idx = els.indexOf(document.activeElement as HTMLElement);
@@ -178,6 +202,24 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
                 </div>
               )}
 
+              {options.requireText && (
+                <div className="mt-5">
+                  <label htmlFor="confirm-require" className="block text-xs font-medium text-slate-600">
+                    {options.requireLabel ?? <>Type <span className="font-semibold text-slate-800">{options.requireText}</span> to confirm</>}
+                  </label>
+                  <input
+                    id="confirm-require"
+                    ref={requireInputRef}
+                    type="text"
+                    value={typed}
+                    onChange={(e) => setTyped(e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30"
+                  />
+                </div>
+              )}
+
               {options.rememberKey && (
                 <label className="mt-5 flex cursor-pointer items-center justify-center gap-2 text-sm text-slate-600">
                   <input
@@ -204,7 +246,8 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
                   ref={confirmBtnRef}
                   type="button"
                   onClick={() => close(true)}
-                  className={clsx(btnBase, 'text-white',
+                  disabled={confirmBlocked}
+                  className={clsx(btnBase, 'text-white disabled:cursor-not-allowed disabled:opacity-40',
                     isDanger
                       ? 'bg-red-600 hover:bg-red-700 focus-visible:ring-red-500/50'
                       : 'bg-brand hover:bg-brand-700 focus-visible:ring-brand/50')}
