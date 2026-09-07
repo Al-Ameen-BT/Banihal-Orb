@@ -273,6 +273,7 @@ enum enum_Activities_type {
   priority_changed
   assigned
   attachment_added
+  mentioned
 }
 
 enum enum_ProjectMembers_role {

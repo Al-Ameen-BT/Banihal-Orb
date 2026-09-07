@@ -187,6 +187,15 @@ export const adSecretsApi = {
 
 // In-app Ticketing Tool — proxied through our server to the external ticketing
 // system (fallback data served until the external API is configured).
+// Durable notifications with server-side read state — unlike the ticketing
+// `*Alerts` feeds below, which recompute from a localStorage watermark and forget
+// anything they have already shown.
+export const notificationsApi = {
+  list: (params?: { limit?: number; before?: string }) => api.get('/notifications', { params }),
+  markRead: (id: string) => api.post(`/notifications/${id}/read`),
+  markAllRead: () => api.post('/notifications/read-all'),
+};
+
 export const ticketingApi = {
   listTickets: (params?: Record<string, unknown>) => api.get('/ticketing/tickets', { params }),
   getTicket: (id: string) => api.get(`/ticketing/tickets/${id}`),

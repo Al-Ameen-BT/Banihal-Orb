@@ -8,7 +8,7 @@ import GlowButton from '@/components/ui/GlowButton';
 import {
   Modal, StatusBadge, PriorityBadge, TypeBadge, SlaBar, Avatar, Icons,
   STATUS_OPTIONS, PRIORITY_OPTIONS, fmtDate, timeAgo, AttachmentGrid, Person, ACCEPTED_IMAGE_ACCEPT,
-  TicketActionsMenu, EditTicketModal, useDeleteTicket,
+  TicketActionsMenu, EditTicketModal, useDeleteTicket, MentionTextarea, CommentBody,
 } from './shared';
 import type { TicketDTO, TicketComment, TicketAttachment, TicketStatus, TicketPriority } from '@/lib/schemas';
 
@@ -30,6 +30,9 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
   const [comment, setComment] = useState('');
   const [files, setFiles] = useState<FileList | null>(null);
   const [editing, setEditing] = useState(false);
+  // Ids chosen from the @ picker. Sent alongside the comment; the server re-checks
+  // every one against the roster, so this is convenience, not authority.
+  const [mentions, setMentions] = useState<string[]>([]);
   // The pane is showing a ticket that no longer exists, so close it on success.
   const { requestDelete } = useDeleteTicket(onClose);
 
@@ -77,10 +80,11 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
     mutationFn: () => {
       const form = new FormData();
       form.append('content', comment.trim());
+      mentions.forEach((id) => form.append('mentions', id));
       if (files) Array.from(files).forEach((f) => form.append('files', f));
       return ticketingApi.addComment(ticketId, form);
     },
-    onSuccess: () => { setComment(''); setFiles(null); void invalidate(); },
+    onSuccess: () => { setComment(''); setFiles(null); setMentions([]); void invalidate(); },
   });
 
   const manageDirty = !!ticket && (status !== ticket.status || priority !== ticket.priority || assigneeId !== (ticket.assignee?.id ?? ''));
@@ -155,7 +159,7 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
                       <Avatar name={c.author?.name} size="md" />
                       <div className="flex-1 min-w-0">
                         <p className="text-xs"><span className="font-semibold text-slate-800">{c.author?.name ?? 'Unknown'}</span> <span className="text-slate-400">· {timeAgo(c.createdAt)}</span></p>
-                        <p className="text-sm text-slate-700 whitespace-pre-wrap mt-0.5">{c.content}</p>
+                        <CommentBody content={c.content} names={(staffData?.assignees ?? []).map((a) => a.name)} />
                         {c.attachments.length > 0 && <div className="mt-1.5"><AttachmentGrid attachments={c.attachments} size="sm" /></div>}
                       </div>
                     </div>
@@ -163,7 +167,13 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
                   {(commentsData?.comments.length ?? 0) === 0 && <p className="text-xs text-slate-400">No comments yet.</p>}
                 </div>
                 <div className="mt-3 space-y-2">
-                  <textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={2} className="input resize-none text-sm" placeholder="Add a comment…" />
+                  <MentionTextarea
+                    value={comment}
+                    onChange={setComment}
+                    candidates={staffData?.assignees ?? []}
+                    onMentionsChange={setMentions}
+                    placeholder="Add a comment… use @ to mention a colleague"
+                  />
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-slate-500 cursor-pointer hover:text-slate-700 inline-flex items-center gap-1">
                       <Icons.paperclip className="w-3.5 h-3.5" />

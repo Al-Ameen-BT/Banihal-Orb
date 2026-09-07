@@ -2,6 +2,10 @@ import fs from 'fs/promises';
 import path from 'path';
 import * as db from './ticketing.client';
 import { UPLOAD_DIR } from './uploads';
+import { getTicketDbScope } from '../../config/ticketDatabase';
+import { listAdminAssignees } from './services/adminAssignees';
+import { resolveB2bIdentity } from './identity';
+import { notify } from '../notifications/notifications.service';
 import { nextTicketNumber } from './utils/ticketNumber';
 import { getTicketNumberFormat, resolveOrgCode } from './services/numberFormat';
 import { getNextAssignee, withLastAssigned } from './utils/roundRobin';
@@ -328,7 +332,20 @@ export const getAttachmentFile = (id: string) => db.getAttachmentFile(id);
 export const watch = (ticketId: string, userId: string) => db.addWatcher(ticketId, userId);
 export const unwatch = (ticketId: string, userId: string) => db.removeWatcher(ticketId, userId);
 
-export async function addComment(actorId: string, ticketId: string, content: string, files: Express.Multer.File[] = []) {
+export interface AddCommentExtras {
+  /** Ticket-store user ids chosen from the @ picker. Validated here, never trusted. */
+  mentions: string[];
+  /** The author's MAIN-database user id — recorded as the notification's actor. */
+  actorB2bUserId: string;
+}
+
+export async function addComment(
+  actorId: string,
+  ticketId: string,
+  content: string,
+  files: Express.Multer.File[] = [],
+  extras?: AddCommentExtras,
+) {
   const exists = await db.getTicketCore(ticketId);
   if (!exists) throw notFound('Ticket');
   const commentId = await db.createComment(ticketId, actorId, content);
@@ -336,7 +353,70 @@ export async function addComment(actorId: string, ticketId: string, content: str
   await db.writeActivity({ type: 'commented', ticketId, userId: actorId, description: content.slice(0, 140) });
   // Both halves of an escalated pair see the same conversation.
   mirrorInBackground(() => mirrorComment(ticketId, actorId, content, files));
+
+  if (extras?.mentions.length) {
+    await deliverMentions({ actorId, ticketId, commentId, content, ...extras });
+  }
   return db.listComments(ticketId);
+}
+
+/**
+ * Notify everyone named in a comment. Three guards, and all three are load-bearing.
+ *
+ * Failures are swallowed: the comment is already committed, and a notification
+ * problem must not turn a successful post into an error the author has to retry.
+ */
+async function deliverMentions(args: {
+  actorId: string; ticketId: string; commentId: string; content: string;
+  mentions: string[]; actorB2bUserId: string;
+}): Promise<void> {
+  try {
+    // GUARD 1 — STORE. Mentions are a platform-provider feature. The comment route
+    // serves BOTH stores (routes.ts has no adminStore guard on it), so this check
+    // is the actual boundary — not which component renders the picker. Scope, not
+    // role: access.ts:22-26 spells out why role is the wrong question.
+    if (getTicketDbScope() !== 'admin') return;
+
+    // GUARD 2 — ROSTER. Ids come from the client, so they are re-checked against
+    // the real assignee pool. Without this, any uuid could address a notification.
+    const roster = await listAdminAssignees();
+    const byId = new Map(roster.map((r) => [r.id, r] as const));
+
+    // GUARD 3 — SELF. Mentioning yourself notifies nobody, matching the
+    // self-assignment skip in ticketNotify.ts.
+    const targets = [...new Set(args.mentions)].filter((id) => id !== args.actorId && byId.has(id));
+    if (targets.length === 0) return;
+
+    const ticket = await db.getTicketForDelete(args.ticketId);  // id + number + title
+    const author = byId.get(args.actorId)?.name ?? 'Someone';
+
+    for (const ticketUserId of targets) {
+      // The mention belongs in the ticket's own timeline too, so it reads in
+      // context. Decoration only — the Notification row is the delivery guarantee.
+      await db.writeActivity({
+        type: 'mentioned', ticketId: args.ticketId, userId: args.actorId,
+        field: 'mention', newValue: ticketUserId, description: args.content.slice(0, 140),
+      }).catch(() => {});
+
+      // Ticket-store id → main-database account. Returns null for bots and for
+      // ticketing staff with no B2B account; those simply cannot be notified.
+      const recipient = await resolveB2bIdentity(ticketUserId);
+      if (!recipient) continue;
+
+      await notify({
+        userId: recipient.userId,
+        customerId: recipient.tenantId,   // the RECIPIENT's org — see notifications.service
+        kind: 'ticket_mention',
+        title: `${author} mentioned you on ${ticket?.ticketNumber ?? 'a ticket'}`,
+        body: args.content.slice(0, 200),
+        url: `/ticketing?ticket=${args.ticketId}`,
+        actorId: args.actorB2bUserId,
+        entityId: args.ticketId,
+      });
+    }
+  } catch (err) {
+    console.error('⚠️  Mention delivery failed:', err instanceof Error ? err.message : err);
+  }
 }
 
 export async function addTicketAttachments(actorId: string, ticketId: string, files: Express.Multer.File[]) {

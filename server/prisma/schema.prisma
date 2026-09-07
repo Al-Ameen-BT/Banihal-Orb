@@ -131,6 +131,7 @@ model User {
   announcements       Announcement[] @relation("UserAnnouncements")
   escalations         TicketEscalation[] @relation("UserEscalations")
   pushSubscriptions   PushSubscription[]
+  notifications       Notification[]
   customer            Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
   @@index([customerId])
@@ -203,6 +204,41 @@ model PushSubscription {
 
   @@index([userId])
   @@index([tenantId])
+}
+
+/// Durable, per-user notifications with read state.
+///
+/// Lives in the MAIN database on purpose. The obvious home looked like the ticket
+/// store's Activities table, but those rows are ON DELETE CASCADE on the ticket —
+/// so a mention would silently vanish if the ticket were deleted. Push
+/// subscriptions are keyed to main-DB users too.
+///
+/// `entityId` is a LOOSE reference (e.g. a ticket id) with no foreign key: the
+/// ticket lives in a different database entirely. Same shape as
+/// TicketEscalation.ticketId.
+model Notification {
+  id         String    @id @default(cuid())
+  userId     String
+  /// The RECIPIENT's org, not the actor's. The tenant extension injects this on
+  /// reads, so setting the actor's org here would write a row its recipient could
+  /// never read back. resolveB2bIdentity() returns exactly this pair.
+  customerId String
+  /// 'ticket_mention' today. This column is why the next notification kind needs
+  /// no migration.
+  kind       String
+  title      String
+  body       String?
+  /// Deep link, e.g. /ticketing?ticket=<id>
+  url        String?
+  actorId    String?
+  entityId   String?
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@index([customerId])
+  @@index([createdAt])
 }
 
 model RefreshToken {

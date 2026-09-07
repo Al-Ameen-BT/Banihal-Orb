@@ -926,6 +926,151 @@ export function Drawer({ open, onClose, children, width = 'max-w-2xl' }: { open:
   );
 }
 
+// ─── Comment box with @mentions ─────────────────────────────────────────────────
+// Platform-provider store only. Typing "@" opens the staff roster; picking someone
+// inserts their name AND records their id.
+//
+// The IDS are the source of truth, never the text. Matching typed names back to
+// people would be guesswork — staff are "Firstname Lastname", there is no handle
+// column, and two people can share a name. So the picker records the id, and any
+// id whose name no longer appears in the text is dropped before submitting.
+
+export interface MentionCandidate { id: string; name: string; email: string }
+
+/** Where the caret sits inside an unfinished "@fragment", or null. */
+function activeMentionQuery(text: string, caret: number): { start: number; query: string } | null {
+  const upto = text.slice(0, caret);
+  const at = upto.lastIndexOf('@');
+  if (at === -1) return null;
+  // Must start a word: "@x" or " @x", not "email@x".
+  if (at > 0 && !/\s/.test(upto[at - 1]!)) return null;
+  const query = upto.slice(at + 1);
+  // A newline ends it, and so does a long run — this is a name, not a paragraph.
+  if (/[\n]/.test(query) || query.length > 40) return null;
+  return { start: at, query };
+}
+
+export function MentionTextarea({ value, onChange, candidates, onMentionsChange, placeholder, rows = 2 }: {
+  value: string;
+  onChange: (next: string) => void;
+  candidates: MentionCandidate[];
+  onMentionsChange: (ids: string[]) => void;
+  placeholder?: string;
+  rows?: number;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const [picked, setPicked] = useState<MentionCandidate[]>([]);
+  const [query, setQuery] = useState<{ start: number; query: string } | null>(null);
+  const [active, setActive] = useState(0);
+
+  const matches = useMemo(() => {
+    if (!query) return [];
+    const q = query.query.toLowerCase();
+    return candidates.filter((c) => c.name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q)).slice(0, 6);
+  }, [query, candidates]);
+
+  useEffect(() => { setActive(0); }, [query?.query]);
+
+  // A mention only counts while its name is still in the text. Editing or deleting
+  // the inserted name retracts it, so nobody is notified about a comment that no
+  // longer names them.
+  useEffect(() => {
+    const live = picked.filter((p) => value.includes(`@${p.name}`));
+    if (live.length !== picked.length) setPicked(live);
+    onMentionsChange(live.map((p) => p.id));
+  }, [value, picked, onMentionsChange]);
+
+  function choose(c: MentionCandidate) {
+    if (!query) return;
+    const before = value.slice(0, query.start);
+    const after = value.slice((ref.current?.selectionStart ?? value.length));
+    const next = `${before}@${c.name} ${after}`;
+    onChange(next);
+    setPicked((prev) => (prev.some((p) => p.id === c.id) ? prev : [...prev, c]));
+    setQuery(null);
+    // Put the caret after the inserted name rather than leaving it mid-text.
+    requestAnimationFrame(() => {
+      const pos = before.length + c.name.length + 2;
+      ref.current?.focus();
+      ref.current?.setSelectionRange(pos, pos);
+    });
+  }
+
+  return (
+    <div className="relative">
+      <textarea
+        ref={ref}
+        value={value}
+        rows={rows}
+        placeholder={placeholder}
+        className="input resize-none text-sm w-full"
+        role="combobox"
+        aria-expanded={matches.length > 0}
+        aria-autocomplete="list"
+        aria-controls="mention-listbox"
+        onChange={(e) => {
+          onChange(e.target.value);
+          setQuery(activeMentionQuery(e.target.value, e.target.selectionStart));
+        }}
+        onClick={(e) => setQuery(activeMentionQuery(value, e.currentTarget.selectionStart))}
+        onBlur={() => setTimeout(() => setQuery(null), 120)}  // let a click on an option land first
+        onKeyDown={(e) => {
+          if (matches.length === 0) return;
+          if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => Math.min(i + 1, matches.length - 1)); }
+          else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((i) => Math.max(i - 1, 0)); }
+          else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); choose(matches[active]!); }
+          else if (e.key === 'Escape') { e.preventDefault(); setQuery(null); }
+        }}
+      />
+      <AnimatePresence>
+        {matches.length > 0 && (
+          <motion.ul
+            id="mention-listbox"
+            role="listbox"
+            initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            transition={{ duration: 0.12 }}
+            className="absolute left-0 bottom-full mb-1 z-50 w-64 card shadow-card-hover overflow-hidden py-1"
+          >
+            {matches.map((c, i) => (
+              <li key={c.id} role="option" aria-selected={i === active}>
+                <button
+                  type="button"
+                  // onMouseDown, not onClick: blur fires first and would close the list.
+                  onMouseDown={(e) => { e.preventDefault(); choose(c); }}
+                  className={clsx(
+                    'w-full text-left px-3 py-1.5 cursor-pointer transition-colors',
+                    i === active ? 'bg-slate-100' : 'hover:bg-slate-50',
+                  )}
+                >
+                  <span className="block text-xs font-semibold text-slate-800 truncate">{c.name}</span>
+                  <span className="block text-[10px] text-slate-400 truncate">{c.email}</span>
+                </button>
+              </li>
+            ))}
+          </motion.ul>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/** Render a comment, highlighting any "@Name" that matches a known colleague. */
+export function CommentBody({ content, names }: { content: string; names: string[] }) {
+  // Longest first so "@Ann Lee" wins over "@Ann".
+  const sorted = [...names].filter(Boolean).sort((a, b) => b.length - a.length);
+  if (sorted.length === 0) return <p className="text-sm text-slate-700 whitespace-pre-wrap mt-0.5">{content}</p>;
+
+  const escaped = sorted.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const parts = content.split(new RegExp(`(@(?:${escaped.join('|')}))`, 'g'));
+  return (
+    <p className="text-sm text-slate-700 whitespace-pre-wrap mt-0.5">
+      {parts.map((part, i) => (part.startsWith('@') && sorted.some((n) => part === `@${n}`)
+        ? <span key={i} className="font-semibold text-brand bg-brand-50 rounded px-1 py-0.5">{part}</span>
+        : <span key={i}>{part}</span>))}
+    </p>
+  );
+}
+
 // ─── Ticket actions menu (⋮) ────────────────────────────────────────────────────
 // The codebase had no dropdown/popover primitive and no dismiss-on-outside-click
 // utility, so this is the first. Anchoring follows NotificationBell; the outside-

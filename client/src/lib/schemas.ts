@@ -262,6 +262,21 @@ export interface TicketUpdateAlert {
   createdAt: string;
 }
 
+// A durable notification. Unlike TicketUpdateAlert above (recomputed per poll from
+// a localStorage watermark), this row persists server-side and carries real read
+// state — `readAt` is authoritative and survives a reload.
+export interface NotificationDTO {
+  id: string;
+  kind: string;
+  title: string;
+  body: string | null;
+  url: string | null;
+  actorId: string | null;
+  entityId: string | null;
+  readAt: string | null;
+  createdAt: string;
+}
+
 export interface TicketActivity {
   id: string;
   type: string;

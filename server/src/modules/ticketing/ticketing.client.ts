@@ -210,7 +210,7 @@ export async function findActiveSlaIdByPriority(priority: TicketPriority): Promi
 }
 
 // ─── Activity log ──────────────────────────────────────────────────────────────
-type ActivityType = 'created' | 'updated' | 'commented' | 'status_changed' | 'priority_changed' | 'assigned' | 'attachment_added';
+type ActivityType = 'created' | 'updated' | 'commented' | 'status_changed' | 'priority_changed' | 'assigned' | 'attachment_added' | 'mentioned';
 export function writeActivity(a: {
   type: ActivityType; ticketId: string; userId: string;
   field?: string; oldValue?: unknown; newValue?: unknown; description?: string;

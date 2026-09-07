@@ -27,6 +27,7 @@ import botsRoutes from './modules/bots/bots.routes';
 import adIngestRoutes from './modules/ad-secrets/adIngest.routes';
 import adSecretsRoutes from './modules/ad-secrets/adSecrets.routes';
 import pushRoutes from './modules/push/push.routes';
+import notificationsRoutes from './modules/notifications/notifications.routes';
 import agentRoutes from './modules/agent/agent.routes';
 
 const app = express();
@@ -105,6 +106,10 @@ app.use('/api/ad-secrets', withTenant, adSecretsRoutes);
 // Web Push subscriptions — auth only (scoped explicitly by userId/tenantId, so no
 // tenant middleware; PushSubscription is excluded from the tenant Prisma extension).
 app.use('/api/push', pushRoutes);
+// Durable per-user notifications (read state lives in the DB, not localStorage).
+// withTenant so the tenant extension scopes reads; the service additionally
+// filters by userId, which is what keeps one member out of another's list.
+app.use('/api/notifications', withTenant, notificationsRoutes);
 
 // Sadmin / Administrator — platform-level access, no tenant scope
 app.use('/api/saas-admin', requireRole('ADMINISTRATOR'), saasAdminRoutes);

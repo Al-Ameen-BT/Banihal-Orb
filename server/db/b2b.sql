@@ -239,6 +239,37 @@ CREATE UNIQUE INDEX IF NOT EXISTS "PushSubscription_endpoint_key" ON "PushSubscr
 CREATE INDEX        IF NOT EXISTS "PushSubscription_userId_idx"   ON "PushSubscription" ("userId");
 CREATE INDEX        IF NOT EXISTS "PushSubscription_tenantId_idx" ON "PushSubscription" ("tenantId");
 
+-- ─── Notification ────────────────────────────────────────────────────────────
+-- Durable per-user notifications with read state, in the MAIN database.
+--
+-- Deliberately NOT in the ticket store: Activities rows are ON DELETE CASCADE on
+-- their ticket, so a mention held there would disappear if the ticket were
+-- deleted. A notification has to outlive the thing it points at.
+--
+-- "entityId" is a loose reference (a ticket id) with NO foreign key — tickets
+-- live in a separate database. Same arrangement as TicketEscalation."ticketId".
+--
+-- "customerId" is the RECIPIENT's org. The tenant Prisma extension injects it on
+-- every read, so a row written with the ACTOR's org would be unreadable by the
+-- person it was for — the cross-org mention case.
+CREATE TABLE IF NOT EXISTS "Notification" (
+  "id"         TEXT PRIMARY KEY,
+  "userId"     TEXT NOT NULL REFERENCES "User" ("id") ON DELETE CASCADE,
+  "customerId" TEXT NOT NULL,
+  "kind"       TEXT NOT NULL,
+  "title"      TEXT NOT NULL,
+  "body"       TEXT,
+  "url"        TEXT,
+  "actorId"    TEXT,
+  "entityId"   TEXT,
+  "readAt"     TIMESTAMPTZ,
+  "createdAt"  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- The unread-for-me query, which is what the bell polls.
+CREATE INDEX IF NOT EXISTS "Notification_userId_readAt_idx" ON "Notification" ("userId", "readAt");
+CREATE INDEX IF NOT EXISTS "Notification_customerId_idx"    ON "Notification" ("customerId");
+CREATE INDEX IF NOT EXISTS "Notification_createdAt_idx"     ON "Notification" ("createdAt");
+
 -- ─── RefreshToken ────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS "RefreshToken" (
   "id"         TEXT PRIMARY KEY,

@@ -33,6 +33,11 @@ DO $$ BEGIN CREATE TYPE "enum_SLAs_priority"       AS ENUM ('low','medium','high
 DO $$ BEGIN CREATE TYPE "enum_SLAs_timeUnit"       AS ENUM ('minutes','hours','days');                                                      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE "enum_ProjectMembers_role" AS ENUM ('admin','member','viewer');                                                     EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE "enum_Activities_type"     AS ENUM ('created','updated','commented','status_changed','priority_changed','assigned','attachment_added'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+-- Added after the type already existed on deployed databases, so it cannot go in
+-- the CREATE above. ALTER TYPE ... ADD VALUE may NOT run inside a transaction
+-- block, which is why this is a bare standalone statement and not wrapped in the
+-- DO $$ ... $$ form used everywhere else in this file.
+ALTER TYPE "enum_Activities_type" ADD VALUE IF NOT EXISTS 'mentioned';
 
 -- ─── Users ──────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS "Users" (

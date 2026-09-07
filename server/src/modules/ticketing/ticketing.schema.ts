@@ -63,6 +63,21 @@ export const CreateTicketSchema = z.object({
   escalateToAdministrators: z.boolean().optional(),
 });
 
+// Comments previously read a bare req.body.content with no schema at all. `mentions`
+// carries ticket-store user ids chosen from the @ picker — ids rather than parsed
+// text, so there is no ambiguity to resolve server-side. They are still validated
+// against the roster before anything is sent (see service.addComment).
+export const AddCommentSchema = z.object({
+  content: z.string().trim().min(1).max(10_000),
+  mentions: z.preprocess(
+    // multipart sends one repeated field per value, which arrives as a bare string
+    // when there is exactly one — normalise before validating.
+    (v) => (v === undefined ? undefined : Array.isArray(v) ? v : [v]),
+    z.array(z.string().uuid()).max(10),
+  ).optional(),
+});
+export type AddCommentInput = z.infer<typeof AddCommentSchema>;
+
 export const UpdateTicketSchema = z.object({
   title: z.string().min(1).max(255).optional(),
   description: z.string().min(1).max(10_000).optional(),

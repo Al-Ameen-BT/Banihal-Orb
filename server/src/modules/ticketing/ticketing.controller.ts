@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { UPLOAD_DIR, SERVEABLE_TYPES } from './uploads';
 import {
-  ListTicketsSchema, CreateTicketSchema, UpdateTicketSchema,
+  ListTicketsSchema, CreateTicketSchema, UpdateTicketSchema, AddCommentSchema,
   CreateProjectSchema, UpdateProjectSchema, CreateSlaSchema, ReportSchema,
 } from './ticketing.schema';
 import * as service from './ticketing.service';
@@ -293,12 +293,17 @@ export async function getComments(req: Request, res: Response, next: NextFunctio
 }
 export async function addComment(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const content = String(req.body?.content ?? '').trim();
-    if (!content) { res.status(400).json({ error: 'content is required', code: 'BAD_REQUEST' }); return; }
+    const { content, mentions } = AddCommentSchema.parse(req.body);
     await service.assertTicketAccess(await service.ticketAccessScope(req.user), req.params['id']!);
     const me = await actor(req);
     const files = (req.files as Express.Multer.File[] | undefined) ?? [];
-    res.status(201).json({ comments: await service.addComment(me.id, req.params['id']!, content, files) });
+    // actorB2bUserId is carried down because a Notification records who caused it
+    // in MAIN-database ids, while everything else on this path is ticket-store ids.
+    const comments = await service.addComment(me.id, req.params['id']!, content, files, {
+      mentions: mentions ?? [],
+      actorB2bUserId: req.user.userId,
+    });
+    res.status(201).json({ comments });
   } catch (err) { next(err); }
 }
 export async function getActivity(req: Request, res: Response, next: NextFunction): Promise<void> {
