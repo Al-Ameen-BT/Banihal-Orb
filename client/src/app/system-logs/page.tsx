@@ -39,7 +39,14 @@ const AUDIT_ACTIONS = [
   { value: 'CUSTOMER_CREATED', label: 'Org created' },
   { value: 'USER_REGISTERED', label: 'User registered' },
   { value: 'IMPERSONATE', label: 'Impersonations' },
-  { value: 'UPDATE_SERVICE_REQUEST', label: 'Ticket updates' },
+  // This is the service-REQUESTS module, not ticketing. It held the label "Ticket
+  // updates" before real ticket actions existed and became misleading once they did.
+  { value: 'UPDATE_SERVICE_REQUEST', label: 'Service request updates' },
+  { value: 'TICKET_CREATED', label: 'Ticket created' },
+  { value: 'TICKET_UPDATED', label: 'Ticket edited' },
+  { value: 'TICKET_DELETED', label: 'Ticket deleted' },
+  { value: 'TICKET_ESCALATED', label: 'Ticket escalated' },
+  { value: 'TICKET_CLAIMED', label: 'Escalated ticket claimed' },
   { value: 'SERVICE_RENEWED', label: 'Service renewals' },
   { value: 'CUSTOMER_SERVICE_UPDATED', label: 'Service updates' },
   { value: 'ANNOUNCEMENT_CREATED', label: 'Announcement created' },

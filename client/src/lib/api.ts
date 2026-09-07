@@ -192,6 +192,9 @@ export const ticketingApi = {
   getTicket: (id: string) => api.get(`/ticketing/tickets/${id}`),
   createTicket: (data: unknown) => api.post('/ticketing/tickets', data),
   updateTicket: (id: string, data: unknown) => api.patch(`/ticketing/tickets/${id}`, data),
+  // Permanent: the server cascades the ticket's comments, attachments and history,
+  // and refuses (409 TICKET_ESCALATED) for a ticket under platform review.
+  deleteTicket: (id: string) => api.delete(`/ticketing/tickets/${id}`),
   escalate: (id: string) => api.post(`/ticketing/tickets/${id}/escalate`),
   claim: (id: string) => api.post(`/ticketing/admin/tickets/${id}/claim`),
   myUpdates: (since: string) => api.get('/ticketing/my-updates', { params: { since } }),
@@ -339,6 +342,9 @@ export const saasAdminApi = {
   listPendingOrgs: () => api.get('/saas-admin/orgs/pending'),
   reissueOrgApproval: (id: string) => api.post(`/saas-admin/orgs/${id}/reissue-approval`),
   impersonate: (userId: string) => api.post(`/saas-admin/impersonate/${userId}`),
+  // Step 2: exchange the grant for a session as the target. Sets session cookies,
+  // so the browser IS the target user afterwards — reload, don't keep local state.
+  redeemImpersonation: (token: string) => api.post('/saas-admin/impersonate', { token }),
   getMetrics: () => api.get('/saas-admin/metrics'),
   getTopClients: (limit?: number) => api.get('/saas-admin/top-clients', { params: limit ? { limit } : undefined }),
   getSlaBreaches: () => api.get('/saas-admin/sla-breaches'),

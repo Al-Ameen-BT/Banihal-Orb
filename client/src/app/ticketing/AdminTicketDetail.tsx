@@ -8,6 +8,7 @@ import GlowButton from '@/components/ui/GlowButton';
 import {
   Modal, StatusBadge, PriorityBadge, TypeBadge, SlaBar, Avatar, Icons,
   STATUS_OPTIONS, PRIORITY_OPTIONS, fmtDate, timeAgo, AttachmentGrid, Person, ACCEPTED_IMAGE_ACCEPT,
+  TicketActionsMenu, EditTicketModal, useDeleteTicket,
 } from './shared';
 import type { TicketDTO, TicketComment, TicketAttachment, TicketStatus, TicketPriority } from '@/lib/schemas';
 
@@ -28,6 +29,9 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
   const qc = useQueryClient();
   const [comment, setComment] = useState('');
   const [files, setFiles] = useState<FileList | null>(null);
+  const [editing, setEditing] = useState(false);
+  // The pane is showing a ticket that no longer exists, so close it on success.
+  const { requestDelete } = useDeleteTicket(onClose);
 
   const { data: ticket } = useQuery<TicketDTO>({ queryKey: ['ticketing', 'ticket', ticketId], queryFn: () => ticketingApi.getTicket(ticketId).then((r) => r.data as TicketDTO) });
   const { data: commentsData } = useQuery<{ comments: TicketComment[] }>({ queryKey: ['ticketing', 'comments', ticketId], queryFn: () => ticketingApi.getComments(ticketId).then((r) => r.data as { comments: TicketComment[] }) });
@@ -83,6 +87,7 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
 
   return (
     <Modal open onClose={onClose} width="max-w-4xl">
+      {ticket && <EditTicketModal ticket={ticket} open={editing} onClose={() => setEditing(false)} />}
       {!ticket ? (
         <div className="py-16 text-center text-sm text-slate-400">Loading…</div>
       ) : (
@@ -99,9 +104,18 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
               </div>
               <h2 className="text-lg font-bold text-slate-900 mt-1.5 leading-tight">{ticket.title}</h2>
             </div>
-            <button type="button" onClick={onClose} aria-label="Close" className="text-slate-400 hover:text-slate-700 cursor-pointer flex-shrink-0">
-              <Icons.close className="w-5 h-5" />
-            </button>
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              <TicketActionsMenu
+                label={`Actions for ${ticket.ticketNumber}`}
+                actions={[
+                  { label: 'Edit', onSelect: () => setEditing(true) },
+                  { label: 'Delete', onSelect: () => void requestDelete(ticket), danger: true },
+                ]}
+              />
+              <button type="button" onClick={onClose} aria-label="Close" className="text-slate-400 hover:text-slate-700 cursor-pointer">
+                <Icons.close className="w-5 h-5" />
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 max-h-[75vh] overflow-y-auto">

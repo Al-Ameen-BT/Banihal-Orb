@@ -12,9 +12,37 @@ import { listAdminAssignees } from './services/adminAssignees';
 import { resolveTicketActor } from './identity';
 import { aggregate } from './services/dashboardAggregate';
 import { cached, cacheKey, TTL } from '../../lib/cache';
+import { audit } from '../../lib/audit';
+import type { AuditAction } from '../../config/auditActions';
 
 // Bridge the B2B-Site user to a ticketing staff Users row (id + mapped role).
 const actor = (req: Request) => resolveTicketActor(req.user.userId, req.user.role);
+
+/**
+ * Write a ticket action to the PLATFORM audit log.
+ *
+ * Lives in the controller because AuditLog needs main-database ids (`req.user`),
+ * while the service layer deals only in ticket-store ids from another database —
+ * `customerId` is the ACTING user's org for exactly that reason.
+ *
+ * Called AFTER the mutation succeeds: lib/audit.ts is blocking by design, and
+ * logging first would leave rows for changes that never happened.
+ *
+ * The per-ticket `Activities` feed still records the fine-grained history; this is
+ * the copy that survives the ticket being deleted.
+ */
+const auditTicket = (
+  req: Request,
+  action: AuditAction,
+  ticket: { id: string; ticketNumber: string },
+  metadata: Record<string, unknown> = {},
+) => audit({
+  action,
+  performedById: req.user.userId,
+  customerId: req.user.customerId,
+  targetId: ticket.id,
+  metadata: { ticketNumber: ticket.ticketNumber, ...metadata },
+});
 
 // Synthetic assignee that routes a new ticket to the platform administrators
 // (auto-escalation) instead of a person. Offered to ORG_ADMIN only; the client
@@ -77,12 +105,16 @@ export async function createTicket(req: Request, res: Response, next: NextFuncti
         );
       }
       const ticket = await service.createTicket(me.id, { ...input, assigneeId: null }, req.user.customerId);
+      await auditTicket(req, 'TICKET_CREATED', ticket);
       await escalation.escalateTicket(req.user.userId, req.user.role, ticket.id);
+      // Two rows on purpose: the ticket was raised AND routed to the platform team.
+      await auditTicket(req, 'TICKET_ESCALATED', ticket, { auto: true });
       res.status(201).json(ticket);
       return;
     }
 
     const ticket = await service.createTicket(me.id, input, req.user.customerId);
+    await auditTicket(req, 'TICKET_CREATED', ticket);
     res.status(201).json(ticket);
   } catch (err) { next(err); }
 }
@@ -94,7 +126,24 @@ export async function updateTicket(req: Request, res: Response, next: NextFuncti
     await service.assertTicketAccess(scope, req.params['id']!);
     const me = await actor(req);
     const ticket = await service.updateTicket(me.id, req.params['id']!, input);
+    await auditTicket(req, 'TICKET_UPDATED', ticket, { fields: Object.keys(input) });
     res.json(ticket);
+  } catch (err) { next(err); }
+}
+
+export async function deleteTicket(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const id = req.params['id']!;
+    // Same guard as updateTicket: an ORG_ADMIN reaching for another org's ticket
+    // gets 404, deliberately — a 403 would confirm the id exists.
+    const scope = await service.ticketAccessScope(req.user);
+    await service.assertTicketAccess(scope, id);
+
+    const { ticketNumber, title } = await service.deleteTicket(id);
+    // The ticket's own Activities history cascaded away with it; this row in the
+    // main database is now the only record that it ever existed.
+    await auditTicket(req, 'TICKET_DELETED', { id, ticketNumber }, { title });
+    res.status(204).end();
   } catch (err) { next(err); }
 }
 
@@ -328,7 +377,10 @@ export async function escalateTicket(req: Request, res: Response, next: NextFunc
   try {
     // The source lives in the caller's (default) store — verify org access first.
     await service.assertTicketAccess(await service.ticketAccessScope(req.user), req.params['id']!);
-    res.status(201).json(await escalation.escalateTicket(req.user.userId, req.user.role, req.params['id']!));
+    const escalated = await escalation.escalateTicket(req.user.userId, req.user.role, req.params['id']!);
+    // escalateTicket answers { escalated, ticketNumber } — the id is the one we asked for.
+    await auditTicket(req, 'TICKET_ESCALATED', { id: req.params['id']!, ticketNumber: escalated.ticketNumber });
+    res.status(201).json(escalated);
   } catch (err) { next(err); }
 }
 
@@ -355,6 +407,8 @@ export async function escalationAlerts(req: Request, res: Response, next: NextFu
 export async function claimTicket(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const me = await actor(req);
-    res.json(await service.claimTicket(me.id, req.params['id']!));
+    const claimed = await service.claimTicket(me.id, req.params['id']!);
+    await auditTicket(req, 'TICKET_CLAIMED', claimed);
+    res.json(claimed);
   } catch (err) { next(err); }
 }

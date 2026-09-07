@@ -57,6 +57,7 @@ export const AUDIT_ACTIONS = [
   // The single most sensitive thing staff can do — it was missing from the feed
   // that exists to show what staff do.
   { key: 'IMPERSONATE',                         group: 'Session',  label: 'Impersonated a user',   defaultScope: true,  sadminFeed: true  },
+  { key: 'IMPERSONATE_REDEEM',                  group: 'Session',  label: 'Started an impersonated session', defaultScope: true, sadminFeed: true },
 
   // ── Permissions. Mutating the IAM matrix decides who holds users.manage and
   //    credentials.reveal; it was entirely unlogged before.
@@ -76,6 +77,22 @@ export const AUDIT_ACTIONS = [
   { key: 'CUSTOMER_SERVICE_UPDATED',            group: 'Services', label: 'Service updated',       defaultScope: false, sadminFeed: false },
   { key: 'UPDATE_SERVICE_REQUEST',              group: 'Services', label: 'Request updated',       defaultScope: false, sadminFeed: false },
   { key: 'ESCALATION_UPDATED',                  group: 'Services', label: 'Escalation updated',    defaultScope: false, sadminFeed: false },
+
+  // ── Ticketing. The module wrote NO audit rows at all before this: the only
+  //    record of a ticket's history was the per-ticket Activities table in the
+  //    ticket store, which is ON DELETE CASCADE on the ticket — so deleting a
+  //    ticket destroyed its own history along with it. These rows live in the
+  //    main database and survive that.
+  //
+  //    Create/update are defaultScope:false deliberately — they are the highest
+  //    volume events on the platform and would drown System Activity's unfiltered
+  //    view. Deletion and escalation are not: one is irreversible, the other moves
+  //    a ticket across the org → platform boundary.
+  { key: 'TICKET_CREATED',                      group: 'Ticketing', label: 'Ticket created',       defaultScope: false, sadminFeed: false },
+  { key: 'TICKET_UPDATED',                      group: 'Ticketing', label: 'Ticket edited',        defaultScope: false, sadminFeed: false },
+  { key: 'TICKET_DELETED',                      group: 'Ticketing', label: 'Ticket deleted',       defaultScope: true,  sadminFeed: true  },
+  { key: 'TICKET_ESCALATED',                    group: 'Ticketing', label: 'Ticket escalated',     defaultScope: true,  sadminFeed: false },
+  { key: 'TICKET_CLAIMED',                      group: 'Ticketing', label: 'Escalated ticket claimed', defaultScope: false, sadminFeed: true },
 
   // ── Configuration.
   { key: 'ANNOUNCEMENT_CREATED',                group: 'Config',   label: 'Announcement created',  defaultScope: false, sadminFeed: false },

@@ -70,7 +70,6 @@ jobs:
           TICKET_DATABASE_URL: postgresql://ci:ci@localhost:5432/b2b_ticket_test
           ADMIN_TICKETING_DATABASE_URL: postgresql://ci:ci@localhost:5432/b2b_ticketing_admin_test
           JWT_ACCESS_SECRET: ci-placeholder-not-a-real-secret-000000000000
-          JWT_REFRESH_SECRET: ci-placeholder-not-a-real-secret-111111111111
           IMPERSONATION_SECRET: ci-placeholder-not-a-real-secret-222222222222
 
   # ──────────────────────────────────────────────────────────────────────────

@@ -10,10 +10,13 @@ import {
   ListEscalationsSchema, UpdateEscalationSchema,
   TicketNumberFormatSchema,
   InviteStaffSchema, UpdateSadminSchema, CreatePlatformRoleSchema, UpdatePlatformRoleSchema,
+  RedeemImpersonationSchema,
 } from './saas-admin.schema';
 import * as platformRoles from '../platform-roles/platformRoles.service';
 import { PERMISSIONS } from '../../config/permissions';
 import { can } from '../../middleware/rbac.middleware';
+import * as authService from '../auth/auth.service';
+import { setTokenCookies } from '../auth/auth.controller';
 import * as saasAdminService from './saas-admin.service';
 import * as orgDeletion from './orgDeletion.service';
 import * as orgApproval from '../auth/orgApproval.service';
@@ -75,6 +78,23 @@ export async function impersonateUser(req: Request, res: Response, next: NextFun
   try {
     const result = await saasAdminService.impersonateUser(req.params['userId']!, req.user.userId);
     res.json(result);
+  } catch (err) { next(err); }
+}
+
+/**
+ * Step 2 of impersonation. Behind orgs.manage AND bound to the issuing admin, so
+ * the grant is not usable as a standalone bearer token.
+ *
+ * NOTE: this REPLACES the caller's own session cookies with the target's — the
+ * admin becomes the user in this browser. Their own session row is untouched, so
+ * signing back in restores it; there is no "stop impersonating" endpoint yet.
+ */
+export async function redeemImpersonation(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { token } = RedeemImpersonationSchema.parse(req.body);
+    const tokens = await authService.redeemImpersonation(token, req.user.userId);
+    setTokenCookies(res, tokens);
+    res.json({ message: 'Impersonated session started.' });
   } catch (err) { next(err); }
 }
 

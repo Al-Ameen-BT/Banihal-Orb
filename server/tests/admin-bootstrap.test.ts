@@ -31,6 +31,12 @@ const emptyProviderOrg = () => prisma.customer.create({
     name: 'Provider Co', slug: `provider-${Math.random().toString(36).slice(2, 8)}`,
     domain: 'example.com', mailId: 'ops@example.com',
     contactPerson: 'Ops', contactNumber: '+1-555-0000',
+    // Mirrors what register() produces for a provider-domain org: those admit
+    // themselves (approved: isProviderAdmin in auth.service.register). Without this
+    // the fixture is an unadmitted org and register-user answers 403 ORG_NOT_APPROVED
+    // before the bootstrap race under test can start. Same reason createTestOrg
+    // stamps it — see the note in tests/helpers.ts.
+    approved: true, approvedAt: new Date(),
   },
 });
 

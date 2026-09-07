@@ -15,6 +15,7 @@ import {
   NewTicketForm, StatusBadge, PriorityBadge, TypeBadge, SlaBar, PageHeader,
   Toolbar, Segmented, SearchInput, EmptyState, Avatar, Icons,
   priorityCls, timeAgo, STATUS_OPTIONS, PRIORITY_OPTIONS, staffLabel, apiErrorMessage,
+  TicketActionsMenu, EditTicketModal, useDeleteTicket,
 } from './shared';
 import AdminTicketDetail from './AdminTicketDetail';
 import type { TicketDTO, TicketProject, TicketSla, TicketStats, TicketAnalytics, TicketReport, TicketStatus, TicketPriority } from '@/lib/schemas';
@@ -230,7 +231,9 @@ function TopComplaintsChart() {
 // ─── Tickets ───────────────────────────────────────────────────────────────────
 // Image-matched admin card: #TKT + title + status/priority/type badges, assignee,
 // "Created X ago", and the dual Response/Resolution SLA bars.
-function AdminTicketCard({ ticket, onOpen }: { ticket: TicketDTO; onOpen: () => void }) {
+function AdminTicketCard({ ticket, onOpen, onEdit, onDelete }: {
+  ticket: TicketDTO; onOpen: () => void; onEdit: () => void; onDelete: () => void;
+}) {
   return (
     <div onClick={onOpen}
       className="card p-4 cursor-pointer hover:shadow-card-hover hover:border-slate-300 transition-all">
@@ -247,9 +250,14 @@ function AdminTicketCard({ ticket, onOpen }: { ticket: TicketDTO; onOpen: () => 
           {ticket.assignee
             ? <span className="hidden sm:inline-flex items-center gap-1.5 text-xs text-slate-600"><Avatar name={ticket.assignee.name} size="xs" />{ticket.assignee.name}</span>
             : <span className="text-[10px] font-semibold text-red-500">Unassigned</span>}
-          <button type="button" aria-label="Open ticket" onClick={(e) => { e.stopPropagation(); onOpen(); }} className="text-slate-300 hover:text-slate-600 cursor-pointer">
-            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm0 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm0 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" /></svg>
-          </button>
+          <TicketActionsMenu
+            label={`Actions for ${ticket.ticketNumber}`}
+            actions={[
+              { label: 'Open', onSelect: onOpen },
+              { label: 'Edit', onSelect: onEdit },
+              { label: 'Delete', onSelect: onDelete, danger: true },
+            ]}
+          />
         </div>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2.5 mt-3 pt-3 border-t border-slate-100">
@@ -269,6 +277,9 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 function TicketsTab({ projectFilter, onClearProject, initialTicketId }: { projectFilter: string | null; onClearProject: () => void; initialTicketId?: string | null }) {
   const searchParams = useSearchParams();
+  // Which ticket the edit modal is showing; null = closed.
+  const [editing, setEditing] = useState<TicketDTO | null>(null);
+  const { requestDelete } = useDeleteTicket();
   const [category, setCategory] = useState<Category>('all');
   const [statusFilter, setStatusFilter] = useState<'ALL' | TicketStatus>('ALL');
   const [priorityFilter, setPriorityFilter] = useState<'ALL' | TicketPriority>('ALL');
@@ -321,6 +332,7 @@ function TicketsTab({ projectFilter, onClearProject, initialTicketId }: { projec
   return (
     <>
       {detailId && <AdminTicketDetail ticketId={detailId} onClose={() => setDetailId(null)} />}
+      {editing && <EditTicketModal ticket={editing} open onClose={() => setEditing(null)} />}
       <div className="space-y-4">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <Segmented value={category} onChange={setCategory} layoutId="adminCategory"
@@ -382,14 +394,14 @@ function TicketsTab({ projectFilter, onClearProject, initialTicketId }: { projec
                   <span className="flex-1 h-px bg-slate-200" />
                 </div>
                 <div className={gridCls}>
-                  {list.map((t) => <AdminTicketCard key={`${t.id}-${t.updatedAt}`} ticket={t} onOpen={() => setDetailId(t.id)} />)}
+                  {list.map((t) => <AdminTicketCard key={`${t.id}-${t.updatedAt}`} ticket={t} onOpen={() => setDetailId(t.id)} onEdit={() => setEditing(t)} onDelete={() => void requestDelete(t)} />)}
                 </div>
               </div>
             ))}
           </div>
         ) : (
           <div className={gridCls}>
-            {tickets.map((t) => <AdminTicketCard key={`${t.id}-${t.updatedAt}`} ticket={t} onOpen={() => setDetailId(t.id)} />)}
+            {tickets.map((t) => <AdminTicketCard key={`${t.id}-${t.updatedAt}`} ticket={t} onOpen={() => setDetailId(t.id)} onEdit={() => setEditing(t)} onDelete={() => void requestDelete(t)} />)}
           </div>
         )}
       </div>

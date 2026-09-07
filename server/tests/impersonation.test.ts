@@ -48,3 +48,100 @@ describe('Impersonation audit trail', () => {
     expect(res.body.expiresIn).toBe('5m');
   });
 });
+
+// Step 2 — the grant is only useful to the admin it was issued to, and only for a
+// target that may actually be impersonated.
+describe('Impersonation redemption', () => {
+  beforeEach(cleanDb);
+  afterAll(async () => { await prisma.$disconnect(); });
+
+  /** Issue a grant as `adminEmail` for `targetId`; returns the grant + admin cookies. */
+  async function grantFor(adminEmail: string, targetId: string) {
+    const cookies = await loginAs(adminEmail);
+    const res = await request(app).post(`/api/saas-admin/impersonate/${targetId}`).set('Cookie', cookies);
+    expect(res.status).toBe(200);
+    return { token: res.body.impersonationToken as string, cookies };
+  }
+
+  it('exchanges a grant for a working session as the target user', async () => {
+    const adminOrg = await createTestOrg('Redeem Admin Org');
+    const targetOrg = await createTestOrg('Redeem Target Org');
+    await createTestUser(adminOrg.id, 'redeemadmin@example.com', 'ADMINISTRATOR');
+    const target = await createTestUser(targetOrg.id, 'redeemtarget@example.com', 'USER');
+
+    const { token, cookies } = await grantFor('redeemadmin@example.com', target.id);
+    const res = await request(app).post('/api/saas-admin/impersonate').set('Cookie', cookies).send({ token });
+    expect(res.status).toBe(200);
+
+    // The returned cookies must be a real, usable session belonging to the TARGET.
+    const session = (res.headers['set-cookie'] ?? []) as string[];
+    expect(session.some((c) => c.startsWith('accessToken='))).toBe(true);
+    const me = await request(app).get('/api/users/me').set('Cookie', session);
+    expect(me.status).toBe(200);
+    expect(me.body.email ?? me.body.user?.email).toBe('redeemtarget@example.com');
+  });
+
+  it('records who borrowed the session', async () => {
+    const adminOrg = await createTestOrg('Redeem Audit Admin');
+    const targetOrg = await createTestOrg('Redeem Audit Target');
+    const admin = await createTestUser(adminOrg.id, 'auditadmin@example.com', 'ADMINISTRATOR');
+    const target = await createTestUser(targetOrg.id, 'audittarget@example.com', 'USER');
+
+    const { token, cookies } = await grantFor('auditadmin@example.com', target.id);
+    await request(app).post('/api/saas-admin/impersonate').set('Cookie', cookies).send({ token });
+
+    const entry = await prisma.auditLog.findFirst({
+      where: { action: 'IMPERSONATE_REDEEM', performedById: admin.id, targetId: target.id },
+    });
+    expect(entry).not.toBeNull();
+  });
+
+  it('refuses a grant issued to a DIFFERENT admin', async () => {
+    // The whole reason the grant is not a bearer token: stealing it buys nothing
+    // unless you also hold the issuing admin's session.
+    const orgA = await createTestOrg('Grant Owner Org');
+    const orgB = await createTestOrg('Other Admin Org');
+    const targetOrg = await createTestOrg('Grant Target Org');
+    await createTestUser(orgA.id, 'owner@example.com', 'ADMINISTRATOR');
+    await createTestUser(orgB.id, 'other@example.com', 'ADMINISTRATOR');
+    const target = await createTestUser(targetOrg.id, 'granttarget@example.com', 'USER');
+
+    const { token } = await grantFor('owner@example.com', target.id);
+    const otherCookies = await loginAs('other@example.com');
+
+    const res = await request(app).post('/api/saas-admin/impersonate').set('Cookie', otherCookies).send({ token });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('IMPERSONATION_GRANT_INVALID');
+  });
+
+  it('refuses to impersonate platform staff', async () => {
+    // Otherwise staff could borrow a peer's platform role and exceed their own.
+    const adminOrg = await createTestOrg('Staff Impersonation Org');
+    await createTestUser(adminOrg.id, 'staffadmin@example.com', 'ADMINISTRATOR');
+    const peer = await createTestUser(adminOrg.id, 'peer@example.com', 'ADMINISTRATOR');
+
+    const { token, cookies } = await grantFor('staffadmin@example.com', peer.id);
+    const res = await request(app).post('/api/saas-admin/impersonate').set('Cookie', cookies).send({ token });
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('IMPERSONATION_FORBIDDEN');
+  });
+
+  it('rejects a malformed or unsigned grant', async () => {
+    const adminOrg = await createTestOrg('Bad Grant Org');
+    await createTestUser(adminOrg.id, 'badgrant@example.com', 'ADMINISTRATOR');
+    const cookies = await loginAs('badgrant@example.com');
+
+    const res = await request(app).post('/api/saas-admin/impersonate').set('Cookie', cookies).send({ token: 'not.a.jwt' });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('IMPERSONATION_GRANT_INVALID');
+  });
+
+  it('requires orgs.manage — an ordinary user cannot redeem', async () => {
+    const org = await createTestOrg('No Permission Org');
+    await createTestUser(org.id, 'plainuser@example.com', 'USER');
+    const cookies = await loginAs('plainuser@example.com');
+
+    const res = await request(app).post('/api/saas-admin/impersonate').set('Cookie', cookies).send({ token: 'anything' });
+    expect([401, 403]).toContain(res.status);
+  });
+});

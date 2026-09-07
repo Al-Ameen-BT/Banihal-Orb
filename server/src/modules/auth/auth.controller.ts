@@ -20,9 +20,11 @@ export const COOKIE_OPTS = {
   sameSite: 'lax' as const,
 };
 
-const REFRESH_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+// Derived from JWT_REFRESH_EXPIRES_IN via env, so the cookie's Max-Age and the
+// RefreshToken row's expiresAt can never disagree. Was a hardcoded 7 days.
+const REFRESH_MAX_AGE_MS = env.JWT_REFRESH_EXPIRES_MS;
 
-function setTokenCookies(res: Response, tokens: { accessToken: string; refreshToken: string }): void {
+export function setTokenCookies(res: Response, tokens: { accessToken: string; refreshToken: string }): void {
   res.cookie('accessToken', tokens.accessToken, { ...COOKIE_OPTS, maxAge: 15 * 60 * 1000 });
   // Path covers /api/auth/refresh AND /api/auth/logout (a path of /api/auth/refresh
   // meant browsers never sent the cookie to logout, so sessions were never revoked).
@@ -146,7 +148,7 @@ function parseCurrentSession(req: Request): authService.CurrentSession | null {
   const token = req.cookies['accessToken'] as string | undefined;
   if (!token) return null;
   try {
-    const payload = jwt.verify(token, env.JWT_ACCESS_SECRET) as { userId?: string; sid?: string; type?: string };
+    const payload = jwt.verify(token, env.JWT_ACCESS_SECRET, { algorithms: ['HS256'] }) as { userId?: string; sid?: string; type?: string };
     if (payload.type !== 'access' || !payload.userId || !payload.sid) return null;
     return { userId: payload.userId, sessionId: payload.sid };
   } catch {

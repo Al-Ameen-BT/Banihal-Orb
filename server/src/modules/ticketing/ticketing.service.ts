@@ -1,4 +1,7 @@
+import fs from 'fs/promises';
+import path from 'path';
 import * as db from './ticketing.client';
+import { UPLOAD_DIR } from './uploads';
 import { nextTicketNumber } from './utils/ticketNumber';
 import { getTicketNumberFormat, resolveOrgCode } from './services/numberFormat';
 import { getNextAssignee, withLastAssigned } from './utils/roundRobin';
@@ -161,6 +164,16 @@ export async function updateTicket(actorId: string, id: string, input: UpdateTic
   if (input.priority !== undefined && input.priority !== current.priority) {
     await db.writeActivity({ type: 'priority_changed', ticketId: id, userId: actorId, field: 'priority', oldValue: current.priority, newValue: input.priority });
   }
+  // A title or description edit used to leave NO trace in the ticket's own timeline,
+  // so a reworded ticket looked untouched. The 'updated' activity type already existed
+  // for this and was only ever used by escalation.
+  if (input.title !== undefined && input.title !== current.title) {
+    await db.writeActivity({ type: 'updated', ticketId: id, userId: actorId, field: 'title', oldValue: current.title, newValue: input.title });
+  }
+  if (input.description !== undefined && input.description !== current.description) {
+    // The bodies can be 10k characters; record THAT it changed, not two novels.
+    await db.writeActivity({ type: 'updated', ticketId: id, userId: actorId, field: 'description', oldValue: null, newValue: null });
+  }
   const reassigned = input.assigneeId !== undefined && input.assigneeId !== current.assigneeId;
   if (reassigned) {
     await db.writeActivity({ type: 'assigned', ticketId: id, userId: actorId, field: 'assigneeId', oldValue: current.assigneeId, newValue: input.assigneeId });
@@ -172,6 +185,40 @@ export async function updateTicket(actorId: string, id: string, input: UpdateTic
     notifyTicketAssignedInBackground({ ticket, assigneeTicketUserId: input.assigneeId, actorTicketUserId: actorId });
   }
   return ticket;
+}
+
+/**
+ * Permanently delete a ticket. Returns what the caller needs for the audit row,
+ * because after this the ticket — and its entire Activities history, which is
+ * ON DELETE CASCADE — no longer exists to be read.
+ *
+ * Order is deliberate and must not be rearranged:
+ *   escalation check → capture identifiers → unlink files → delete row.
+ */
+export async function deleteTicket(id: string): Promise<{ ticketNumber: string; title: string }> {
+  const ticket = await db.getTicketForDelete(id);
+  if (!ticket) throw notFound('Ticket');
+
+  // An escalated ticket has a COPY in the other database, joined only by a
+  // `src:<ticketNumber>` label with no foreign key. Deleting this one would leave
+  // that copy alive and permanently unresolvable, with nothing surfacing the break
+  // (mirror failures are swallowed by design). Refuse instead.
+  if (ticket.labels.includes('escalated')) {
+    throw Object.assign(
+      new Error('This ticket has been escalated to the platform team and cannot be deleted.'),
+      { status: 409, code: 'TICKET_ESCALATED' },
+    );
+  }
+
+  // Files before rows: the cascade destroys the filenames, and orphaned bytes on
+  // disk can then never be matched back to anything.
+  const filenames = await db.getTicketAttachmentFilenames(id);
+  await Promise.all(filenames.map((name) =>
+    fs.unlink(path.join(UPLOAD_DIR, path.basename(name))).catch(() => {}),
+  ));
+
+  await db.deleteTicketRow(id);
+  return { ticketNumber: ticket.ticketNumber, title: ticket.title };
 }
 
 // ─── Projects ──────────────────────────────────────────────────────────────────

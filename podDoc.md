@@ -118,7 +118,7 @@ It asks **once** for three things it cannot derive, then remembers them:
 Everything else it handles:
 
 - **Generates** `POSTGRES_PASSWORD` (hex-24) and `JWT_ACCESS_SECRET`,
-  `JWT_REFRESH_SECRET`, `IMPERSONATION_SECRET`, `SLACK_TOKEN_SECRET`,
+  `IMPERSONATION_SECRET`, `SLACK_TOKEN_SECRET`,
   `PASSWORD_PEPPER` (hex-32 each), plus a VAPID key pair for Web Push — using the
   API image's own `web-push`, so no network fetch.
 - **Derives** the five `*_DATABASE_URL` pointing at `b2b-postgres`, `REDIS_URL`,

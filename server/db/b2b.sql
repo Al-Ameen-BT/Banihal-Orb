@@ -266,9 +266,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS "PasswordResetToken_tokenHash_key" ON "Passwor
 CREATE INDEX        IF NOT EXISTS "PasswordResetToken_userId_idx"    ON "PasswordResetToken" ("userId");
 
 -- ─── EmailVerificationToken ──────────────────────────────────────────────────
--- Proof-of-ownership token emailed at signup. SHA-256 rather than bcrypt (unlike
--- PasswordResetToken): the token is 32 CSPRNG bytes, so a KDF adds nothing and
--- bcrypt would force the same scan-every-row compare loop.
+-- Proof-of-ownership token emailed at signup. SHA-256 rather than bcrypt: the
+-- token is 32 CSPRNG bytes, so a KDF adds nothing and bcrypt would force a
+-- scan-every-row compare loop. RefreshToken and PasswordResetToken now follow
+-- the same rule — they used to use bcrypt, which is exactly the scan this
+-- comment warned about. Only passwords (low entropy, chosen by humans) use bcrypt.
 CREATE TABLE IF NOT EXISTS "EmailVerificationToken" (
   "id"         TEXT PRIMARY KEY,
   "tokenHash"  TEXT NOT NULL,

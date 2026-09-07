@@ -131,7 +131,13 @@ export async function getTicketById(id: string): Promise<TicketDTO | null> {
 export function getTicketCore(id: string) {
   return getTicketDb().tickets.findUnique({
     where: { id },
-    select: { id: true, status: true, priority: true, assigneeId: true, projectId: true, pausedTime: true, totalPausedTime: true },
+    select: {
+      id: true, status: true, priority: true, assigneeId: true, projectId: true,
+      pausedTime: true, totalPausedTime: true,
+      // title/description are here for the activity rows an edit writes — without an
+      // old value there is nothing to record the change against.
+      title: true, description: true,
+    },
   });
 }
 
@@ -280,6 +286,38 @@ export function countProjectTickets(id: string) {
 export async function deleteProjectById(id: string): Promise<void> {
   // Tickets.projectId is NOT NULL — the service blocks deletion when tickets exist.
   await getTicketDb().projects.delete({ where: { id } });
+}
+
+// ─── Ticket deletion ───────────────────────────────────────────────────────────
+
+/** What a delete needs to know BEFORE the row is gone: the escalation check and the audit record. */
+export function getTicketForDelete(id: string) {
+  return getTicketDb().tickets.findUnique({
+    where: { id },
+    select: { id: true, ticketNumber: true, title: true, labels: true },
+  });
+}
+
+/**
+ * Every file belonging to a ticket — its own attachments plus those on its comments.
+ * MUST be read before the rows are deleted: the cascade takes the filenames with it
+ * and the bytes on disk then have nothing pointing at them (same reason
+ * saas-admin/orgDeletion.service.ts collects names first).
+ */
+export async function getTicketAttachmentFilenames(ticketId: string): Promise<string[]> {
+  const db = getTicketDb();
+  const [own, onComments] = await Promise.all([
+    db.ticketAttachments.findMany({ where: { ticketId }, select: { filename: true } }),
+    db.commentAttachments.findMany({ where: { Comments: { ticketId } }, select: { filename: true } }),
+  ]);
+  // filename is nullable on both tables — a row without one has no file to unlink.
+  return [...own, ...onComments].map((r) => r.filename).filter((n): n is string => !!n);
+}
+
+/** Comments, comment attachments, ticket attachments, activities and watchers all
+ *  cascade from this one delete (db/b2b_ticket.sql:196-257) — do not remove them by hand. */
+export async function deleteTicketRow(id: string): Promise<void> {
+  await getTicketDb().tickets.delete({ where: { id } });
 }
 
 // ─── SLAs ──────────────────────────────────────────────────────────────────────

@@ -40,6 +40,9 @@ router.get('/orgs/:id/detail', requirePermission('orgs.manage'), saasAdminContro
 router.get('/admins', requirePermission('users.manage'), saasAdminController.listOrgAdmins);
 router.get('/all-users', requirePermission('users.manage'), saasAdminController.listAllOrgUsers);
 router.post('/impersonate/:userId', requirePermission('orgs.manage'), saasAdminController.impersonateUser);
+// Step 2: exchange the grant for a session. Same permission, and the service also
+// requires the caller to be the admin the grant was issued to.
+router.post('/impersonate', requirePermission('orgs.manage'), saasAdminController.redeemImpersonation);
 router.patch('/users/:id', requirePermission('users.manage'), saasAdminController.updateUser);
 router.delete('/users/:id', requirePermission('users.manage'), saasAdminController.removeUser);
 router.post('/users/:id/reset-password', requirePermission('users.manage'), saasAdminController.resetUserPassword);

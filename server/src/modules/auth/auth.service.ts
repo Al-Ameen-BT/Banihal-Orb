@@ -9,9 +9,25 @@ import { uniqueOrgCode } from '../../utils/orgCode';
 import { ADMINISTRATION_ROLE_KEY } from '../../config/permissions';
 import * as mailService from '../mail/mail.service';
 import * as orgApproval from './orgApproval.service';
+import { emailDomain, isPersonalEmailDomain } from './emailDomains';
+import { JWT_ISSUER, JWT_AUDIENCE } from './jwtClaims';
 import type { RegisterInput, RegisterUserInput, LoginInput, ForgotPasswordInput, ResetPasswordInput } from './auth.schema';
 
 const BCRYPT_ROUNDS = 12;
+
+/**
+ * Hash for HIGH-ENTROPY tokens we generate (refresh, reset, verification, device).
+ *
+ * Deliberately NOT bcrypt. Bcrypt salts each hash, so an issued token cannot be
+ * looked up — it can only be found by comparing against every stored row in turn.
+ * That made refresh/logout/reset O(n) bcrypt scans: slow, and remotely abusable
+ * on the unauthenticated /auth/refresh route. These values are 32-64 bytes of
+ * crypto.randomBytes, so there is nothing to brute-force and no salt to need;
+ * a plain digest is both correct and O(1) against the unique index.
+ *
+ * Passwords are the opposite case and still use bcrypt — see passwordHash.
+ */
+const sha256 = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
 
 // What self-registration returns now that it no longer issues a session.
 // `emailSent` is false when SMTP is unconfigured or the send failed, so the UI
@@ -45,11 +61,23 @@ function signAccessToken(
   role: Role,
   sessionId: string,
   platformRoleId: string | null = null,
+  // Set only on an impersonated session: the staff account acting as this user.
+  // Carried so the audit trail and the UI can tell a real session from a borrowed
+  // one; absent (not false) on every ordinary login.
+  impersonatedBy: string | null = null,
 ): string {
   return jwt.sign(
-    { userId, customerId, role, prid: platformRoleId, sid: sessionId, type: 'access' },
+    {
+      userId, customerId, role, prid: platformRoleId, sid: sessionId, type: 'access',
+      ...(impersonatedBy ? { imp: impersonatedBy } : {}),
+    },
     env.JWT_ACCESS_SECRET,
-    { expiresIn: env.JWT_ACCESS_EXPIRES_IN as jwt.SignOptions['expiresIn'] },
+    {
+      expiresIn: env.JWT_ACCESS_EXPIRES_IN as jwt.SignOptions['expiresIn'],
+      algorithm: 'HS256',
+      issuer: JWT_ISSUER,
+      audience: JWT_AUDIENCE,
+    },
   );
 }
 
@@ -59,34 +87,55 @@ function newSessionId(): string {
   return crypto.randomBytes(24).toString('hex');
 }
 
-// Derive the domain from a contact email, ignoring generic gmail addresses.
+// An organization is keyed off its work-email domain, so a personal or disposable
+// address yields no domain at all — the caller turns that into WORK_EMAIL_REQUIRED.
 export function deriveDomain(email: string): string | null {
-  const domain = email.split('@')[1]?.toLowerCase().trim();
-  if (!domain || domain === 'gmail.com') return null;
-  return domain;
+  if (isPersonalEmailDomain(email)) return null;
+  return emailDomain(email);
 }
+
+// The error both registration paths raise for a non-work address.
+const workEmailRequired = () => Object.assign(
+  new Error('Please register with your work email, not a personal address.'),
+  { status: 400, code: 'WORK_EMAIL_REQUIRED' },
+);
 
 // Work-email domains permitted to hold the ADMINISTRATOR (software provider) role.
 // Fail closed: an empty ADMIN_DOMAINS means no email qualifies (admin login disabled).
 const adminDomains = env.ADMIN_DOMAINS.split(',').map((d) => d.trim().toLowerCase()).filter(Boolean);
 export function isProviderAdminEmail(email: string): boolean {
-  // Match the raw email domain against ADMIN_DOMAINS directly — intentionally
-  // NOT via deriveDomain(). deriveDomain treats gmail.com as "no domain" (an org
-  // can't be keyed off gmail), but a provider admin domain CAN be gmail.com when
-  // it's explicitly listed in ADMIN_DOMAINS.
-  const domain = email.split('@')[1]?.toLowerCase().trim();
+  // Reads the raw domain rather than deriveDomain() because this is the LOGIN-side
+  // question ("is this account on a provider domain?"), which must still answer for
+  // an account that already exists — including a legacy one on a personal domain.
+  //
+  // It is NOT a way past the registration block. Per ADR-001 both register paths
+  // reject a personal domain unconditionally and BEFORE consulting this, so listing
+  // e.g. gmail.com in ADMIN_DOMAINS no longer admits a gmail signup — it only means
+  // no admin account can be created on that domain at all. (This reverses the
+  // earlier intent that a provider admin domain could be gmail.com.)
+  const domain = emailDomain(email);
   return !!domain && adminDomains.includes(domain);
 }
 
+// Single source of truth for how long a refresh token — and therefore the
+// refresh cookie that carries it — stays valid. Previously 7 days was hardcoded
+// here AND in auth.controller, while JWT_REFRESH_EXPIRES_IN sat unread.
+export const REFRESH_TOKEN_MS = env.JWT_REFRESH_EXPIRES_MS;
+
 async function createRefreshToken(userId: string, sessionId: string): Promise<string> {
   const raw = crypto.randomBytes(64).toString('hex');
-  const hash = await bcrypt.hash(raw, BCRYPT_ROUNDS);
+  const expiresAt = new Date(Date.now() + REFRESH_TOKEN_MS);
 
-  const expiresAt = new Date();
-  expiresAt.setDate(expiresAt.getDate() + 7);
-
-  await prisma.refreshToken.create({ data: { tokenHash: hash, userId, sessionId, expiresAt } });
+  await prisma.refreshToken.create({ data: { tokenHash: sha256(raw), userId, sessionId, expiresAt } });
   return raw;
+}
+
+/** Look up a live refresh token by value. O(1) on the unique tokenHash index. */
+async function findRefreshToken(raw: string) {
+  return prisma.refreshToken.findFirst({
+    where: { tokenHash: sha256(raw), expiresAt: { gt: new Date() } },
+    include: { user: { select: { id: true, customerId: true, role: true, platformRoleId: true } } },
+  });
 }
 
 // Platform staff must always carry a platform role — a DB CHECK constraint
@@ -154,6 +203,13 @@ async function inSignupTransaction<T>(fn: (tx: SignupTx) => Promise<T>): Promise
 }
 
 export async function register(input: RegisterInput): Promise<RegistrationResult> {
+  // Before any write, and before isProviderAdminEmail below: an org may not be
+  // created on a personal or disposable address, not even one whose domain is
+  // listed in ADMIN_DOMAINS (ADR-001). Previously a gmail signup was accepted and
+  // stored domain: null, producing an org nobody could ever join — register-user
+  // resolves organizations BY domain.
+  if (isPersonalEmailDomain(input.email)) throw workEmailRequired();
+
   await assertPasswordNotReused(input.password);
   const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
   const slug = generateSlug(input.organizationName);
@@ -229,12 +285,7 @@ export async function registerUser(input: RegisterUserInput): Promise<Registrati
   }
 
   const domain = deriveDomain(input.email);
-  if (!domain) {
-    throw Object.assign(
-      new Error('Please register with your work email, not a personal address.'),
-      { status: 400, code: 'WORK_EMAIL_REQUIRED' },
-    );
-  }
+  if (!domain) throw workEmailRequired();
 
   // Match the domain to its registered organization (domain is unique per org,
   // enforced by the @unique constraint on Customer.domain).
@@ -326,13 +377,9 @@ async function assertNoActiveOtherSession(
   // request carries the refresh token of one of this user's sessions, it IS the
   // session's browser.
   if (!sameBrowser && rawRefreshToken) {
-    const rows = await prisma.refreshToken.findMany({
-      where: { userId: user.id, expiresAt: { gt: new Date() } },
-      select: { tokenHash: true },
-    });
-    for (const row of rows) {
-      if (await bcrypt.compare(rawRefreshToken, row.tokenHash)) { sameBrowser = true; break; }
-    }
+    sameBrowser = await prisma.refreshToken.count({
+      where: { userId: user.id, tokenHash: sha256(rawRefreshToken), expiresAt: { gt: new Date() } },
+    }) > 0;
   }
   if (!sameBrowser) {
     const activeSince = new Date(Date.now() - env.SESSION_INACTIVITY_MINUTES * 60_000);
@@ -396,7 +443,6 @@ export interface MfaChallenge {
 // long-lived httpOnly cookie `id.rawToken`; a matching, unexpired row lets the
 // same browser skip the email code on later logins. Token stored SHA-256 hashed.
 export const TRUSTED_DEVICE_DAYS = 7;
-const sha256 = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
 
 // ─── Email verification ──────────────────────────────────────────────────────
 // Self-registration proves nothing about the mailbox, and MFA is opt-in
@@ -742,19 +788,10 @@ export async function resendMfaCode(challengeId: string): Promise<{ email: strin
 }
 
 export async function refreshTokens(rawRefreshToken: string): Promise<TokenPair> {
-  // Find all non-expired tokens and check against each
-  const tokens = await prisma.refreshToken.findMany({
-    where: { expiresAt: { gt: new Date() } },
-    include: { user: { select: { id: true, customerId: true, role: true, platformRoleId: true } } },
-    orderBy: { createdAt: 'desc' },
-    take: 500,
-  });
-
-  let matched: (typeof tokens)[number] | undefined;
-  for (const t of tokens) {
-    const ok = await bcrypt.compare(rawRefreshToken, t.tokenHash);
-    if (ok) { matched = t; break; }
-  }
+  // Indexed lookup. This used to load 500 rows platform-wide and bcrypt-compare
+  // against each, which (a) burned seconds of CPU per unauthenticated request and
+  // (b) silently broke refresh for everyone outside the newest 500 sessions.
+  const matched = await findRefreshToken(rawRefreshToken);
 
   if (!matched) {
     throw Object.assign(new Error('Invalid or expired refresh token'), { status: 401, code: 'REFRESH_TOKEN_INVALID' });
@@ -786,30 +823,119 @@ export async function logoutByUser(userId: string): Promise<void> {
 }
 
 export async function logout(rawRefreshToken: string): Promise<void> {
-  const tokens = await prisma.refreshToken.findMany({
-    where: { expiresAt: { gt: new Date() } },
-    include: { user: { select: { id: true, customerId: true, role: true, platformRoleId: true } } },
-    take: 500,
-  });
+  const t = await findRefreshToken(rawRefreshToken);
+  if (!t) return;
 
-  for (const t of tokens) {
-    const ok = await bcrypt.compare(rawRefreshToken, t.tokenHash);
-    if (ok) {
-      // Single-session model: explicit logout revokes every session for the user,
-      // which also releases the login lock immediately.
-      await prisma.refreshToken.deleteMany({ where: { userId: t.user.id } });
-      await prisma.auditLog.create({
-        data: { action: 'LOGOUT', performedById: t.user.id, customerId: t.user.customerId, metadata: { role: t.user.role } },
-      }).catch(() => {});
-      return;
-    }
-  }
+  // Single-session model: explicit logout revokes every session for the user,
+  // which also releases the login lock immediately.
+  await prisma.refreshToken.deleteMany({ where: { userId: t.user.id } });
+  await prisma.auditLog.create({
+    data: { action: 'LOGOUT', performedById: t.user.id, customerId: t.user.customerId, metadata: { role: t.user.role } },
+  }).catch(() => {});
 }
 
-export function signImpersonationToken(userId: string, customerId: string, role: Role): string {
-  return jwt.sign({ userId, customerId, role, type: 'impersonation' }, env.IMPERSONATION_SECRET, {
-    expiresIn: '5m',
+/**
+ * Step 1 of impersonation: a short-lived grant naming BOTH parties.
+ *
+ * `by` binds the grant to the staff account that requested it, which is what makes
+ * redemption safe without a server-side nonce table: redeemImpersonation runs
+ * behind authMiddleware + orgs.manage AND requires the caller to be that same
+ * account. A leaked grant is therefore inert unless the thief also holds the
+ * issuing admin's live session — at which point they could simply issue their own.
+ */
+export function signImpersonationToken(userId: string, customerId: string, role: Role, by: string): string {
+  return jwt.sign({ userId, customerId, role, by, type: 'impersonation' }, env.IMPERSONATION_SECRET, {
+    expiresIn: IMPERSONATION_GRANT_TTL,
+    algorithm: 'HS256',
+    issuer: JWT_ISSUER,
+    audience: JWT_AUDIENCE,
   });
+}
+
+export const IMPERSONATION_GRANT_TTL = '5m';
+
+interface ImpersonationGrant {
+  userId: string;
+  customerId: string;
+  role: Role;
+  by: string;
+  type: string;
+}
+
+const grantInvalid = () => Object.assign(
+  new Error('This impersonation grant is invalid or has expired. Request a new one.'),
+  { status: 400, code: 'IMPERSONATION_GRANT_INVALID' },
+);
+
+/**
+ * Step 2: exchange the grant for a real session as the target user.
+ *
+ * Deliberate properties:
+ *  - The caller must already be the staff account named in `by` (checked here) and
+ *    must hold orgs.manage (checked by the route), so the grant is not a bearer
+ *    credential on its own.
+ *  - ADMINISTRATOR accounts cannot be impersonated. Otherwise staff could borrow a
+ *    peer's platform role and escalate past their own permission set.
+ *  - The session is an ordinary RefreshToken row, so it shows up in the session
+ *    list, honours revocation, and expires like any other. It does NOT evict the
+ *    target's own session — single-session is enforced at login, not here.
+ *  - The access token carries `imp`, so every audited action during the session is
+ *    attributable to the staff member who borrowed it.
+ */
+export async function redeemImpersonation(rawToken: string, byUserId: string): Promise<TokenPair> {
+  let grant: ImpersonationGrant;
+  try {
+    grant = jwt.verify(rawToken, env.IMPERSONATION_SECRET, {
+      algorithms: ['HS256'],
+      issuer: JWT_ISSUER,
+      audience: JWT_AUDIENCE,
+    }) as ImpersonationGrant;
+  } catch {
+    throw grantInvalid();
+  }
+  if (grant.type !== 'impersonation' || grant.by !== byUserId) throw grantInvalid();
+
+  const target = await prisma.user.findUnique({
+    where: { id: grant.userId },
+    select: {
+      id: true, customerId: true, role: true, email: true, platformRoleId: true,
+      customer: { select: { suspended: true, approved: true } },
+    },
+  });
+  if (!target || target.customerId !== grant.customerId) throw grantInvalid();
+
+  if (target.role === 'ADMINISTRATOR') {
+    throw Object.assign(
+      new Error('Platform staff accounts cannot be impersonated.'),
+      { status: 403, code: 'IMPERSONATION_FORBIDDEN' },
+    );
+  }
+  // authMiddleware would reject the resulting session on its very next request;
+  // fail here instead of handing back cookies that are dead on arrival.
+  if (target.customer.suspended || !target.customer.approved) {
+    throw Object.assign(
+      new Error('That organization is suspended or awaiting approval.'),
+      { status: 403, code: 'ORG_UNAVAILABLE' },
+    );
+  }
+
+  const sessionId = newSessionId();
+  const accessToken = signAccessToken(
+    target.id, target.customerId, target.role, sessionId, target.platformRoleId, byUserId,
+  );
+  const refreshToken = await createRefreshToken(target.id, sessionId);
+
+  await prisma.auditLog.create({
+    data: {
+      action: 'IMPERSONATE_REDEEM',
+      performedById: byUserId,
+      targetId: target.id,
+      customerId: target.customerId,
+      metadata: { targetEmail: target.email, sessionId },
+    },
+  }).catch(() => {});
+
+  return { accessToken, refreshToken };
 }
 
 export async function forgotPassword(input: ForgotPasswordInput): Promise<void> {
@@ -823,17 +949,11 @@ export async function forgotPassword(input: ForgotPasswordInput): Promise<void> 
   if (!user) return;
 
   const rawToken = crypto.randomBytes(32).toString('hex');
-  const tokenHash = await bcrypt.hash(rawToken, BCRYPT_ROUNDS);
-
   const expiresAt = new Date();
   expiresAt.setHours(expiresAt.getHours() + 1); // Token expires in 1 hour
 
   await prisma.passwordResetToken.create({
-    data: {
-      tokenHash,
-      userId: user.id,
-      expiresAt,
-    },
+    data: { tokenHash: sha256(rawToken), userId: user.id, expiresAt },
   });
 
   // Delegate to mail service. The link host is configurable (FRONTEND_URL) so it
@@ -843,19 +963,12 @@ export async function forgotPassword(input: ForgotPasswordInput): Promise<void> 
 }
 
 export async function resetPassword(input: ResetPasswordInput): Promise<void> {
-  // Find all valid (unexpired) reset tokens
-  const tokens = await prisma.passwordResetToken.findMany({
-    where: { expiresAt: { gt: new Date() } },
+  // Indexed lookup. This previously loaded EVERY unexpired reset token on the
+  // platform — with no row cap at all — and bcrypt-compared against each.
+  const matchedToken = await prisma.passwordResetToken.findFirst({
+    where: { tokenHash: sha256(input.token), expiresAt: { gt: new Date() } },
     include: { user: true },
   });
-
-  let matchedToken = null;
-  for (const t of tokens) {
-    if (await bcrypt.compare(input.token, t.tokenHash)) {
-      matchedToken = t;
-      break;
-    }
-  }
 
   if (!matchedToken) {
     throw Object.assign(new Error('Invalid or expired reset token'), { status: 400, code: 'INVALID_TOKEN' });

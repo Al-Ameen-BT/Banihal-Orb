@@ -4,6 +4,7 @@ import { Role } from '@prisma/client';
 import { env } from '../config/env';
 import { prisma } from '../config/database';
 import { permissionsFor } from '../modules/platform-roles/platformRoles.service';
+import { JWT_ISSUER, JWT_AUDIENCE } from '../modules/auth/jwtClaims';
 
 interface AccessTokenPayload {
   userId: string;
@@ -31,8 +32,24 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
 
   let payload: AccessTokenPayload;
   try {
-    payload = jwt.verify(token, env.JWT_ACCESS_SECRET) as AccessTokenPayload;
+    // algorithms/issuer/audience are pinned rather than inferred. jsonwebtoken v9
+    // already refuses `alg: none` and restricts a string key to HMAC, so this is
+    // defence in depth — it keeps that true across future library upgrades and
+    // stops a token minted for another audience being replayed here.
+    payload = jwt.verify(token, env.JWT_ACCESS_SECRET, {
+      algorithms: ['HS256'],
+      issuer: JWT_ISSUER,
+      audience: JWT_AUDIENCE,
+    }) as AccessTokenPayload;
   } catch {
+    res.status(401).json({ error: 'Invalid or expired token', code: 'TOKEN_INVALID' });
+    return;
+  }
+
+  // The impersonation token carries type:'impersonation' and is signed with a
+  // DIFFERENT secret, so it cannot verify above — but assert the claim anyway
+  // rather than relying on key separation alone to keep the two apart.
+  if (payload.type !== 'access') {
     res.status(401).json({ error: 'Invalid or expired token', code: 'TOKEN_INVALID' });
     return;
   }

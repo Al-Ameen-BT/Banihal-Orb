@@ -129,7 +129,7 @@ prompts for nothing and regenerates nothing.
 
 | It generates | It derives | It asks for |
 |---|---|---|
-| `POSTGRES_PASSWORD`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `IMPERSONATION_SECRET`, `SLACK_TOKEN_SECRET`, `PASSWORD_PEPPER`, the VAPID pair (server-side only) | the five `*_DATABASE_URL`, `REDIS_URL`, `TRUST_PROXY`, `COOKIE_SECURE`, `UPLOAD_DIR`, `NEXT_PUBLIC_API_URL` | `FRONTEND_URL`, `ADMIN_DOMAINS`, `SMTP_*` |
+| `POSTGRES_PASSWORD`, `JWT_ACCESS_SECRET`, `IMPERSONATION_SECRET`, `SLACK_TOKEN_SECRET`, `PASSWORD_PEPPER`, the VAPID pair (server-side only) | the five `*_DATABASE_URL`, `REDIS_URL`, `TRUST_PROXY`, `COOKIE_SECURE`, `UPLOAD_DIR`, `NEXT_PUBLIC_API_URL` | `FRONTEND_URL`, `ADMIN_DOMAINS`, `SMTP_*` |
 
 Non-interactive (CI, or a re-run on a fresh host):
 

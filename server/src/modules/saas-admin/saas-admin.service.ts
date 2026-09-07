@@ -126,7 +126,7 @@ export async function impersonateUser(targetUserId: string, adminUserId: string)
     },
   });
 
-  const token = signImpersonationToken(target.id, target.customerId, target.role);
+  const token = signImpersonationToken(target.id, target.customerId, target.role, adminUserId);
   return { impersonationToken: token, expiresIn: '5m', target: { id: target.id, name: target.name, email: target.email } };
 }
 

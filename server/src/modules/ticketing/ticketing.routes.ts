@@ -68,6 +68,10 @@ router.post('/admin/tickets/:id/claim', adminStore, requirePermission('tickets.w
 
 // Management surfaces — ORG_ADMIN / ADMINISTRATOR.
 router.patch('/tickets/:id', staffWrite, ticketingController.updateTicket);
+// Permanent, and it cascades the ticket's comments, attachments and history. Same
+// gate as PATCH — which already resolves to ORG_ADMIN + administration/hr_admin/
+// employee, and excludes intern (no tickets.write).
+router.delete('/tickets/:id', staffWrite, ticketingController.deleteTicket);
 router.post('/projects', staffWrite, ticketingController.createProject);
 router.patch('/projects/:id', staffWrite, ticketingController.updateProject);
 router.delete('/projects/:id', staffWrite, ticketingController.deleteProject);

@@ -172,6 +172,11 @@ export type UpdateEscalationInput = z.infer<typeof UpdateEscalationSchema>;
 // Inviting staff always pairs role=ADMINISTRATOR with a platform role: the DB
 // CHECK constraint rejects the pair being broken, and can() grants nothing
 // without one, so platformRoleId is required rather than optional.
+// Redeeming an impersonation grant (step 2 — see auth.service.redeemImpersonation).
+export const RedeemImpersonationSchema = z.object({
+  token: z.string().min(1, 'An impersonation grant is required'),
+});
+
 export const InviteStaffSchema = z.object({
   email: z.string().email(),
   name: z.string().min(2).max(80),

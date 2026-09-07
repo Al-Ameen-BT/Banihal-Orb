@@ -588,9 +588,19 @@ function SadminPage() {
     mutationFn: ({ key, value }: { key: string; value: boolean }) => saasAdminApi.toggleFlag(key, { value }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['saas-flags'] }),
   });
+  // Issue a grant and immediately redeem it. The grant is never rendered: it is a
+  // credential, and showing it on screen invites copy/paste into a chat or a log.
+  // Redemption replaces this browser's session cookies with the target's, so the
+  // only correct next step is a full reload as that user.
   const impersonateMutation = useMutation({
-    mutationFn: (userId: string) => saasAdminApi.impersonate(userId),
-    onSuccess: (res) => setImpersonateResult((res.data as { impersonationToken: string }).impersonationToken),
+    mutationFn: async (userId: string) => {
+      const { data } = await saasAdminApi.impersonate(userId);
+      await saasAdminApi.redeemImpersonation((data as { impersonationToken: string }).impersonationToken);
+    },
+    onSuccess: () => { window.location.href = '/dashboard'; },
+    onError: (err) => setImpersonateResult(
+      (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Impersonation failed',
+    ),
   });
 
   // ─── Filtering logic ───────────────────────────────────────────────────────
@@ -852,12 +862,9 @@ function SadminPage() {
                   <AnimatePresence>
                     {impersonateResult && (
                       <motion.div key="imp" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}
-                        className="bg-slate-50 border border-slate-200 rounded-lg p-3.5">
+                        className="bg-red-50 border border-red-200 rounded-lg p-3.5">
                         <div className="flex items-start justify-between gap-3">
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Token · 5 min expiry</p>
-                            <code className="block text-xs font-mono text-slate-700 break-all leading-relaxed">{impersonateResult}</code>
-                          </div>
+                          <p className="flex-1 min-w-0 text-xs text-red-700 leading-relaxed">{impersonateResult}</p>
                           <GlowButton variant="ghost" className="flex-shrink-0 text-xs py-1 px-2" onClick={() => setImpersonateResult(null)}>✕</GlowButton>
                         </div>
                       </motion.div>

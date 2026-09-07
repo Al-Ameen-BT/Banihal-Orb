@@ -148,7 +148,8 @@ Copy `server/.env.example` → `server/.env`. **Generate every secret** with `op
 |---|---|---|
 | `DATABASE_URL`, `CHAT_DATABASE_URL`, `TICKETING_DATABASE_URL`, `TICKET_DATABASE_URL` | ✅ | The four core DBs |
 | `ADMIN_TICKETING_DATABASE_URL` | ✅ | Administrators' isolated store (`b2b_ticketing_admin`) — **no fallback**; the API won't start without it |
-| `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `IMPERSONATION_SECRET` | ✅ (≥32 chars) | Token signing |
+| `JWT_ACCESS_SECRET`, `IMPERSONATION_SECRET` | ✅ (≥32 chars) | Token signing |
+| `SLACK_TOKEN_SECRET`, `PASSWORD_PEPPER` | ✅ in production | Slack token encryption / password-reuse pepper. Startup FAILS without them in production — they must not share the JWT secret. Migrating an existing deploy? Set both to the current `JWT_ACCESS_SECRET` or stored Slack tokens stop decrypting. |
 | `TRUST_PROXY` | ✅ | Which upstream may be believed for `X-Forwarded-For`. `loopback` when nginx shares the host; **the podman CIDR (`10.89.10.0/24`) when containerized**. ⚠ **Never `true`** — that trusts a client-supplied header and makes every rate limiter bypassable |
 | `REDIS_URL` | Optional | Cache + rate-limit store + agent lock. Unset ⇒ in-process fallbacks. Containerized: `redis://b2b-redis:6379` |
 | `SLACK_TOKEN_SECRET` | ✅ if using bots | Encrypts Slack tokens, webhook URLs and AD temp-passwords at rest. Falls back to `JWT_ACCESS_SECRET`. **Back it up** — lost ⇒ unrecoverable; changed ⇒ existing secrets stop decrypting |

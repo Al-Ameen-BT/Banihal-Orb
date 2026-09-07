@@ -200,7 +200,7 @@ esac
 # changing SLACK_TOKEN_SECRET makes every stored Slack token and AD password
 # permanently undecryptable, and changing PASSWORD_PEPPER invalidates every
 # password-reuse fingerprint.
-for k in JWT_ACCESS_SECRET JWT_REFRESH_SECRET IMPERSONATION_SECRET SLACK_TOKEN_SECRET PASSWORD_PEPPER; do
+for k in JWT_ACCESS_SECRET IMPERSONATION_SECRET SLACK_TOKEN_SECRET PASSWORD_PEPPER; do
     keep_or_gen "$SERVER_ENV" "$k" gen32
 done
 

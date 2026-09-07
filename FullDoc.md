@@ -106,6 +106,33 @@ Enforcement points:
 - **Client:** `RoleGuard allowedRoles={[...]}` ([RoleGuard.tsx](client/src/components/guards/RoleGuard.tsx)) redirects unauthenticated users to `/login` and unauthorized roles to `/403`.
 - **Administrator domain lock:** the `ADMINISTRATOR` role can only authenticate from a work-email domain listed in the `ADMIN_DOMAINS` env var (fail-closed; empty = admin login disabled).
 
+### Token model
+
+| | Access token | Refresh token |
+|---|---|---|
+| Form | JWT, HS256, `iss=b2b-saas-api`, `aud=b2b-saas-client` | **Not a JWT** — 64 CSPRNG bytes |
+| Storage | httpOnly cookie, path `/` | httpOnly cookie, path `/api/auth`; SHA-256 hashed in `RefreshToken` |
+| Lifetime | `JWT_ACCESS_EXPIRES_IN` (15m) | `JWT_REFRESH_EXPIRES_IN` (7d) — sets the row AND the cookie Max-Age |
+| Claims | `userId, customerId, role, prid, sid, type:'access'`, plus `imp` on an impersonated session | — |
+
+Verification pins `algorithms: ['HS256']`, issuer and audience, and asserts
+`type === 'access'`. Every request then checks the `sid` claim against a live
+`RefreshToken` row, so **revocation is immediate** — this is not a "JWTs can't be
+revoked" design. Rotation is one-time-use and preserves `sid`.
+
+Generated tokens (refresh, reset, verification, trusted device) are SHA-256 hashed,
+never bcrypt: bcrypt salts each hash, which makes a token unlookupable and forces a
+scan of every row to find one. Only passwords use bcrypt.
+
+**Impersonation** is two steps. `POST /saas-admin/impersonate/:userId` issues a
+5-minute *grant* naming both the target and the issuing admin (`by`).
+`POST /saas-admin/impersonate` exchanges it for a session — behind `orgs.manage`
+AND requiring the caller to be that same admin, so the grant is not a bearer
+credential on its own. Platform staff cannot be impersonated. The resulting access
+token carries `imp` so actions remain attributable. There is no "stop
+impersonating" endpoint yet: the admin signs in again to return to their own
+session.
+
 ---
 
 ## 5. Multi-Tenancy & Security Model
@@ -181,8 +208,8 @@ cookie (`authMiddleware`); tenant-scoped groups also run `tenantMiddleware`.
 ### Auth — `/api/auth` (public, rate-limited)
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/register` | Create a new org + first user (→ `ORG_ADMIN`, or `ADMINISTRATOR` on a provider domain). Sets cookies. |
-| POST | `/register-user` | Join an **existing** org resolved by work-email domain (→ `USER`). |
+| POST | `/register` | Create a new org + first user (→ `ORG_ADMIN`, or `ADMINISTRATOR` on a provider domain). Rejects personal/disposable domains with `400 WORK_EMAIL_REQUIRED`. |
+| POST | `/register-user` | Join an **existing** org resolved by work-email domain (→ `USER`). Same `400 WORK_EMAIL_REQUIRED` rejection. |
 | POST | `/login` | Authenticate; sets HttpOnly access + refresh cookies. |
 | POST | `/refresh` | Rotate tokens (one-time-use refresh). |
 | POST | `/logout` | Revoke the refresh token. |
@@ -277,11 +304,21 @@ Errors are returned as `{ error, code, details? }`; Zod failures use code `VALID
 ## 9. Feature Walkthroughs
 
 ### Authentication & onboarding
+- **Work email required:** both registration paths refuse consumer, free-mail and
+  disposable domains (gmail, outlook, yahoo, proton, mailinator, …) with
+  `400 WORK_EMAIL_REQUIRED`. The list lives in
+  `server/src/modules/auth/emailDomains.ts` and is **code-only** — there is no env
+  override, no allowlist, and no bypass for domains in `ADMIN_DOMAINS`. Editing it
+  is a code change and a deploy. See
+  `docs/decisions/ADR-001-work-email-domain-filtration.md`.
 - **New org:** `/register` → `POST /auth/register` creates a `Customer` + first
-  user. Domain is derived from the email (null for gmail). Provider-domain emails
-  become `ADMINISTRATOR`; everyone else becomes `ORG_ADMIN`.
+  user. The org is keyed off the email's domain, so that domain is always present.
+  Provider-domain emails become `ADMINISTRATOR`; everyone else becomes `ORG_ADMIN`.
 - **Join an org:** users self-register via `/register-user`; the org is matched by
   the work-email domain (unique per org). Suspended orgs are blocked.
+- **Not the security boundary:** domain filtration is a first-pass filter. What
+  actually admits an organization is the approval flow below — a human with
+  `orgs.approve` releasing it with an out-of-band code.
 - Tokens land in HttpOnly cookies; the client never sees raw JWTs.
 
 ### The combined user dashboard (`/dashboard`)
@@ -337,7 +374,7 @@ Server env (Zod-validated, [env.ts](server/src/config/env.ts)):
 |---|---|---|
 | `DATABASE_URL` | — (required) | PostgreSQL connection string. |
 | `JWT_ACCESS_SECRET` | — (required, ≥32) | Access-token signing secret. |
-| `JWT_REFRESH_SECRET` | — (required, ≥32) | Refresh-token secret. |
+| `JWT_REFRESH_EXPIRES_IN` | `7d` | Refresh-token lifetime (`7d`/`12h`/`30m`). Sets both the DB row's expiry and the cookie Max-Age. There is no refresh *secret*: refresh tokens are random bytes stored SHA-256 hashed, not JWTs. |
 | `IMPERSONATION_SECRET` | — (required, ≥32) | Impersonation token secret. |
 | `JWT_ACCESS_EXPIRES_IN` | `15m` | |
 | `JWT_REFRESH_EXPIRES_IN` | `7d` | |

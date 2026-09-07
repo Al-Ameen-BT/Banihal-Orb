@@ -17,9 +17,12 @@ const EnvSchema = z.object({
   // NOTE: persist this path in production — the systemd deploy rebuilds the tree.
   UPLOAD_DIR: z.string().default('uploads'),
   JWT_ACCESS_SECRET: z.string().min(32),
-  JWT_REFRESH_SECRET: z.string().min(32),
   JWT_ACCESS_EXPIRES_IN: z.string().default('15m'),
-  JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
+  // Refresh tokens are NOT JWTs — they are 64 CSPRNG bytes stored SHA-256 hashed
+  // (auth.service.createRefreshToken), so there is no refresh signing secret. This
+  // value is the only thing that sets their lifetime, and the refresh cookie's
+  // Max-Age is derived from the same number so the two cannot drift.
+  JWT_REFRESH_EXPIRES_IN: z.string().regex(/^\d+[smhd]$/, 'Use a duration like 7d, 12h, 30m').default('7d'),
   IMPERSONATION_SECRET: z.string().min(32),
   PORT: z.coerce.number().default(3001),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -135,4 +138,39 @@ if (!result.success) {
   process.exit(1);
 }
 
-export const env = result.data;
+/**
+ * Key separation, enforced in production only.
+ *
+ * SLACK_TOKEN_SECRET and PASSWORD_PEPPER fall back to JWT_ACCESS_SECRET so a dev
+ * checkout needs no extra config. In production that fallback is a hazard rather
+ * than a convenience: one key would sign JWTs, encrypt Slack bot tokens under
+ * AES-256-GCM, and pepper password fingerprints — so rotating the JWT secret (a
+ * routine operation) would silently make every stored Slack token undecryptable
+ * and every reuse fingerprint stop matching.
+ *
+ * NOTE for existing deployments relying on the fallback: set these to the CURRENT
+ * value of JWT_ACCESS_SECRET, or already-encrypted Slack tokens will not decrypt.
+ */
+if (result.data.NODE_ENV === 'production') {
+  const missing = (['SLACK_TOKEN_SECRET', 'PASSWORD_PEPPER'] as const).filter((k) => !result.data[k]);
+  if (missing.length) {
+    console.error(
+      `❌ ${missing.join(' and ')} must be set in production — they must not fall back to JWT_ACCESS_SECRET.\n` +
+      '   Migrating an existing deployment? Set them to the CURRENT JWT_ACCESS_SECRET value,\n' +
+      '   otherwise stored Slack tokens stop decrypting and password-reuse detection resets.',
+    );
+    process.exit(1);
+  }
+}
+
+/** "7d" | "12h" | "30m" | "45s" → milliseconds. Format is validated by the schema. */
+function durationMs(v: string): number {
+  const unit = { s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 }[v.slice(-1)]!;
+  return parseInt(v, 10) * unit;
+}
+
+export const env = {
+  ...result.data,
+  /** Refresh-token lifetime in ms — drives both the DB row and the cookie Max-Age. */
+  JWT_REFRESH_EXPIRES_MS: durationMs(result.data.JWT_REFRESH_EXPIRES_IN),
+};

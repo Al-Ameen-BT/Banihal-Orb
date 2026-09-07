@@ -1,12 +1,15 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
-import { motion } from 'framer-motion';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import clsx from 'clsx';
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { ticketingApi, botsApi } from '@/lib/api';
 import GlowButton from '@/components/ui/GlowButton';
 import { BotFieldGrid } from '@/components/BotFormFields';
 import { useAuth } from '@/contexts/AuthContext';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
+import { useToast } from '@/components/ui/Toast';
 import type { TicketDTO, TicketProject, TicketStatus, TicketPriority, TicketType, SlaStatus, SlaEvaluation, Role, OrgBot } from '@/lib/schemas';
 
 // ─── Option sets ──────────────────────────────────────────────────────────────
@@ -920,6 +923,199 @@ export function Drawer({ open, onClose, children, width = 'max-w-2xl' }: { open:
         {children}
       </motion.div>
     </div>
+  );
+}
+
+// ─── Ticket actions menu (⋮) ────────────────────────────────────────────────────
+// The codebase had no dropdown/popover primitive and no dismiss-on-outside-click
+// utility, so this is the first. Anchoring follows NotificationBell; the outside-
+// click and Escape handling is what that one lacks.
+//
+// Every trigger sits inside a clickable ticket card, so the button and the panel
+// both stopPropagation — without it, opening the menu also opens the ticket.
+
+export interface TicketMenuAction {
+  label: string;
+  onSelect: () => void;
+  /** Renders red, and is separated from the rest. For destructive items. */
+  danger?: boolean;
+}
+
+export function TicketActionsMenu({ actions, label = 'Ticket actions' }: { actions: TicketMenuAction[]; label?: string }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    // `true` (capture): the card underneath stops propagation on its own handlers,
+    // so a bubbling listener would never see the click that should close this.
+    document.addEventListener('mousedown', onPointer, true);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onPointer, true);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={wrapRef} className="relative flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        aria-label={label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+        className="text-slate-300 hover:text-slate-600 transition-colors cursor-pointer p-0.5 rounded"
+      >
+        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm0 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm0 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" />
+        </svg>
+      </button>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            role="menu"
+            initial={{ opacity: 0, y: 4, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.98 }}
+            transition={{ duration: 0.13 }}
+            className="absolute right-0 top-8 z-50 w-44 card shadow-card-hover overflow-hidden py-1"
+          >
+            {actions.map((a) => (
+              <button
+                key={a.label}
+                type="button"
+                role="menuitem"
+                onClick={(e) => { e.stopPropagation(); setOpen(false); a.onSelect(); }}
+                className={clsx(
+                  'w-full text-left px-3.5 py-2 text-xs font-semibold transition-colors cursor-pointer',
+                  a.danger
+                    ? 'text-red-600 hover:bg-red-50 border-t border-slate-100'
+                    : 'text-slate-700 hover:bg-slate-50',
+                )}
+              >
+                {a.label}
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ─── Delete a ticket (asks twice) ───────────────────────────────────────────────
+// Two sequential prompts, by request. useConfirm resolves its promise before it
+// clears state, so a second await re-opens cleanly.
+//
+// NEITHER prompt passes `rememberKey`: a remembered "don't ask again" resolves
+// instantly to true, which would defeat the entire point of asking twice.
+
+export function useDeleteTicket(onDeleted?: () => void) {
+  const qc = useQueryClient();
+  const confirm = useConfirm();
+  const toast = useToast();
+
+  const mut = useMutation({
+    mutationFn: (id: string) => ticketingApi.deleteTicket(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['ticketing'] });
+      toast('Ticket deleted', 'success');
+      onDeleted?.();
+    },
+    // The 409 for an escalated ticket explains itself — show the server's words.
+    onError: (e: unknown) => toast(apiErrorMessage(e, 'Could not delete the ticket.'), 'error'),
+  });
+
+  async function requestDelete(ticket: { id: string; ticketNumber: string; title: string }) {
+    const first = await confirm({
+      title: 'Delete ticket',
+      message: <>Are you really want to delete the ticket <strong>{ticket.ticketNumber}</strong> &ldquo;{ticket.title}&rdquo;?</>,
+      confirmText: 'Delete',
+      variant: 'danger',
+    });
+    if (!first) return;
+
+    const second = await confirm({
+      title: 'This cannot be undone',
+      message: <>All comments, attachments and the ticket&rsquo;s history will be permanently deleted along with it. Delete <strong>{ticket.ticketNumber}</strong>?</>,
+      confirmText: 'Delete permanently',
+      variant: 'danger',
+    });
+    if (!second) return;
+
+    mut.mutate(ticket.id);
+  }
+
+  return { requestDelete, deleting: mut.isPending };
+}
+
+// ─── Edit ticket (title + description) ──────────────────────────────────────────
+// PATCH /tickets/:id already accepted both fields and was already staff-gated; there
+// was simply no UI for them, so a ticket's wording was fixed forever at creation.
+// Bounds mirror the server (ticketing.schema.ts): title 1-255, description 1-10000.
+
+export function EditTicketModal({ ticket, open, onClose }: { ticket: TicketDTO; open: boolean; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [title, setTitle] = useState(ticket.title);
+  const [description, setDescription] = useState(ticket.description);
+  const [error, setError] = useState('');
+
+  // Re-seed when a different ticket is opened, or after an external edit lands.
+  useEffect(() => {
+    if (open) { setTitle(ticket.title); setDescription(ticket.description); setError(''); }
+  }, [open, ticket.title, ticket.description]);
+
+  const mut = useMutation({
+    mutationFn: (payload: unknown) => ticketingApi.updateTicket(ticket.id, payload),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['ticketing'] }); onClose(); },
+    onError: (e: unknown) => setError(apiErrorMessage(e, 'Could not save the ticket.')),
+  });
+
+  const trimmedTitle = title.trim();
+  const trimmedDescription = description.trim();
+  const dirty = trimmedTitle !== ticket.title || trimmedDescription !== ticket.description;
+  const valid = trimmedTitle.length > 0 && trimmedTitle.length <= 255
+    && trimmedDescription.length > 0 && trimmedDescription.length <= 10_000;
+
+  return (
+    <Modal open={open} onClose={onClose} title={`Edit ${ticket.ticketNumber}`}>
+      <div className="space-y-4">
+        <div>
+          <label htmlFor="edit-ticket-title" className="block text-xs font-semibold text-slate-500 mb-1">Title</label>
+          <input id="edit-ticket-title" value={title} onChange={(e) => setTitle(e.target.value)}
+            maxLength={255} className="input text-sm w-full" />
+        </div>
+        <div>
+          <label htmlFor="edit-ticket-description" className="block text-xs font-semibold text-slate-500 mb-1">Description</label>
+          <textarea id="edit-ticket-description" value={description} onChange={(e) => setDescription(e.target.value)}
+            rows={8} maxLength={10_000} className="input text-sm w-full resize-y" />
+        </div>
+        {!valid && (title || description) && (
+          <p className="text-xs text-amber-600">Title and description cannot be empty.</p>
+        )}
+        {error && <p className="text-xs text-red-600">{error}</p>}
+        <div className="flex justify-end gap-2 pt-1">
+          <GlowButton variant="ghost" className="py-1.5 px-3 text-xs" onClick={onClose}>Cancel</GlowButton>
+          <GlowButton
+            className="py-1.5 px-3 text-xs"
+            disabled={!dirty || !valid || mut.isPending}
+            loading={mut.isPending}
+            // Send only what changed — the house dirty-diff idiom (TicketDetail QuickEdit).
+            onClick={() => mut.mutate({
+              ...(trimmedTitle !== ticket.title ? { title: trimmedTitle } : {}),
+              ...(trimmedDescription !== ticket.description ? { description: trimmedDescription } : {}),
+            })}
+          >
+            {mut.isPending ? 'Saving…' : dirty ? 'Save changes' : 'No changes'}
+          </GlowButton>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
