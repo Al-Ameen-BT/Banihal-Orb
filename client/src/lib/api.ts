@@ -212,6 +212,8 @@ export const ticketingApi = {
   getAnalytics: () => api.get('/ticketing/analytics'),
   listProjects: () => api.get('/ticketing/projects'),
   listAssignees: () => api.get('/ticketing/assignees'),
+  // Mention candidates for the @ picker — platform users only (both stores).
+  listMentionCandidates: () => api.get('/ticketing/mention-candidates'),
   listCustomers: () => api.get('/ticketing/customers'), // ADMINISTRATOR only (403 otherwise)
   createProject: (data: unknown) => api.post('/ticketing/projects', data),
   updateProject: (id: string, data: unknown) => api.patch(`/ticketing/projects/${id}`, data),

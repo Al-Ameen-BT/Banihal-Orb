@@ -39,6 +39,8 @@ router.post('/tickets', ticketingController.createTicket);
 router.get('/tickets/:id', ticketingController.getTicket);
 router.get('/projects', ticketingController.listProjects);
 router.get('/assignees', ticketingController.listAssignees);
+// @ picker pool — platform users only, in whichever store the scope selected.
+router.get('/mention-candidates', ticketingController.listMentionCandidates);
 
 // Collaboration — comments, attachments, watchers, activity history (any authed user).
 router.get('/tickets/:id/comments', ticketingController.getComments);
@@ -66,12 +68,15 @@ router.get('/customers', adminStore, ticketingController.listCustomers);
 router.get('/admin/escalation-alerts', adminStore, ticketingController.escalationAlerts);
 router.post('/admin/tickets/:id/claim', adminStore, requirePermission('tickets.write'), ticketingController.claimTicket);
 
-// Management surfaces — ORG_ADMIN / ADMINISTRATOR.
-router.patch('/tickets/:id', staffWrite, ticketingController.updateTicket);
+// Edit / delete — OPEN to every authenticated user, with the actual authorization
+// (creator + ADMINISTRATOR + ORG_ADMIN) enforced in assertCanEditTicket. A ticket's
+// CREATOR may edit it whatever their role — including a plain USER — so the old
+// staffWrite gate (ORG_ADMIN/ADMINISTRATOR) would lock the creator out. Platform
+// staff still need tickets.write to reach a mutation.
+router.patch('/tickets/:id', requirePermissionIfPlatform('tickets.write'), ticketingController.updateTicket);
 // Permanent, and it cascades the ticket's comments, attachments and history. Same
-// gate as PATCH — which already resolves to ORG_ADMIN + administration/hr_admin/
-// employee, and excludes intern (no tickets.write).
-router.delete('/tickets/:id', staffWrite, ticketingController.deleteTicket);
+// creator-or-admin authorization as PATCH, enforced in assertCanEditTicket.
+router.delete('/tickets/:id', requirePermissionIfPlatform('tickets.write'), ticketingController.deleteTicket);
 router.post('/projects', staffWrite, ticketingController.createProject);
 router.patch('/projects/:id', staffWrite, ticketingController.updateProject);
 router.delete('/projects/:id', staffWrite, ticketingController.deleteProject);

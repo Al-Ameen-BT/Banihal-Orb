@@ -10,6 +10,7 @@ import { useToast } from '@/components/ui/Toast';
 import {
   StatusBadge, PriorityBadge, SlaBadge, TypeBadge, Avatar, Drawer, Icons,
   STATUS_OPTIONS, PRIORITY_OPTIONS, fmtDate, timeAgo, AttachmentGrid, ACCEPTED_IMAGE_ACCEPT,
+  MentionTextarea, CommentBody, useMentionCandidates, useCanEditTicket,
 } from './shared';
 import type {
   TicketDTO, TicketComment, TicketActivity, TicketAttachment, TicketProject,
@@ -94,9 +95,12 @@ export default function TicketDetail({ ticketId, onClose }: { ticketId: string; 
   const confirm = useConfirm();
   const toast = useToast();
   const { user } = useAuth();
-  const isStaff = user?.role === 'ORG_ADMIN' || user?.role === 'ADMINISTRATOR';
   const [comment, setComment] = useState('');
   const [files, setFiles] = useState<FileList | null>(null);
+  // Ids chosen from the @ picker. Sent alongside the comment; the server re-checks
+  // every one against the platform-users pool, so this is convenience, not authority.
+  const [mentions, setMentions] = useState<string[]>([]);
+  const { data: mentionCandidates } = useMentionCandidates();
 
   const { data: ticket } = useQuery<TicketDTO>({ queryKey: ['ticketing', 'ticket', ticketId], queryFn: () => ticketingApi.getTicket(ticketId).then((r) => r.data as TicketDTO) });
   const { data: commentsData } = useQuery<{ comments: TicketComment[] }>({ queryKey: ['ticketing', 'comments', ticketId], queryFn: () => ticketingApi.getComments(ticketId).then((r) => r.data as { comments: TicketComment[] }) });
@@ -108,6 +112,10 @@ export default function TicketDetail({ ticketId, onClose }: { ticketId: string; 
   const isWatching = !!user && watchers.some((w) => w.email && w.email.toLowerCase() === user.email.toLowerCase());
   const invalidate = () => qc.invalidateQueries({ queryKey: ['ticketing'] });
 
+  // Edit lock: creator + ADMINISTRATOR + ORG_ADMIN. Everything below that can change
+  // the ticket (QuickEdit, attachment upload) is gated on this.
+  const canEdit = useCanEditTicket(ticket, user);
+
   // Escalation (ORG_ADMIN only): route the ticket to the ADMINISTRATOR group — the
   // org-admin selects the assignee as "Administrator" (no individual names), then
   // escalates. Only offered on UNCLOSED, not-yet-escalated tickets.
@@ -118,10 +126,11 @@ export default function TicketDetail({ ticketId, onClose }: { ticketId: string; 
     mutationFn: () => {
       const form = new FormData();
       form.append('content', comment.trim());
+      mentions.forEach((id) => form.append('mentions', id));
       if (files) Array.from(files).forEach((f) => form.append('files', f));
       return ticketingApi.addComment(ticketId, form);
     },
-    onSuccess: () => { setComment(''); setFiles(null); void invalidate(); },
+    onSuccess: () => { setComment(''); setFiles(null); setMentions([]); void invalidate(); },
   });
   const uploadMut = useMutation({
     mutationFn: (fl: FileList) => { const form = new FormData(); Array.from(fl).forEach((f) => form.append('files', f)); return ticketingApi.uploadAttachments(ticketId, form); },
@@ -174,10 +183,12 @@ export default function TicketDetail({ ticketId, onClose }: { ticketId: string; 
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <p className="eyebrow">Attachments ({attData?.attachments.length ?? 0})</p>
-                  <label className="text-xs font-semibold text-brand hover:text-brand-700 cursor-pointer">
-                    + Add images
-                    <input type="file" accept={ACCEPTED_IMAGE_ACCEPT} multiple className="hidden" onChange={(e) => { if (e.target.files?.length) uploadMut.mutate(e.target.files); }} />
-                  </label>
+                  {canEdit && (
+                    <label className="text-xs font-semibold text-brand hover:text-brand-700 cursor-pointer">
+                      + Add images
+                      <input type="file" accept={ACCEPTED_IMAGE_ACCEPT} multiple className="hidden" onChange={(e) => { if (e.target.files?.length) uploadMut.mutate(e.target.files); }} />
+                    </label>
+                  )}
                 </div>
                 <AttachmentGrid attachments={attData?.attachments ?? []} />
               </div>
@@ -190,7 +201,7 @@ export default function TicketDetail({ ticketId, onClose }: { ticketId: string; 
                       <Avatar name={c.author?.name} size="md" />
                       <div className="flex-1 min-w-0">
                         <p className="text-xs"><span className="font-semibold text-slate-800">{c.author?.name ?? 'Unknown'}</span> <span className="text-slate-400">· {timeAgo(c.createdAt)}</span></p>
-                        <p className="text-sm text-slate-700 whitespace-pre-wrap mt-0.5">{c.content}</p>
+                        <CommentBody content={c.content} names={(mentionCandidates ?? []).map((a) => a.name)} />
                         {c.attachments.length > 0 && <div className="mt-1.5"><AttachmentGrid attachments={c.attachments} size="sm" /></div>}
                       </div>
                     </div>
@@ -199,7 +210,13 @@ export default function TicketDetail({ ticketId, onClose }: { ticketId: string; 
                 </div>
 
                 <div className="mt-3 space-y-2">
-                  <textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={2} className="input resize-none text-sm" placeholder="Add a comment…" />
+                  <MentionTextarea
+                    value={comment}
+                    onChange={setComment}
+                    candidates={mentionCandidates ?? []}
+                    onMentionsChange={setMentions}
+                    placeholder="Add a comment… use @ to mention a platform colleague"
+                  />
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-slate-500 cursor-pointer hover:text-slate-700 inline-flex items-center gap-1">
                       <Icons.paperclip className="w-3.5 h-3.5" />
@@ -239,7 +256,7 @@ export default function TicketDetail({ ticketId, onClose }: { ticketId: string; 
                   </div>
                 )
               )}
-              {isStaff && <QuickEdit ticket={ticket} />}
+              {canEdit && <QuickEdit ticket={ticket} />}
 
               <div className="space-y-2.5 text-xs">
                 {([['Project', ticket.projectName ?? '—'], ['Reporter', ticket.reporter?.name ?? '—'], ['Assignee', ticket.assignee?.name ?? 'Unassigned'],

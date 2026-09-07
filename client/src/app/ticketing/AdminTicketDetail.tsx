@@ -9,6 +9,7 @@ import {
   Modal, StatusBadge, PriorityBadge, TypeBadge, SlaBar, Avatar, Icons,
   STATUS_OPTIONS, PRIORITY_OPTIONS, fmtDate, timeAgo, AttachmentGrid, Person, ACCEPTED_IMAGE_ACCEPT,
   TicketActionsMenu, EditTicketModal, useDeleteTicket, MentionTextarea, CommentBody,
+  useMentionCandidates, useCanEditTicket,
 } from './shared';
 import type { TicketDTO, TicketComment, TicketAttachment, TicketStatus, TicketPriority } from '@/lib/schemas';
 
@@ -40,6 +41,7 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
   const { data: commentsData } = useQuery<{ comments: TicketComment[] }>({ queryKey: ['ticketing', 'comments', ticketId], queryFn: () => ticketingApi.getComments(ticketId).then((r) => r.data as { comments: TicketComment[] }) });
   const { data: attData } = useQuery<{ attachments: TicketAttachment[] }>({ queryKey: ['ticketing', 'attachments', ticketId], queryFn: () => ticketingApi.getTicketAttachments(ticketId).then((r) => r.data as { attachments: TicketAttachment[] }) });
   const { data: staffData } = useQuery<{ assignees: Staff[] }>({ queryKey: ['ticketing', 'assignees'], queryFn: () => ticketingApi.listAssignees().then((r) => r.data as { assignees: Staff[] }), staleTime: 60_000 });
+  const { data: mentionCandidates } = useMentionCandidates();
 
   // Manage (status / priority / assignee)
   const [status, setStatus] = useState<TicketStatus>('todo');
@@ -89,6 +91,10 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
 
   const manageDirty = !!ticket && (status !== ticket.status || priority !== ticket.priority || assigneeId !== (ticket.assignee?.id ?? ''));
 
+  // Edit lock: creator + ADMINISTRATOR + ORG_ADMIN. Others can read + comment but
+  // every edit control below (menu, manage, resolution write-ups) is disabled.
+  const canEdit = useCanEditTicket(ticket, user);
+
   return (
     <Modal open onClose={onClose} width="max-w-4xl">
       {ticket && <EditTicketModal ticket={ticket} open={editing} onClose={() => setEditing(false)} />}
@@ -109,13 +115,13 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
               <h2 className="text-lg font-bold text-slate-900 mt-1.5 leading-tight">{ticket.title}</h2>
             </div>
             <div className="flex items-center gap-1.5 flex-shrink-0">
-              <TicketActionsMenu
+              {canEdit && <TicketActionsMenu
                 label={`Actions for ${ticket.ticketNumber}`}
                 actions={[
                   { label: 'Edit', onSelect: () => setEditing(true) },
                   { label: 'Delete', onSelect: () => void requestDelete(ticket), danger: true },
                 ]}
-              />
+              />}
               <button type="button" onClick={onClose} aria-label="Close" className="text-slate-400 hover:text-slate-700 cursor-pointer">
                 <Icons.close className="w-5 h-5" />
               </button>
@@ -159,7 +165,7 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
                       <Avatar name={c.author?.name} size="md" />
                       <div className="flex-1 min-w-0">
                         <p className="text-xs"><span className="font-semibold text-slate-800">{c.author?.name ?? 'Unknown'}</span> <span className="text-slate-400">· {timeAgo(c.createdAt)}</span></p>
-                        <CommentBody content={c.content} names={(staffData?.assignees ?? []).map((a) => a.name)} />
+                        <CommentBody content={c.content} names={(mentionCandidates ?? []).map((a) => a.name)} />
                         {c.attachments.length > 0 && <div className="mt-1.5"><AttachmentGrid attachments={c.attachments} size="sm" /></div>}
                       </div>
                     </div>
@@ -170,9 +176,9 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
                   <MentionTextarea
                     value={comment}
                     onChange={setComment}
-                    candidates={staffData?.assignees ?? []}
+                    candidates={mentionCandidates ?? []}
                     onMentionsChange={setMentions}
-                    placeholder="Add a comment… use @ to mention a colleague"
+                    placeholder="Add a comment… use @ to mention a platform colleague"
                   />
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-slate-500 cursor-pointer hover:text-slate-700 inline-flex items-center gap-1">
@@ -191,9 +197,9 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
               <div>
                 <p className="eyebrow mb-2">Resolved Methods</p>
                 {ticket.resolvedMethods && <p className="text-xs text-slate-500 mb-2">Current: <span className="text-slate-700">{ticket.resolvedMethods}</span></p>}
-                <textarea value={resolved} onChange={(e) => setResolved(e.target.value)} rows={2} className="input resize-none text-sm" placeholder="Describe how it was resolved…" />
+                <textarea value={resolved} onChange={(e) => setResolved(e.target.value)} rows={2} disabled={!canEdit} className="input resize-none text-sm disabled:opacity-60" placeholder="Describe how it was resolved…" />
                 <div className="mt-2 flex items-center gap-2">
-                  <GlowButton className="ml-auto py-1.5 px-4 text-xs" disabled={resolved === (ticket.resolvedMethods ?? '') || patchMut.isPending}
+                  <GlowButton className="ml-auto py-1.5 px-4 text-xs" disabled={!canEdit || resolved === (ticket.resolvedMethods ?? '') || patchMut.isPending}
                     onClick={() => patchMut.mutate({ resolvedMethods: resolved.trim() || null })}>Update</GlowButton>
                 </div>
               </div>
@@ -201,9 +207,9 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
               <div>
                 <p className="eyebrow mb-2">Reason for Delay</p>
                 {ticket.reasonForDelay && <p className="text-xs text-slate-500 mb-2">Current: <span className="text-slate-700">{ticket.reasonForDelay}</span></p>}
-                <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} className="input resize-none text-sm" placeholder="Why is this taking longer…" />
+                <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} disabled={!canEdit} className="input resize-none text-sm disabled:opacity-60" placeholder="Why is this taking longer…" />
                 <div className="mt-2 flex items-center gap-2">
-                  <GlowButton className="ml-auto py-1.5 px-4 text-xs" disabled={reason === (ticket.reasonForDelay ?? '') || patchMut.isPending}
+                  <GlowButton className="ml-auto py-1.5 px-4 text-xs" disabled={!canEdit || reason === (ticket.reasonForDelay ?? '') || patchMut.isPending}
                     onClick={() => patchMut.mutate({ reasonForDelay: reason.trim() || null })}>Save Reason</GlowButton>
                 </div>
               </div>
@@ -215,24 +221,24 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
                 <p className="eyebrow">Manage</p>
                 <label className="block">
                   <span className="block text-[11px] font-medium text-slate-500 mb-1">Status</span>
-                  <select value={status} onChange={(e) => setStatus(e.target.value as TicketStatus)} className="input !py-1.5 text-xs">
+                  <select value={status} onChange={(e) => setStatus(e.target.value as TicketStatus)} disabled={!canEdit} className="input !py-1.5 text-xs disabled:opacity-60">
                     {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
                   </select>
                 </label>
                 <label className="block">
                   <span className="block text-[11px] font-medium text-slate-500 mb-1">Priority</span>
-                  <select value={priority} onChange={(e) => setPriority(e.target.value as TicketPriority)} className="input !py-1.5 text-xs">
+                  <select value={priority} onChange={(e) => setPriority(e.target.value as TicketPriority)} disabled={!canEdit} className="input !py-1.5 text-xs disabled:opacity-60">
                     {PRIORITY_OPTIONS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
                   </select>
                 </label>
                 <label className="block">
                   <span className="block text-[11px] font-medium text-slate-500 mb-1">Assignee</span>
-                  <select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} className="input !py-1.5 text-xs">
+                  <select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} disabled={!canEdit} className="input !py-1.5 text-xs disabled:opacity-60">
                     <option value="">Unassigned</option>
                     {(staffData?.assignees ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 </label>
-                <GlowButton className="w-full py-1.5 text-xs" disabled={!manageDirty || patchMut.isPending} loading={patchMut.isPending}
+                <GlowButton className="w-full py-1.5 text-xs" disabled={!canEdit || !manageDirty || patchMut.isPending} loading={patchMut.isPending}
                   onClick={() => patchMut.mutate({
                     ...(status !== ticket.status ? { status } : {}),
                     ...(priority !== ticket.priority ? { priority } : {}),

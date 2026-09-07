@@ -56,27 +56,64 @@ describe.skipIf(!ready)('@mentions in ticket comments', () => {
     expect(acts).toHaveLength(1);
   });
 
-  it('IGNORES mentions in the default (org) store — the security boundary', async () => {
-    // The comment route serves BOTH stores and has no admin guard, so restricting
-    // the picker to the admin pane proves nothing. This is what actually holds.
+  it('notifies in the default (org) store too — platform users only', async () => {
+    // Mentions are no longer admin-store-only. The boundary is the person, not the
+    // store: a comment on ANY ticket notifies a target that exists as a platform
+    // user (the email join is the security boundary).
     const org = await createTestOrg('Org Store Mention');
     await createTestUser(org.id, 'orgadmin@example.com', 'ORG_ADMIN');
     const victim = await createTestUser(org.id, 'orgvictim@example.com', 'USER');
+
+    // Bridge the victim into the default store (matches what listStaff returns, and
+    // what the assignee pool / picker would show).
+    await ticketPrisma.users.upsert({
+      where: { email: 'orgvictim@example.com' },
+      create: { email: 'orgvictim@example.com', firstName: 'Org', lastName: 'Victim', password: '__sso_bridged__', role: 'developer' },
+      update: {},
+    });
 
     const cookies = await loginAs('orgadmin@example.com');
     const ticket = await createTicket(cookies);
     const pool = await roster(cookies);
     const someone = pool.find((a) => a.email === 'orgvictim@example.com');
+    expect(someone, 'victim must be in the org pool').toBeDefined();
 
     const res = await request(app).post(`/api/ticketing/tickets/${ticket.id}/comments`)
       .set('Cookie', cookies)
       .field('content', 'trying to mention across stores')
-      .field('mentions', someone?.id ?? '00000000-0000-0000-0000-000000000000');
-    expect(res.status).toBe(201);   // the comment posts fine
+      .field('mentions', someone!.id);
+    expect(res.status).toBe(201);
 
-    // ...but nothing was notified, and no mention activity was written.
-    expect(await prisma.notification.count({ where: { userId: victim.id } })).toBe(0);
-    expect(await ticketPrisma.activities.count({ where: { ticketId: ticket.id, type: 'mentioned' } })).toBe(0);
+    expect(await prisma.notification.count({ where: { userId: victim.id } })).toBe(1);
+    expect(await ticketPrisma.activities.count({ where: { ticketId: ticket.id, type: 'mentioned' } })).toBe(1);
+  });
+
+  it('does not notify ticketing staff who are not platform users', async () => {
+    // A native ticket-store user (created in the ticketing DB, no B2B account) has
+    // an email that matches nothing in the platform users list — mentioning them
+    // must be a silent no-op. This is the boundary that REPLACED the old admin-store
+    // restriction scoped in there.
+    const org = await createTestOrg('Native Staff Org');
+    await createTestUser(org.id, 'admin@example.com', 'ADMINISTRATOR', 'employee');
+    const authorCookies = await loginAs('admin@example.com');
+    const ticket = await createTicket(authorCookies);
+
+    const native = await adminTicketPrisma.users.create({
+      data: {
+        email: 'native@ticketing.local',
+        firstName: 'Native', lastName: 'Staff',
+        password: 'x', role: 'developer',
+      },
+    });
+
+    await request(app).post(`/api/ticketing/tickets/${ticket.id}/comments`)
+      .set('Cookie', authorCookies)
+      .field('content', 'mentioning native staff')
+      .field('mentions', native.id)
+      .expect(201);
+
+    expect(await prisma.notification.count()).toBe(0);
+    expect(await adminTicketPrisma.activities.count({ where: { ticketId: ticket.id, type: 'mentioned' } })).toBe(0);
   });
 
   it('drops an id that is not on the roster', async () => {

@@ -2,8 +2,6 @@ import fs from 'fs/promises';
 import path from 'path';
 import * as db from './ticketing.client';
 import { UPLOAD_DIR } from './uploads';
-import { getTicketDbScope } from '../../config/ticketDatabase';
-import { listAdminAssignees } from './services/adminAssignees';
 import { resolveB2bIdentity } from './identity';
 import { notify } from '../notifications/notifications.service';
 import { nextTicketNumber } from './utils/ticketNumber';
@@ -371,37 +369,34 @@ async function deliverMentions(args: {
   mentions: string[]; actorB2bUserId: string;
 }): Promise<void> {
   try {
-    // GUARD 1 — STORE. Mentions are a platform-provider feature. The comment route
-    // serves BOTH stores (routes.ts has no adminStore guard on it), so this check
-    // is the actual boundary — not which component renders the picker. Scope, not
-    // role: access.ts:22-26 spells out why role is the wrong question.
-    if (getTicketDbScope() !== 'admin') return;
+    // GUARD 1 — PLATFORM USERS ONLY. Mentions address B2B-Site accounts, so the
+    // candidate must resolve to one. `resolveB2bIdentity` joins the ticket-store
+    // user to the platform users list BY EMAIL and returns null for bots and for
+    // ticketing staff without a B2B account — those simply cannot be mentioned.
+    // This now runs for every ticket in both stores (no scope gate anymore):
+    // the comment route serves both, so the email check is the actual boundary.
+    if (args.mentions.length === 0) return;
 
-    // GUARD 2 — ROSTER. Ids come from the client, so they are re-checked against
-    // the real assignee pool. Without this, any uuid could address a notification.
-    const roster = await listAdminAssignees();
-    const byId = new Map(roster.map((r) => [r.id, r] as const));
-
-    // GUARD 3 — SELF. Mentioning yourself notifies nobody, matching the
+    // GUARD 2 — SELF. Mentioning yourself notifies nobody, matching the
     // self-assignment skip in ticketNotify.ts.
-    const targets = [...new Set(args.mentions)].filter((id) => id !== args.actorId && byId.has(id));
-    if (targets.length === 0) return;
-
     const ticket = await db.getTicketForDelete(args.ticketId);  // id + number + title
-    const author = byId.get(args.actorId)?.name ?? 'Someone';
+    const author = (await db.getUserName(args.actorId).catch(() => null)) ?? 'Someone';
 
-    for (const ticketUserId of targets) {
+    for (const ticketUserId of [...new Set(args.mentions)]) {
+      if (ticketUserId === args.actorId) continue;
+
+      // Ticket-store id → main-database account. This IS the platform-users-list
+      // validation: if there is no platform user with this email, nobody is
+      // mentioned and no notification is created.
+      const recipient = await resolveB2bIdentity(ticketUserId);
+      if (!recipient) continue;
+
       // The mention belongs in the ticket's own timeline too, so it reads in
       // context. Decoration only — the Notification row is the delivery guarantee.
       await db.writeActivity({
         type: 'mentioned', ticketId: args.ticketId, userId: args.actorId,
         field: 'mention', newValue: ticketUserId, description: args.content.slice(0, 140),
       }).catch(() => {});
-
-      // Ticket-store id → main-database account. Returns null for bots and for
-      // ticketing staff with no B2B account; those simply cannot be notified.
-      const recipient = await resolveB2bIdentity(ticketUserId);
-      if (!recipient) continue;
 
       await notify({
         userId: recipient.userId,

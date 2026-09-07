@@ -137,8 +137,23 @@ export function getTicketCore(id: string) {
       // title/description are here for the activity rows an edit writes — without an
       // old value there is nothing to record the change against.
       title: true, description: true,
+      // reporterId identifies the ticket's creator — the ownership check for the
+      // edit lock (creator + admins may edit; see service.updateTicket).
+      reporterId: true,
     },
   });
+}
+
+// Name of a ticket-store user, used to label the notification actor when mentions
+// are delivered from the shared client store (where the old admin-roster lookup
+// no longer applies).
+export async function getUserName(id: string): Promise<string | null> {
+  const row = await getTicketDb().users.findUnique({
+    where: { id },
+    select: { firstName: true, lastName: true },
+  });
+  if (!row) return null;
+  return `${row.firstName} ${row.lastName}`.trim();
 }
 
 export async function createTicketRow(data: Parameters<typeof ticketPrisma.tickets.create>[0]['data']): Promise<string> {

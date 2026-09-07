@@ -100,7 +100,7 @@ describe.skipIf(!ready)('DELETE /ticketing/tickets/:id', () => {
     expect(await ticketPrisma.tickets.count({ where: { id: ticket.id } })).toBe(1);
   });
 
-  it('denies a plain USER', async () => {
+  it('denies a plain USER who did not create the ticket', async () => {
     const org = await createTestOrg('User Delete Org');
     await createTestUser(org.id, 'plain-user@example.com', 'USER');
     await createTestUser(org.id, 'owner-admin@example.com', 'ORG_ADMIN');
@@ -108,9 +108,12 @@ describe.skipIf(!ready)('DELETE /ticketing/tickets/:id', () => {
     const adminCookies = await loginAs('owner-admin@example.com');
     const ticket = await createTicket(adminCookies);
 
+    // A USER's scope is "their own tickets" so this 404s BEFORE the edit lock —
+    // deliberately, without confirming the ticket exists. (A creator-USER, by
+    // contrast, may now delete their own ticket — see the edit-lock test.)
     const userCookies = await loginAs('plain-user@example.com');
     const res = await request(app).delete(`/api/ticketing/tickets/${ticket.id}`).set('Cookie', userCookies);
-    expect([401, 403]).toContain(res.status);
+    expect(res.status).toBe(404);
     expect(await ticketPrisma.tickets.count({ where: { id: ticket.id } })).toBe(1);
   });
 

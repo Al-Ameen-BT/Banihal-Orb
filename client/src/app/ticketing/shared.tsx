@@ -937,6 +937,30 @@ export function Drawer({ open, onClose, children, width = 'max-w-2xl' }: { open:
 
 export interface MentionCandidate { id: string; name: string; email: string }
 
+// The @ picker's candidate pool — platform users only. Same source for every ticket
+// view, admin (b2b_ticketing_admin) or client (b2b_ticket): the server intersects the
+// two user lists by email and returns only people who exist on both.
+export function useMentionCandidates() {
+  return useQuery<MentionCandidate[]>({
+    queryKey: ['ticketing', 'mention-candidates'],
+    queryFn: () => ticketingApi.listMentionCandidates().then((r) => (r.data as { candidates: MentionCandidate[] }).candidates),
+    staleTime: 60_000,
+  });
+}
+
+/**
+ * EDIT LOCK — may this caller edit/delete the ticket?
+ * True for the ticket CREATOR (any role), platform ADMINISTRATOR and ORG_ADMIN.
+ * The server enforces the same rule in assertCanEditTicket; this is the UI gate
+ * that decides which controls are rendered/disabled.
+ */
+export function useCanEditTicket(ticket: Pick<TicketDTO, 'reporter'> | undefined, user: { role?: Role; email?: string } | undefined | null): boolean {
+  if (!ticket || !user) return false;
+  if (user.role === 'ADMINISTRATOR' || user.role === 'ORG_ADMIN') return true;
+  const reporterEmail = ticket.reporter?.email?.toLowerCase();
+  return !!reporterEmail && !!user.email && user.email.toLowerCase() === reporterEmail;
+}
+
 /** Where the caret sits inside an unfinished "@fragment", or null. */
 function activeMentionQuery(text: string, caret: number): { start: number; query: string } | null {
   const upto = text.slice(0, caret);
@@ -966,7 +990,7 @@ export function MentionTextarea({ value, onChange, candidates, onMentionsChange,
   const matches = useMemo(() => {
     if (!query) return [];
     const q = query.query.toLowerCase();
-    return candidates.filter((c) => c.name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q)).slice(0, 6);
+    return candidates.filter((c) => c.name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q));
   }, [query, candidates]);
 
   useEffect(() => { setActive(0); }, [query?.query]);
@@ -1029,7 +1053,7 @@ export function MentionTextarea({ value, onChange, candidates, onMentionsChange,
             role="listbox"
             initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
             transition={{ duration: 0.12 }}
-            className="absolute left-0 bottom-full mb-1 z-50 w-64 card shadow-card-hover overflow-hidden py-1"
+            className="absolute left-0 bottom-full mb-1 z-50 w-64 card shadow-card-hover overflow-hidden py-1 max-h-72 overflow-y-auto"
           >
             {matches.map((c, i) => (
               <li key={c.id} role="option" aria-selected={i === active}>

@@ -9,6 +9,7 @@ import * as service from './ticketing.service';
 import * as db from './ticketing.client';
 import * as escalation from './services/escalation';
 import { listAdminAssignees } from './services/adminAssignees';
+import { listMentionCandidates as listPlatformMentionCandidates } from './services/mentionCandidates';
 import { resolveTicketActor } from './identity';
 import { aggregate } from './services/dashboardAggregate';
 import { cached, cacheKey, TTL } from '../../lib/cache';
@@ -17,6 +18,27 @@ import type { AuditAction } from '../../config/auditActions';
 
 // Bridge the B2B-Site user to a ticketing staff Users row (id + mapped role).
 const actor = (req: Request) => resolveTicketActor(req.user.userId, req.user.role);
+const notFound = (what: string) => Object.assign(new Error(`${what} not found`), { status: 404, code: 'NOT_FOUND' });
+
+// EDIT LOCK — who may modify / delete a ticket.
+//
+// The owner of a ticket (its creator) may always edit it. Platform ADMINISTRATOR
+// and ORG_ADMIN may edit any ticket (permission `ticket.store.admin` / any scope).
+// Everyone else (a USER who is not the creator, an assignee who did not open it,
+// etc.) is locked out — a 403. Scope was already asserted above, so this narrows
+// the *who* on top of the tenant/org *what*.
+//
+// orgCode/role live on the B2B-Site caller; ownership is decided by comparing the
+// ticket's reporter (creator) against the caller's ticket-store id.
+async function assertCanEditTicket(req: Request, ticketReporterId: string | null): Promise<void> {
+  const role = req.user.role;
+  if (role === 'ADMINISTRATOR' || role === 'ORG_ADMIN') return;
+  const me = await actor(req);
+  if (ticketReporterId && me.id === ticketReporterId) return;
+  throw Object.assign(new Error('You do not have permission to edit this ticket.'), {
+    status: 403, code: 'TICKET_EDIT_FORBIDDEN',
+  });
+}
 
 /**
  * Write a ticket action to the PLATFORM audit log.
@@ -125,6 +147,9 @@ export async function updateTicket(req: Request, res: Response, next: NextFuncti
     const scope = await service.ticketAccessScope(req.user);
     await service.assertTicketAccess(scope, req.params['id']!);
     const me = await actor(req);
+    const core = await db.getTicketCore(req.params['id']!);
+    if (!core) throw notFound('Ticket');
+    await assertCanEditTicket(req, core.reporterId);
     const ticket = await service.updateTicket(me.id, req.params['id']!, input);
     await auditTicket(req, 'TICKET_UPDATED', ticket, { fields: Object.keys(input) });
     res.json(ticket);
@@ -138,6 +163,10 @@ export async function deleteTicket(req: Request, res: Response, next: NextFuncti
     // gets 404, deliberately — a 403 would confirm the id exists.
     const scope = await service.ticketAccessScope(req.user);
     await service.assertTicketAccess(scope, id);
+
+    const core = await db.getTicketCore(id);
+    if (!core) throw notFound('Ticket');
+    await assertCanEditTicket(req, core.reporterId);
 
     const { ticketNumber, title } = await service.deleteTicket(id);
     // The ticket's own Activities history cascaded away with it; this row in the
@@ -213,6 +242,14 @@ export async function listAssignees(req: Request, res: Response, next: NextFunct
 // always reads the isolated admin store — an org caller can never enumerate clients.
 export async function listCustomers(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try { res.json({ customers: await db.listCustomers() }); } catch (err) { next(err); }
+}
+
+// Mention candidates for the @ picker — PLATFORM USERS ONLY (both stores). Filtered
+// downstream by the platform email join, so this never leaks native ticketing staff.
+export async function listMentionCandidates(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    res.json({ candidates: await cached(cacheKey('mention-candidates'), TTL.reference, () => listPlatformMentionCandidates()) });
+  } catch (err) { next(err); }
 }
 
 // ─── Cached aggregate reads ──────────────────────────────────────────────────
