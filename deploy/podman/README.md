@@ -15,16 +15,16 @@ file is the commands.
 Four pods on one user-defined network, plus two volumes:
 
 ```
-                    ┌──── b2b-nginx pod ─────────────────┐
-  Browser ──443──►  │  TLS termination, one origin       │
-                    │  /             → b2b-app:3000      │
-                    │  /api, /health → b2b-app:3001      │
-                    └────────────┬───────────────────────┘
+                    ┌──── b2b-nginx pod (.5) ─────────────┐
+  Browser ──443──►  │  TLS termination, one origin        │
+                    │  /             → b2b-app:3000       │
+                    │  /api, /health → b2b-app:3001       │
+                    └────────────┬────────────────────────┘
                                  │  b2b network (10.89.10.0/24)
        ┌─────────────────────────┼──────────────────────────┐
        │                         │                          │
 ┌──────┴───────────┐   ┌─────────┴────────┐   ┌─────────────┴──┐
-│ b2b-app pod      │   │ b2b-postgres pod │   │ b2b-redis pod  │
+│ b2b-app pod (.4) │   │ b2b-postgres(.2) │   │ b2b-redis (.3) │
 │  b2b-api  :3001  │   │  :5432 → 127.0.0.1│  │  no published  │
 │  b2b-web  :3000  │   │  vol: b2b-pgdata │   │  port          │
 │  vol: b2b-uploads│   └──────────────────┘   └────────────────┘
@@ -32,6 +32,16 @@ Four pods on one user-defined network, plus two volumes:
                          Analytics Agent stays on the HOST (:8001),
                          reached via host.containers.internal.
 ```
+
+All pods have **static IPs** pinned via `IP=` in their `.pod` units, so
+addresses survive restarts, rebuilds, and full stack recreations:
+
+| Pod | IP | Notes |
+|---|---|---|
+| `b2b-postgres` | `10.89.10.2` | |
+| `b2b-redis` | `10.89.10.3` | |
+| `b2b-app` | `10.89.10.4` | API + web share this address (same pod) |
+| `b2b-nginx` | `10.89.10.5` | |
 
 | Exposed | Where | Why |
 |---|---|---|

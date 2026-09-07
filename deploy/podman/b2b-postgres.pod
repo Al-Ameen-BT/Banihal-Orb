@@ -4,6 +4,7 @@ Description=B2B-Site PostgreSQL pod
 [Pod]
 PodName=b2b-postgres
 Network=b2b.network
+IP=10.89.10.2
 
 # 127.0.0.1 ONLY, never 0.0.0.0. Host psql, pg_dump backups and
 # server/db/provision.sh keep working against localhost:5432 exactly as they did
