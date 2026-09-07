@@ -79,6 +79,14 @@ apply "$TICKET_DATABASE_URL"    "$DB_DIR/b2b_ticket.sql"
 # database. Upstream loads it from the `ticketingDB` pg dump, which is not in this
 # repo — b2b_ticket.sql is idempotent and non-destructive, so applying it here
 # gives a from-scratch install a working admin store instead of a schemaless one.
-apply "$ADMIN_TICKETING_DATABASE_URL" "$DB_DIR/b2b_ticket.sql"
+# Non-fatal, and PGCONNECT_TIMEOUT keeps a dead host from stalling the deploy for
+# the full TCP timeout. This store is on a REMOTE host: under `set -e` an outage
+# there used to abort provisioning with a non-zero exit even though all four LOCAL
+# databases had already been applied successfully — deploy.sh then reported a scary
+# "provisioning failed" and people started deploying by hand instead, skipping
+# provisioning altogether. That is how `customers.approved` never reached the live
+# database. A remote store being down must not mask four local successes.
+PGCONNECT_TIMEOUT=5 apply "$ADMIN_TICKETING_DATABASE_URL" "$DB_DIR/b2b_ticket.sql" \
+  || echo "⚠️  admin ticket store ($ADMIN_TICKETING_DATABASE_URL) unreachable — skipped. The four local databases above were applied."
 
 echo "✅ Provisioning complete."

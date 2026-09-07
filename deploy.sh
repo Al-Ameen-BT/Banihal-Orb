@@ -98,11 +98,14 @@ run_as_owner "npm ci || npm install" "$SERVER_DIR"
 run_as_owner "npm run db:generate" "$SERVER_DIR"
 
 echo "🗄️ Provisioning databases (idempotent SQL DDL)..."
-run_as_owner "npm run db:provision" "$SERVER_DIR" || echo "⚠️ Warning: DB provisioning failed. Check DB connection settings & superuser access."
+run_as_owner "npm run db:provision" "$SERVER_DIR" || echo "⚠️ Warning: DB provisioning reported an error. NOT fatal here — the db:verify gate below is the authority and will abort the deploy if any schema is actually behind."
 
 echo "🔎 Verifying required databases are available (fail-fast preflight)..."
 # Hard gate: abort the deploy before touching systemd if any required database
-# (b2b / b2b_chat / b2b_ticketing / b2b_ticket) is unreachable or unprovisioned.
+# (b2b / b2b_chat / b2b_ticketing / b2b_ticket) is unreachable, unprovisioned, or
+# BEHIND its Prisma datamodel. That last check is why this gate exists: provisioning
+# above is best-effort, so drift must be caught here rather than at runtime, where a
+# missing column surfaces as a 500 on every authenticated request.
 run_as_owner "npm run db:verify" "$SERVER_DIR"
 
 if [ "$IS_DEV" = false ]; then
