@@ -10,7 +10,7 @@ import { BotFieldGrid } from '@/components/BotFormFields';
 import { useAuth } from '@/contexts/AuthContext';
 import { useConfirm } from '@/components/ui/ConfirmDialog';
 import { useToast } from '@/components/ui/Toast';
-import type { TicketDTO, TicketProject, TicketStatus, TicketPriority, TicketType, SlaStatus, SlaEvaluation, Role, OrgBot } from '@/lib/schemas';
+import type { TicketDTO, TicketProject, TicketStatus, TicketPriority, TicketType, SlaStatus, SlaEvaluation, Role, OrgBot, PersonRef } from '@/lib/schemas';
 
 // ─── Option sets ──────────────────────────────────────────────────────────────
 export const TICKET_TYPES: { value: TicketType; label: string }[] = [
@@ -995,15 +995,26 @@ export function useTicketAssignees(enabled = true) {
 
 /**
  * EDIT LOCK — may this caller edit/delete the ticket?
- * True for the ticket CREATOR (any role), platform ADMINISTRATOR and ORG_ADMIN.
- * The server enforces the same rule in assertCanEditTicket; this is the UI gate
- * that decides which controls are rendered/disabled.
+ *
+ * Mirrors the server's owner-based assertCanEditTicket (UI courtesy, not a
+ * boundary):
+ *   - ORG_ADMIN may edit any ticket their scope reaches.
+ *   - A plain USER may edit only a ticket they reported.
+ *   - Platform staff (ADMINISTRATOR) may edit ONLY a ticket they own — reported by
+ *     them or assigned to them — AND at least one platform permission granting the
+ *     write (tickets.write). Anyone else (employee/HR admin seeing a colleague's
+ *     ticket, an intern with no write permission) gets no edit controls. Comments
+ *     are NOT gated here and stay open for every viewer.
  */
-export function useCanEditTicket(ticket: Pick<TicketDTO, 'reporter'> | undefined, user: { role?: Role; email?: string } | undefined | null): boolean {
+export function useCanEditTicket(ticket: Pick<TicketDTO, 'reporter' | 'assignee'> | undefined, user: { role?: Role; email?: string; permissions?: string[] } | undefined | null): boolean {
   if (!ticket || !user) return false;
-  if (user.role === 'ADMINISTRATOR' || user.role === 'ORG_ADMIN') return true;
-  const reporterEmail = ticket.reporter?.email?.toLowerCase();
-  return !!reporterEmail && !!user.email && user.email.toLowerCase() === reporterEmail;
+  if (user.role === 'ORG_ADMIN') return true;
+  const owns = (person: PersonRef | null): boolean =>
+    !!person?.email && !!user.email && person.email.toLowerCase() === user.email.toLowerCase();
+  const owned = owns(ticket.reporter) || owns(ticket.assignee);
+  if (user.role === 'ADMINISTRATOR') return owned && !!user.permissions?.includes('tickets.write');
+  // USER (customer): only the creator can edit their own ticket.
+  return owns(ticket.reporter);
 }
 
 /** Where the caret sits inside an unfinished "@fragment", or null. */

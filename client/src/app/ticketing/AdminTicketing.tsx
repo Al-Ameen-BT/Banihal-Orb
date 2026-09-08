@@ -17,6 +17,7 @@ import {
   Toolbar, Segmented, SearchInput, EmptyState, Avatar, Icons,
   priorityCls, timeAgo, STATUS_OPTIONS, PRIORITY_OPTIONS, staffLabel, apiErrorMessage,
   TicketActionsMenu, EditTicketModal, useDeleteTicket, useTicketProjects, useTicketAssignees,
+  useCanEditTicket, type TicketMenuAction,
   Modal, ESCALATE_ADMINS_ID, fmtDate, type TicketCustomer,
 } from './shared';
 import AdminTicketDetail from './AdminTicketDetail';
@@ -247,6 +248,20 @@ const orgOf = (t: TicketDTO): string =>
 function AdminTicketCard({ ticket, onOpen, onEdit, onDelete }: {
   ticket: TicketDTO; onOpen: () => void; onEdit: () => void; onDelete: () => void;
 }) {
+  // Owner-based edit lock: only the ticket's reporter or assignee (with the write
+  // permission) may edit/delete — see useCanEditTicket. Edit and Delete are left OUT
+  // of the menu for everyone else; the server enforces the same rule regardless.
+  const { user } = useAuth();
+  const canEdit = useCanEditTicket(ticket, user);
+  const actions: TicketMenuAction[] = [
+    { label: 'Open', onSelect: onOpen },
+    ...(canEdit
+      ? [
+          { label: 'Edit', onSelect: onEdit },
+          { label: 'Delete', onSelect: onDelete, danger: true },
+        ]
+      : []),
+  ];
   return (
     <div onClick={onOpen}
       className="card p-4 cursor-pointer hover:shadow-card-hover hover:border-slate-300 transition-all">
@@ -272,11 +287,7 @@ function AdminTicketCard({ ticket, onOpen, onEdit, onDelete }: {
             : <span className="text-[10px] font-semibold text-red-500">Unassigned</span>}
           <TicketActionsMenu
             label={`Actions for ${ticket.ticketNumber}`}
-            actions={[
-              { label: 'Open', onSelect: onOpen },
-              { label: 'Edit', onSelect: onEdit },
-              { label: 'Delete', onSelect: onDelete, danger: true },
-            ]}
+            actions={actions}
           />
         </div>
       </div>

@@ -80,13 +80,14 @@ router.get('/admin/escalation-alerts', adminStore, ticketingController.escalatio
 router.post('/admin/tickets/:id/claim', adminStore, requirePermission('tickets.write'), ticketingController.claimTicket);
 
 // Edit / delete — OPEN to every authenticated user, with the actual authorization
-// (creator + ADMINISTRATOR + ORG_ADMIN) enforced in assertCanEditTicket. A ticket's
-// CREATOR may edit it whatever their role — including a plain USER — so the old
-// staffWrite gate (ORG_ADMIN/ADMINISTRATOR) would lock the creator out. Platform
-// staff still need tickets.write to reach a mutation.
+// (ORG_ADMIN-any + owner-based for platform staff) enforced in assertCanEditTicket.
+// A ticket's CREATOR may edit it whatever their role — including a plain USER — so
+// the old staffWrite gate (ORG_ADMIN/ADMINISTRATOR) would lock the creator out.
+// Platform staff may edit ONLY tickets they own (reporter or assignee), and still
+// need tickets.write to reach a mutation at all (router gate below).
 router.patch('/tickets/:id', requirePermissionIfPlatform('tickets.write'), ticketingController.updateTicket);
 // Permanent, and it cascades the ticket's comments, attachments and history. Same
-// creator-or-admin authorization as PATCH, enforced in assertCanEditTicket.
+// owner-or-admin authorization as PATCH, enforced in assertCanEditTicket.
 router.delete('/tickets/:id', requirePermissionIfPlatform('tickets.write'), ticketingController.deleteTicket);
 router.post('/projects', staffWrite, ticketingController.createProject);
 router.patch('/projects/:id', staffWrite, ticketingController.updateProject);

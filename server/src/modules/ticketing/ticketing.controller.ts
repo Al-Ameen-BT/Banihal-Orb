@@ -22,19 +22,44 @@ const notFound = (what: string) => Object.assign(new Error(`${what} not found`),
 
 // EDIT LOCK — who may modify / delete a ticket.
 //
-// The owner of a ticket (its creator) may always edit it. Platform ADMINISTRATOR
-// and ORG_ADMIN may edit any ticket (permission `ticket.store.admin` / any scope).
-// Everyone else (a USER who is not the creator, an assignee who did not open it,
-// etc.) is locked out — a 403. Scope was already asserted above, so this narrows
-// the *who* on top of the tenant/org *what*.
+// The lock is OWNER-BASED now, not "anyone privileged":
+//   - ORG_ADMIN (customer side) may edit any ticket their scope reaches (unchanged).
+//   - A plain USER may edit a ticket they OPENED (the reporter/creator), and nothing
+//     else (unchanged).
+//   - Platform staff (ADMINISTRATOR) may edit ONLY a ticket they OWN — created by
+//     them (reporter) or assigned to them (assignee) — and only while they hold the
+//     `tickets.write` IAM permission. The old blanket "every ADMINISTRATOR edits
+//     every ticket" is gone: an employee who merely sees the ticket in the shared
+//     queue cannot touch it, and an intern (no tickets.write) cannot edit even their
+//     own. Commenting is deliberately NOT gated here — that route stays open to
+//     everyone the scope lets in.
 //
-// orgCode/role live on the B2B-Site caller; ownership is decided by comparing the
-// ticket's reporter (creator) against the caller's ticket-store id.
-async function assertCanEditTicket(req: Request, ticketReporterId: string | null): Promise<void> {
-  const role = req.user.role;
-  if (role === 'ADMINISTRATOR' || role === 'ORG_ADMIN') return;
+// Scope was already asserted above, so this narrows the *who* on top of the
+// tenant/org *what*. Ownership is decided by comparing the ticket's reporter /
+// assignee against the caller's bridged ticket-store user id.
+async function assertCanEditTicket(req: Request, core: { reporterId: string | null; assigneeId: string | null }): Promise<void> {
+  const { role } = req.user;
   const me = await actor(req);
-  if (ticketReporterId && me.id === ticketReporterId) return;
+
+  // ORG_ADMIN: any ticket inside their already-asserted org scope.
+  if (role === 'ORG_ADMIN') return;
+
+  // CUSTOMER (USER): only the ticket they OPENED. Being merely the assignee does
+  // NOT grant edit — the owner of a customer ticket is its creator.
+  if (role !== 'ADMINISTRATOR') {
+    if (core.reporterId === me.id) return;
+    throw Object.assign(new Error('You do not have permission to edit this ticket.'), {
+      status: 403, code: 'TICKET_EDIT_FORBIDDEN',
+    });
+  }
+
+  // Platform staff: the ticket must be THEIRS — created by them (reporter) or
+  // assigned to them (assignee) — and they need the `tickets.write` permission
+  // (the IAM gate; an intern has none). The router re-checks tickets.write before
+  // this runs; keeping it here too makes the lock self-contained. Commenting is
+  // deliberately NOT gated here.
+  const owned = core.reporterId === me.id || core.assigneeId === me.id;
+  if (owned && req.user.permissions.has('tickets.write')) return;
   throw Object.assign(new Error('You do not have permission to edit this ticket.'), {
     status: 403, code: 'TICKET_EDIT_FORBIDDEN',
   });
@@ -149,7 +174,7 @@ export async function updateTicket(req: Request, res: Response, next: NextFuncti
     const me = await actor(req);
     const core = await db.getTicketCore(req.params['id']!);
     if (!core) throw notFound('Ticket');
-    await assertCanEditTicket(req, core.reporterId);
+    await assertCanEditTicket(req, core);
     const ticket = await service.updateTicket(me.id, req.params['id']!, input);
     await auditTicket(req, 'TICKET_UPDATED', ticket, { fields: Object.keys(input) });
     res.json(ticket);
@@ -166,7 +191,7 @@ export async function deleteTicket(req: Request, res: Response, next: NextFuncti
 
     const core = await db.getTicketCore(id);
     if (!core) throw notFound('Ticket');
-    await assertCanEditTicket(req, core.reporterId);
+    await assertCanEditTicket(req, core);
 
     const { ticketNumber, title } = await service.deleteTicket(id);
     // The ticket's own Activities history cascaded away with it; this row in the

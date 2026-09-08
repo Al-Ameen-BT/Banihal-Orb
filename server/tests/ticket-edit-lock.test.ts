@@ -3,14 +3,19 @@ import { createTestOrg, createTestUser, loginAs, cleanDb, app, request, ticketTe
 import { prisma } from '../src/config/database';
 import { ticketPrisma, adminTicketPrisma } from '../src/config/ticketDatabase';
 
-// Edit lock on TICKET mutations: only the ticket CREATOR (any role), platform
-// ADMINISTRATOR and ORG_ADMIN may PATCH/DELETE. Locked out: everyone else —
-// including the assignee who did not open the ticket.
+// Edit lock on TICKET mutations — OWNER-BASED:
+//   - plain USER      → may edit only a ticket they opened (reporter)
+//   - ORG_ADMIN       → may edit any ticket inside their org scope
+//   - platform staff  → may edit ONLY a ticket they OWN (reporter OR assignee)
+//                       and only while holding the `tickets.write` permission.
+// Locked out: everyone else — including an employee/HR admin who merely sees a
+// colleague's ticket in the shared queue.
 //
-// assertCanEditTicket lives in the controller (role + reporterId); the routes are
-// open to every authenticated user so a creator plain USER is not cut off by the
-// old staffWrite gate. assertTicketAccess still 404s tickets outside the caller's
-// scope BEFORE the lock, and the lock itself returns 403 TICKET_EDIT_FORBIDDEN.
+// assertCanEditTicket lives in the controller (role + reporterId/assigneeId); the
+// routes are open to every authenticated user so a creator plain USER is not cut
+// off by the old staffWrite gate. assertTicketAccess still 404s tickets outside
+// the caller's scope BEFORE the lock, and the lock itself returns
+// 403 TICKET_EDIT_FORBIDDEN. Commenting is deliberately not part of the lock.
 const ready = ticketTestDbReady();
 
 async function createProject(cookies: string[], name = `Vitest Proj ${Math.random().toString(36).slice(2, 8)}`): Promise<string> {
@@ -59,10 +64,12 @@ describe.skipIf(!ready)('Ticket edit lock', () => {
     await createTestUser(org.id, 'boss@example.com', 'ORG_ADMIN');
     await createTestUser(org.id, 'assignee@example.com', 'USER');
 
-    // Bridge the assignee into the default store (they act once), so they appear in
-    // the org assignee pool with a real ticket-store id we can assign.
+    // Bridge the assignee into the default store (they act once) so they appear in
+    // the org assignee pool with a real ticket-store id we can assign. Creating a
+    // project is staffWrite and a plain USER gets FORBIDDEN — listing their own
+    // tickets resolves (bridges) the actor without writing anything.
     const assigneeCookies = await loginAs('assignee@example.com');
-    await createProject(assigneeCookies, `Bridge ${Math.random().toString(36).slice(2, 8)}`);
+    await request(app).get('/api/ticketing/tickets?mine=true').set('Cookie', assigneeCookies).expect(200);
 
     const bossCookies = await loginAs('boss@example.com');
     const pool = (await request(app).get('/api/ticketing/assignees').set('Cookie', bossCookies).expect(200)).body.assignees as Array<{ id: string; email: string }>;
@@ -99,6 +106,52 @@ describe.skipIf(!ready)('Ticket edit lock', () => {
     expect(allowed.status).toBe(200);
     expect(await adminTicketPrisma.tickets.findUnique({ where: { id: ticket.id }, select: { title: true } }))
       .toMatchObject({ title: 'Employee (ADMINISTRATOR) may' });
+  });
+
+  it('locks a platform staff member out of a ticket they do not own — 403 TICKET_EDIT_FORBIDDEN', async () => {
+    const org = await createTestOrg('Non-Owner Lock Org');
+    await createTestUser(org.id, 'owner@example.com', 'ADMINISTRATOR', 'employee');
+    // HR Admin holds tickets.write AND ticket.store.admin, so they reach the lock.
+    await createTestUser(org.id, 'hr@example.com', 'ADMINISTRATOR', 'hr_admin');
+
+    const ownerCookies = await loginAs('owner@example.com');
+    const ticket = await createTicket(ownerCookies, 'Owned by the employee');
+
+    const hrCookies = await loginAs('hr@example.com');
+    const denied = await request(app).patch(`/api/ticketing/tickets/${ticket.id}`).set('Cookie', hrCookies)
+      .send({ title: 'HR recasts it' });
+    expect(denied.status).toBe(403);
+    expect(denied.body.code).toBe('TICKET_EDIT_FORBIDDEN');
+
+    const deniedDelete = await request(app).delete(`/api/ticketing/tickets/${ticket.id}`).set('Cookie', hrCookies);
+    expect(deniedDelete.status).toBe(403);
+
+    expect(await adminTicketPrisma.tickets.findUnique({ where: { id: ticket.id }, select: { title: true } }))
+      .toMatchObject({ title: 'Owned by the employee' });
+  });
+
+  it('lets the ASSIGNEE (owner) edit a ticket they did not create', async () => {
+    const org = await createTestOrg('Assignee Owner Org');
+    await createTestUser(org.id, 'creator-a@example.com', 'ADMINISTRATOR', 'employee');
+    await createTestUser(org.id, 'assignee-b@example.com', 'ADMINISTRATOR', 'employee');
+
+    const bCookies = await loginAs('assignee-b@example.com');
+    // Bridge B into the admin store so they are a real assignee id A can point at.
+    await createProject(bCookies, `Bridge ${Math.random().toString(36).slice(2, 8)}`);
+
+    const aCookies = await loginAs('creator-a@example.com');
+    const pool = (await request(app).get('/api/ticketing/assignees').set('Cookie', aCookies).expect(200)).body.assignees as Array<{ id: string; email: string }>;
+    const bId = pool.find((p) => p.email === 'assignee-b@example.com');
+    expect(bId, 'B must be in the admin assignee pool').toBeDefined();
+
+    const ticket = await createTicket(aCookies, 'Assigned to B', bId!.id);
+
+    // B owns the ticket via assigneeId — editing must succeed despite never creating it.
+    const allowed = await request(app).patch(`/api/ticketing/tickets/${ticket.id}`).set('Cookie', bCookies)
+      .send({ title: 'B owns this one' });
+    expect(allowed.status).toBe(200);
+    expect(await adminTicketPrisma.tickets.findUnique({ where: { id: ticket.id }, select: { title: true } }))
+      .toMatchObject({ title: 'B owns this one' });
   });
 
   it('404s (not 403) the PATCH when the ticket is outside the caller’s scope', async () => {
