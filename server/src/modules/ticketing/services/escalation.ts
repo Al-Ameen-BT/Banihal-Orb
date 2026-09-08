@@ -3,7 +3,7 @@ import * as db from '../ticketing.client';
 import { runWithTicketDb, getTicketDb } from '../../../config/ticketDatabase';
 import { resolveTicketActor, resolveB2bIdentity } from '../identity';
 import { nextTicketNumber } from '../utils/ticketNumber';
-import { getTicketNumberFormat } from './numberFormat';
+import { getTicketNumberFormat, resolveOrgCode } from './numberFormat';
 import { prisma } from '../../../config/database';
 import { notify } from '../../notifications/notifications.service';
 
@@ -40,7 +40,7 @@ export async function escalateTicket(
   const requester = source.reporter; // original requester: { id, name, email }
   const b2bOrg = await prisma.user.findUnique({
     where: { id: b2bUserId },
-    select: { customer: { select: { name: true, mailId: true, contactPerson: true, orgCode: true } } },
+    select: { customerId: true, customer: { select: { name: true, mailId: true, contactPerson: true, orgCode: true } } },
   }).catch(() => null);
   const orgName = source.customer?.name ?? b2bOrg?.customer?.name ?? source.projectName ?? 'Unknown organization';
   const orgEmail = source.customer?.email ?? b2bOrg?.customer?.mailId ?? requester?.email ?? null;
@@ -49,7 +49,12 @@ export async function escalateTicket(
   // the first escalation's requester forever.) The per-ticket requester is carried in the
   // description below, which is accurate for every escalation.
   const orgContact = source.customer?.contactPerson ?? b2bOrg?.customer?.contactPerson ?? null;
-  const orgCode = b2bOrg?.customer?.orgCode ?? null;
+  // The escalated copy must keep the SOURCE ticket's org-coded numbering (TKT-<CODE>-NNN).
+  // resolveOrgCode is the SAME resolution ticket creation uses: it falls back to deriving
+  // the code from the org name when no orgCode row exists. Without that fallback an escalated
+  // copy silently dropped the org segment and joined the admin store's GLOBAL TKT-NNN sequence
+  // wherever the customer had no stored code — the source said TKT-<CODE>-001, the copy TKT-456.
+  const orgCode = await resolveOrgCode(b2bOrg?.customerId ?? null);
   const requestedByLine = `Requested by ${requester?.name ?? 'Unknown user'}${requester?.email ? ` <${requester.email}>` : ''}.`;
 
   // Copy into the ADMIN store (14-table). Reporter + project + customer are resolved in

@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense, useMemo, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { ticketingApi } from '@/lib/api';
@@ -40,6 +40,22 @@ function UserTicketing() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
   const [search, setSearch] = useState('');
 
+  const router = useRouter();
+  // Closing the drawer must also clear the ?ticket= deep link, otherwise the URL
+  // keeps seeding the drawer open on every remount — the ticketing tree is keyed
+  // on the query string, so a refresh, back/forward, or repeat navigation would
+  // just re-open the ticket the user just closed. Tickets opened by clicking a
+  // card never touch the URL, so their close stays purely local.
+  const closeDetail = () => {
+    setDetailId(null);
+    const params = new URLSearchParams(searchParams.toString());
+    if (params.has('ticket')) {
+      params.delete('ticket');
+      const qs = params.toString();
+      router.replace(qs ? `/ticketing?${qs}` : '/ticketing', { scroll: false });
+    }
+  };
+
   const tickets = useMemo(() => mineData?.tickets ?? [], [mineData]);
   const counts = useMemo(() => ({
     open: tickets.filter((t) => t.status !== 'completed').length,
@@ -61,7 +77,7 @@ function UserTicketing() {
 
   return (
     <div className="p-6 sm:p-8 max-w-[1200px] mx-auto space-y-6">
-      {detailId && <TicketDetail ticketId={detailId} onClose={() => setDetailId(null)} />}
+      {detailId && <TicketDetail ticketId={detailId} onClose={closeDetail} />}
 
       <Modal open={showForm} onClose={() => setShowForm(false)} title="Raise a ticket" width="max-w-2xl">
         <NewTicketForm projects={projects} role="USER"

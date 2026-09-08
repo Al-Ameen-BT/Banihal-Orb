@@ -20,7 +20,8 @@
     "test": "vitest run --reporter=verbose",
     "test:watch": "vitest",
     "chat:doctor": "NODE_EXTRA_CA_CERTS=certs/agent.pem tsx scripts/chat-doctor.ts",
-    "backfill:tickets": "tsx scripts/backfill-ticket-org-codes.ts"
+    "backfill:tickets": "tsx scripts/backfill-ticket-org-codes.ts",
+    "validate:escalations": "tsx scripts/validate-escalation-numbering.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.10.2",

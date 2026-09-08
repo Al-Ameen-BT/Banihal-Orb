@@ -57,6 +57,26 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['ticketing'] });
 
+  // Claim-on-open (org-admin auto-assign) and the escalated /claim both happen
+  // SERVER-SIDE during this detail fetch, so the list caches behind the modal still
+  // hold the pre-claim ticket (unassigned). Patch every ['ticketing','tickets',…]
+  // cache in place with the fresh ticket so the cards show the new assignee the
+  // moment the modal opens — no manual refresh.
+  useEffect(() => {
+    if (!ticket) return;
+    qc.setQueriesData<{ tickets: TicketDTO[] } | undefined>(
+      { predicate: (q) => q.queryKey[0] === 'ticketing' && q.queryKey[1] === 'tickets' },
+      (old) => {
+        if (!old || !Array.isArray(old.tickets)) return old;
+        const idx = old.tickets.findIndex((t) => t.id === ticket.id);
+        if (idx === -1) return old;
+        const tickets = [...old.tickets];
+        tickets[idx] = ticket;
+        return { ...old, tickets };
+      },
+    );
+  }, [ticket, qc]);
+
   // An escalated ticket arrives unassigned so any administrator can pick it up. The
   // one who opens it takes ownership: /admin/tickets/:id/claim is a first-wins guarded
   // UPDATE, so two admins opening it at once cannot double-assign — the loser's 409 is

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, Area, BarChart, Bar, LabelList, XAxis, YAxis } from 'recharts';
@@ -328,6 +328,25 @@ function TicketsTab({ projectFilter, onClearProject, initialTicketId }: { projec
   const [view, setView] = useState<'list' | 'grid'>('list');
   const [detailId, setDetailId] = useState<string | null>(initialTicketId ?? null);
 
+  const router = useRouter();
+  // Closing the detail (deep-link _or_ card-click) must ALSO clear the ?ticket=
+  // URL param. The ticketing tree is keyed on the query string, so as long as the
+  // param survives, any remount — refresh, back/forward, a repeat deep link —
+  // re-seeds detailId from the URL and re-opens the ticket the user just closed
+  // ("closing doesn't stick, no refresh fixes it"). Keep the tickets tab so the
+  // remount doesn't dump the user back on Overview. Card-click opens never set the
+  // URL, so for them this is a no-op and the close stays purely local.
+  const closeTicketDetail = () => {
+    setDetailId(null);
+    const params = new URLSearchParams(searchParams.toString());
+    if (params.has('ticket')) {
+      params.delete('ticket');
+      if (!params.has('tab')) params.set('tab', 'tickets');
+      const qs = params.toString();
+      router.replace(qs ? `/ticketing?${qs}` : '/ticketing', { scroll: false });
+    }
+  };
+
   const { data: staff = [] } = useTicketAssignees();
   const { data: projects = [] } = useTicketProjects();
 
@@ -356,7 +375,7 @@ function TicketsTab({ projectFilter, onClearProject, initialTicketId }: { projec
 
   return (
     <>
-      {detailId && <AdminTicketDetail ticketId={detailId} onClose={() => setDetailId(null)} />}
+      {detailId && <AdminTicketDetail ticketId={detailId} onClose={closeTicketDetail} />}
       {editing && <EditTicketModal ticket={editing} open onClose={() => setEditing(null)} />}
       <div className="space-y-4">
         <div className="flex items-center justify-between gap-3 flex-wrap">
