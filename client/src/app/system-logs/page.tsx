@@ -202,8 +202,8 @@ export default function SystemLogsPage() {
 
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.25 }}>
               <p className="text-sm text-slate-500 mb-1">Platform</p>
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900">System Logs</h1>
-              <p className="mt-1 text-sm text-slate-500">Search the platform audit trail and export filtered results.</p>
+              <h1 className="text-2xl font-bold tracking-tight text-slate-900">Activity Logging</h1>
+              <p className="mt-1 text-sm text-slate-500">Monitor and export platform activity.</p>
             </motion.div>
 
             {canViewLog ? (
