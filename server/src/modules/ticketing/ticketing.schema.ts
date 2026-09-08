@@ -152,6 +152,20 @@ export const UpdateEscalationSchema = z.object({
   assignee: z.string().max(120).nullable().optional(),
 }).refine((d) => Object.keys(d).length > 0, { message: 'At least one field required' });
 
+/**
+ * Comma-separated-list filter (the merged client ids). Same cleared/filter contract
+ * as blank(): an empty or absent `?customerId=` is "no filter", so it maps to `[]`.
+ * Every comma item is validated as a UUID at the end of the pipe, so a malformed
+ * value still 400s rather than silently widening the report.
+ */
+const csvIds = <T extends z.ZodType<string[]>>(schema: T) =>
+  z.preprocess(
+    (v) => (typeof v === 'string' && v.trim() === '' ? '' : v ?? ''),
+    z.string()
+      .transform((s) => (s === '' ? [] : s.split(',').map((p) => p.trim()).filter(Boolean)))
+      .pipe(schema),
+  );
+
 // Ticket report. The four types are groupings, not different queries — `client` and
 // `assignee` group the same rows differently, `overall` doesn't group, and `sla_breach`
 // filters to breached-and-open before grouping by client.
@@ -161,7 +175,7 @@ export const UpdateEscalationSchema = z.object({
 // 400 the whole report over a filter the user deliberately cleared.
 export const ReportSchema = z.object({
   type: z.enum(['client', 'assignee', 'overall', 'sla_breach']).default('overall'),
-  customerId: blank(z.string().uuid()),
+  customerId: csvIds(z.array(z.string().uuid()).max(200)),
   assigneeId: blank(z.string().uuid()),
   from: blank(z.coerce.date()),
   to: blank(z.coerce.date()),

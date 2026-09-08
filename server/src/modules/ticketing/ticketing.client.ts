@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import type { enum_Activities_type } from '@prisma/ticket-client';
+import { prisma } from '../../config/database';
 import { ticketPrisma, getTicketDb } from '../../config/ticketDatabase';
 import { UPLOAD_DIR } from './uploads';
 import { evaluateSla, evaluateResponseSla, convertToSeconds, type TimeUnit } from './services/slaService';
@@ -490,13 +491,96 @@ export async function listStaff(opts?: { includeAdmins?: boolean }): Promise<Arr
 
 // ─── Customers (client pool) ───────────────────────────────────────────────────
 // The current store's client list, offered as the New Ticket form's client picker
-// (ADMINISTRATOR only — see the route guard). Read-only: creating clients is not
-// exposed here, so the externally-owned Customers rows are never added to by accident.
-export async function listCustomers(): Promise<Array<{ id: string; name: string; email: string | null; contactPerson: string | null; company: string | null }>> {
-  return getTicketDb().customers.findMany({
-    select: { id: true, name: true, email: true, contactPerson: true, company: true },
-    orderBy: { name: 'asc' },
-  });
+// and the Reports tab's filter (ADMINISTRATOR only — see the route guard). Read-only
+// in spirit: creating clients is not exposed here, so the externally-owned Customers
+// rows are never added to by accident.
+//
+// Verification against the Application (b2b_saas) directory: the main database's
+// Customer is the source of truth for a client's name/contact. The admin ticketing
+// DB's Customers rows were created from escalations / ticket creation and can go
+// stale or DUPLICATE — the same mailbox entered under two names produces two rows,
+// and the old dropdown showed both. This collapses rows sharing a normalized email
+// into one option (the Application's details win) and best-effort reconciles the
+// ticket-store rows they stood for.
+export interface CustomerOption {
+  id: string;               // primary Customers.id (new-ticket linking, default filter)
+  ids: string[];            // every Customers.id sharing this email (expanded in reports)
+  name: string;
+  email: string | null;
+  contactPerson: string | null;
+  company: string | null;
+  b2bCustomerId: string | null; // matching Application customer, when one was found
+  verified: boolean;             // whether the option resolved to an Application customer
+}
+
+type StoreCustomerRow = { id: string; name: string; email: string | null; contactPerson: string | null; company: string | null };
+
+export async function listCustomers(): Promise<CustomerOption[]> {
+  const db = getTicketDb();
+  const [store, app] = await Promise.all([
+    db.customers.findMany({ select: { id: true, name: true, email: true, contactPerson: true, company: true } }),
+    prisma.customer.findMany({ select: { id: true, name: true, mailId: true, contactPerson: true } }),
+  ]);
+
+  const emailKey = (e: string | null | undefined) => (e ? e.trim().toLowerCase() : '');
+  const byId: Map<string, StoreCustomerRow> = new Map(store.map((c) => [c.id, c]));
+
+  // Application directory keyed by mailId. Customer is a global model (no tenant
+  // injection), so all organizations are read — this pool is Administrator-only.
+  const appByEmail = new Map<string, { id: string; name: string; mailId: string; contactPerson: string }>();
+  for (const a of app) {
+    const k = emailKey(a.mailId);
+    if (k && !appByEmail.has(k)) appByEmail.set(k, a);
+  }
+
+  const merged = new Map<string, CustomerOption>();
+  const standalone: CustomerOption[] = [];
+
+  for (const c of store) {
+    const key = emailKey(c.email);
+    if (!key) {
+      standalone.push({ id: c.id, ids: [c.id], name: c.name, email: null, contactPerson: c.contactPerson, company: c.company, b2bCustomerId: null, verified: false });
+      continue;
+    }
+    const appCustomer = appByEmail.get(key);
+    const existing = merged.get(key);
+    if (existing) {
+      existing.ids.push(c.id);
+      continue;
+    }
+    merged.set(key, {
+      id: c.id,
+      ids: [c.id],
+      // The Application is the authority on what the client is called and how to
+      // reach them; a ticket-store-only row keeps its own data, unverified.
+      name: appCustomer?.name ?? c.name,
+      email: appCustomer?.mailId ?? c.email,
+      contactPerson: appCustomer?.contactPerson || c.contactPerson,
+      company: c.company,
+      b2bCustomerId: appCustomer?.id ?? null,
+      verified: Boolean(appCustomer),
+    });
+  }
+
+  // Verification pass: reconcile every merged row against the Application details so
+  // a stale or twice-entered client converges on the official name/contact. Best
+  // effort — one bad write must never take the list down.
+  for (const opt of merged.values()) {
+    if (!opt.verified) continue;
+    for (const id of opt.ids) {
+      const row = byId.get(id);
+      if (!row) continue;
+      const patch: { name?: string; email?: string; contactPerson?: string } = {};
+      if (row.name !== opt.name) patch.name = opt.name;
+      if (opt.email && row.email !== opt.email) patch.email = opt.email;
+      if (opt.contactPerson && row.contactPerson !== opt.contactPerson) patch.contactPerson = opt.contactPerson;
+      if (Object.keys(patch).length > 0) {
+        await db.customers.update({ where: { id }, data: patch }).catch(() => {});
+      }
+    }
+  }
+
+  return [...merged.values(), ...standalone].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 // Set the contact person on an existing client. Deliberately narrow (we already hold
@@ -573,10 +657,20 @@ export async function removeWatcher(ticketId: string, userId: string): Promise<v
 
 // ─── Activity history ─────────────────────────────────────────────────────────
 export async function listActivities(ticketId: string): Promise<ActivityDTO[]> {
-  const rows = await getTicketDb().activities.findMany({ where: { ticketId }, include: { Users: userSel }, orderBy: { createdAt: 'desc' } });
+  const db = getTicketDb();
+  const rows = await db.activities.findMany({
+    where: { ticketId },
+    // Users is required, but the admin store (legacy import) can hold an activity row
+    // whose user no longer exists — a required-relation `include` would throw and 500
+    // the drawer. Batch-load and tolerate gaps, like the cross-ticket feed.
+    select: { id: true, type: true, field: true, oldValue: true, newValue: true, description: true, userId: true, createdAt: true },
+    orderBy: { createdAt: 'desc' },
+  });
+  const users = await db.users.findMany({ where: { id: { in: [...new Set(rows.map((a) => a.userId))] } }, ...userSel });
+  const userById = new Map(users.map((u) => [u.id, u]));
   return rows.map((a) => ({
     id: a.id, type: a.type as string, field: a.field, oldValue: a.oldValue, newValue: a.newValue,
-    description: a.description, user: person(a.Users), createdAt: a.createdAt.toISOString(),
+    description: a.description, user: person(userById.get(a.userId) ?? null), createdAt: a.createdAt.toISOString(),
   }));
 }
 
@@ -611,6 +705,7 @@ export interface ActivityFeedRow extends ActivityDTO {
 }
 
 export async function listActivityFeed(f: ActivityFeedFilters): Promise<{ items: ActivityFeedRow[]; nextCursor: string | null }> {
+  const db = getTicketDb();
   const ticketWhere = {
     ...(f.scope ? { OR: [{ reporterId: { in: f.scope } }, { assigneeId: { in: f.scope } }] } : {}),
     ...(f.search ? {
@@ -621,7 +716,7 @@ export async function listActivityFeed(f: ActivityFeedFilters): Promise<{ items:
     } : {}),
   };
 
-  const rows = await getTicketDb().activities.findMany({
+  const rows = await db.activities.findMany({
     where: {
       ...(f.type ? { type: f.type } : {}),
       ...(f.ticketId ? { ticketId: f.ticketId } : {}),
@@ -630,7 +725,15 @@ export async function listActivityFeed(f: ActivityFeedFilters): Promise<{ items:
       // actually constrains something — otherwise every row pays for a join.
       ...(Object.keys(ticketWhere).length ? { Tickets: ticketWhere } : {}),
     },
-    include: { Users: userSel, Tickets: { select: { id: true, ticketNumber: true, title: true } } },
+    // The required Users/Tickets relations are deliberately NOT `include`d: the
+    // admin store (a legacy import) can hold activity rows whose user or ticket no
+    // longer exists, and a required-relation `include` then makes Prisma throw
+    // "Inconsistent query result … got null" — the Activity Log's 500 at UAT. Both
+    // are batch-loaded on the page below and gaps tolerated, like resolveTicketRefs.
+    select: {
+      id: true, type: true, field: true, oldValue: true, newValue: true, description: true,
+      userId: true, ticketId: true, createdAt: true,
+    },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     // One extra row is how we know whether a next page exists without a second
     // count(*) over a table this size.
@@ -639,12 +742,25 @@ export async function listActivityFeed(f: ActivityFeedFilters): Promise<{ items:
   });
 
   const page = rows.slice(0, f.limit);
+  const [tickets, users] = await Promise.all([
+    db.tickets.findMany({
+      where: { id: { in: [...new Set(page.map((a) => a.ticketId))] } },
+      select: { id: true, ticketNumber: true, title: true },
+    }),
+    db.users.findMany({ where: { id: { in: [...new Set(page.map((a) => a.userId))] } }, ...userSel }),
+  ]);
+  const ticketById = new Map(tickets.map((t) => [t.id, t]));
+  const userById = new Map(users.map((u) => [u.id, u]));
+
   return {
-    items: page.map((a) => ({
-      id: a.id, type: a.type as string, field: a.field, oldValue: a.oldValue, newValue: a.newValue,
-      description: a.description, user: person(a.Users), createdAt: a.createdAt.toISOString(),
-      ticket: a.Tickets ? { id: a.Tickets.id, ticketNumber: a.Tickets.ticketNumber, title: a.Tickets.title } : null,
-    })),
+    items: page.map((a) => {
+      const ticket = ticketById.get(a.ticketId);
+      return {
+        id: a.id, type: a.type as string, field: a.field, oldValue: a.oldValue, newValue: a.newValue,
+        description: a.description, user: person(userById.get(a.userId) ?? null), createdAt: a.createdAt.toISOString(),
+        ticket: ticket ? { id: ticket.id, ticketNumber: ticket.ticketNumber, title: ticket.title } : null,
+      };
+    }),
     nextCursor: rows.length > f.limit ? (page[page.length - 1]?.id ?? null) : null,
   };
 }
@@ -716,7 +832,10 @@ export interface ReportTicketRow {
 
 export interface ReportFilters {
   from?: Date; to?: Date;
-  customerId?: string;
+  // The client picker is deduplicated by email (see listCustomers), so one option
+  // stands for several merged Customers rows — the filter must match ALL of them,
+  // or a report on a deduped client silently drops the merged names' tickets.
+  customerIds?: string[];
   assigneeId?: string;
 }
 
@@ -732,7 +851,7 @@ export async function listReportTickets(
   const rows = await db.tickets.findMany({
     where: {
       ...scopedWhere(scope),
-      ...(f.customerId ? { customerId: f.customerId } : {}),
+      ...(f.customerIds?.length ? { customerId: { in: f.customerIds } } : {}),
       ...(f.assigneeId ? { assigneeId: f.assigneeId } : {}),
       // Range pushed into SQL, not filtered in JS after loading the table.
       ...(f.from || f.to ? { createdAt: { ...(f.from ? { gte: f.from } : {}), ...(f.to ? { lte: f.to } : {}) } } : {}),

@@ -942,9 +942,13 @@ function ReportsTab() {
   async function generate() {
     setGenerating(true);
     try {
+      // The client pool is deduplicated by email, so one option stands for several
+      // merged Customers rows — send ALL of them, or a report on a merged client
+      // would silently drop the other names' tickets.
+      const selectedClient = customerId ? (customers ?? []).find((c) => c.id === customerId) : null;
       const { data } = await ticketingApi.getReport({
         type,
-        ...(isPlatformAdmin && customerId ? { customerId } : {}),
+        ...(isPlatformAdmin && selectedClient ? { customerId: selectedClient.ids.join(',') } : {}),
         // Only when its picker is actually on screen. The state survives a change of
         // report type, so sending it unconditionally would silently narrow a
         // Client-wise report to one person the user picked on a different tab and can

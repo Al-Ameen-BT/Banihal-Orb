@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { createTestOrg, createTestUser, loginAs, cleanDb, app, request, ticketTestDbReady, ticketDbSkipReason } from './helpers';
 import { prisma } from '../src/config/database';
+import { adminTicketPrisma } from '../src/config/ticketDatabase';
 
 // GET /ticketing/activity — the Activity Log tab's feed.
 //
@@ -120,5 +121,42 @@ describe.skipIf(!ready)('GET /ticketing/activity', () => {
 
     const res = await feed(cookies);
     expect(res.status).toBe(403);
+  });
+
+  it('does not 500 on an orphaned activity row (the admin store is a legacy import)', async () => {
+    const org = await createTestOrg('Activity Orphan Org');
+    await createTestUser(org.id, 'activity-orphan@example.com', 'ADMINISTRATOR');
+    const cookies = await loginAs('activity-orphan@example.com');
+
+    // The legacy admin store can hold activity rows whose ticket or user no longer
+    // exist. A required-relation `include` made every one of those rows throw
+    // "Inconsistent query result … got null" — the Activity Log's 500 at UAT. Plant
+    // an orphan here; when the admin DB enforces its FKs the INSERT is rejected and
+    // the test still checks the feed answers 200 (the regression would have 500'd).
+    const orphanId = 'b2e7aa6e-0000-4000-8000-000000000000';
+    const ghostTicket = '9d4d72e0-0000-4000-8000-000000000000';
+    const ghostUser = '63b6c1fd-0000-4000-8000-000000000000';
+    let planted = false;
+    try {
+      await adminTicketPrisma.$executeRaw`
+        INSERT INTO "Activities" ("id", "type", "ticketId", "userId", "createdAt", "updatedAt")
+        VALUES (${orphanId}, 'updated', ${ghostTicket}, ${ghostUser}, now(), now())`;
+      planted = true;
+    } catch { /* FK-enforced store: orphans cannot exist, nothing to reproduce */ }
+
+    try {
+      const res = await feed(cookies, { limit: 200 });
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      if (planted) {
+        const rows = res.body.activity as FeedRow[];
+        const orphan = rows.find((r) => r.id === orphanId);
+        expect(orphan, 'orphaned row must still appear, its ticket tolerated as null').toBeDefined();
+        expect(orphan?.ticket).toBeNull();
+      }
+    } finally {
+      if (planted) {
+        await adminTicketPrisma.$executeRaw`DELETE FROM "Activities" WHERE "id" = ${orphanId}`.catch(() => {});
+      }
+    }
   });
 });

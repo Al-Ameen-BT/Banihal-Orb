@@ -352,11 +352,12 @@ export async function getReport(req: Request, res: Response, next: NextFunction)
     const input = ReportSchema.parse(req.query);
     const scope = await service.ticketAccessScope(req.user);
     // Every filter is part of the identity of the result, so every filter is part of
-    // the key — a missing one serves another client's report from a warm entry.
+    // the key — a missing one serves another client's report from a warm entry. The
+    // merged-id list is sorted so the same client always composes the same key.
     res.json(await cached(
       cacheKey(
         'report', cacheTenant(req, scope), input.type,
-        input.customerId ?? '', input.assigneeId ?? '',
+        input.customerId.slice().sort().join(',') || '', input.assigneeId ?? '',
         input.from?.toISOString() ?? '', input.to?.toISOString() ?? '',
       ),
       TTL.dashboard,

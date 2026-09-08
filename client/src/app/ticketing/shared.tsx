@@ -477,7 +477,19 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Exported: the Reports tab's client picker reads the same admin-store pool as the
 // New Ticket form's.
-export type TicketCustomer = { id: string; name: string; email: string | null; contactPerson: string | null; company: string | null };
+// Mirrors the server's CustomerOption (ticketing.client.ts). `ids` holds every
+// Customers row that shares this client's email — the server collapses duplicates
+// (same mailbox, two names) into a single option, and `id` is the primary row.
+export type TicketCustomer = {
+  id: string;
+  ids: string[];
+  name: string;
+  email: string | null;
+  contactPerson: string | null;
+  company: string | null;
+  b2bCustomerId: string | null;
+  verified: boolean;
+};
 
 // Synthetic assignee (org-admin only) that auto-escalates the new ticket to the
 // platform administrators. Must match ESCALATE_ADMINS_ID in the server's

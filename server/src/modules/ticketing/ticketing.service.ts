@@ -525,11 +525,11 @@ export interface TicketReportResult {
 }
 
 export async function getReport(
-  input: { type: ReportType; customerId?: string; assigneeId?: string; from?: Date; to?: Date },
+  input: { type: ReportType; customerId: string[]; assigneeId?: string; from?: Date; to?: Date },
   scope: string[] | null,
 ): Promise<TicketReportResult> {
   const { rows, truncated } = await db.listReportTickets({
-    ...(input.customerId ? { customerId: input.customerId } : {}),
+    ...(input.customerId.length ? { customerIds: input.customerId } : {}),
     ...(input.assigneeId ? { assigneeId: input.assigneeId } : {}),
     ...(input.from ? { from: input.from } : {}),
     ...(input.to ? { to: input.to } : {}),
@@ -570,7 +570,7 @@ export async function getReport(
     type: input.type,
     from: input.from?.toISOString() ?? null,
     to: input.to?.toISOString() ?? null,
-    customerId: input.customerId ?? null,
+    customerId: input.customerId[0] ?? null,
     assigneeId: input.assigneeId ?? null,
     groups: [...byKey.values()].sort((a, b) => b.tickets.length - a.tickets.length),
     totals: {
