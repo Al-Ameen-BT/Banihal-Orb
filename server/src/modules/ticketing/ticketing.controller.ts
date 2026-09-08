@@ -294,46 +294,73 @@ export async function listMentionCandidates(_req: Request, res: Response, next: 
 //
 // `cacheKey` folds in the active ticket-DB scope, which is what keeps the shared
 // and admin stores from ever serving each other's rows.
+//
+// THE STORE IS NOT THE WHOLE TENANT BOUNDARY. b2b_ticket is shared by every client
+// organization, so all four also need the caller's ticketAccessScope on the QUERY and
+// their organization in the cache KEY. Both halves are load-bearing: scoping only the
+// query still lets two org admins in different organizations share one Redis entry,
+// and keying only the cache still reads every org's rows on a miss. Until this was
+// added, an ORG_ADMIN's stats, analytics, dashboard and report all counted every other
+// organization's tickets.
 
-export async function getStats(_req: Request, res: Response, next: NextFunction): Promise<void> {
+/**
+ * The cache-key discriminator for the caller's tenant.
+ *
+ * Derived from the SCOPE, not from req.user directly: a null scope means "the whole
+ * store" (an administrator in the isolated admin store), and every such caller must
+ * share one entry — keying those by customerId would give each administrator their own
+ * copy of an identical payload.
+ */
+const cacheTenant = (req: Request, scope: string[] | null): string =>
+  scope === null ? 'all' : req.user.customerId;
+
+export async function getStats(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    res.json(await cached(cacheKey('stats'), TTL.dashboard, () => service.getStats()));
+    const scope = await service.ticketAccessScope(req.user);
+    res.json(await cached(cacheKey('stats', cacheTenant(req, scope)), TTL.dashboard, () => service.getStats(scope)));
   } catch (err) { next(err); }
 }
 
-// Every panel of the ops dashboard in one payload. The flat estate comes from the
-// same store the rest of this router is scoped to, and the arithmetic runs in
-// dashboardAggregate — so an ORG_ADMIN can only ever aggregate their own store.
+// Every panel of the ops dashboard in one payload, scoped to the caller's store AND
+// their organization within it; the arithmetic runs in dashboardAggregate.
 export async function dashboardOverview(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     // The per-user grid is a second pass over every ticket and only the ORG_ADMIN
     // view renders it, so a platform admin does not pay for a panel they never see.
     // It also changes the payload, so it has to be part of the cache key.
     const withUsers = req.query['users'] === 'true';
+    const scope = await service.ticketAccessScope(req.user);
     res.json(await cached(
-      cacheKey('dashboard', withUsers),
+      cacheKey('dashboard', cacheTenant(req, scope), withUsers),
       TTL.dashboard,
       // `new Date()` moves inside the miss path: cached under the timestamp the
       // aggregate was computed with, which is what the TTL already bounds.
-      async () => aggregate(await db.dashboardFeed(), new Date(), withUsers),
+      async () => aggregate(await db.dashboardFeed(scope), new Date(), withUsers),
     ));
   } catch (err) { next(err); }
 }
 
-export async function getAnalytics(_req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function getAnalytics(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    res.json(await cached(cacheKey('analytics'), TTL.dashboard, () => service.getAnalytics()));
+    const scope = await service.ticketAccessScope(req.user);
+    res.json(await cached(cacheKey('analytics', cacheTenant(req, scope)), TTL.dashboard, () => service.getAnalytics(scope)));
   } catch (err) { next(err); }
 }
 
 export async function getReport(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const input = ReportSchema.parse(req.query);
-    // The date range is part of the identity of the result, so it is part of the key.
+    const scope = await service.ticketAccessScope(req.user);
+    // Every filter is part of the identity of the result, so every filter is part of
+    // the key — a missing one serves another client's report from a warm entry.
     res.json(await cached(
-      cacheKey('report', input.type, input.from ?? '', input.to ?? ''),
+      cacheKey(
+        'report', cacheTenant(req, scope), input.type,
+        input.customerId ?? '', input.assigneeId ?? '',
+        input.from?.toISOString() ?? '', input.to?.toISOString() ?? '',
+      ),
       TTL.dashboard,
-      () => service.getReport(input.type, input.from, input.to),
+      () => service.getReport(input, scope),
     ));
   } catch (err) { next(err); }
 }
@@ -343,7 +370,8 @@ export async function getAlerts(req: Request, res: Response, next: NextFunction)
     const since = String(req.query['since'] ?? '');
     if (!since) { res.status(400).json({ error: 'since is required', code: 'BAD_REQUEST' }); return; }
     const me = await actor(req);
-    const tickets = await service.getNewTickets(since, me.id);
+    const scope = await service.ticketAccessScope(req.user);
+    const tickets = await service.getNewTickets(since, me.id, scope);
     res.json({ tickets, now: new Date().toISOString() });
   } catch (err) { next(err); }
 }

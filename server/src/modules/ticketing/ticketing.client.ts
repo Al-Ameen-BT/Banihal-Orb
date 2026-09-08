@@ -87,6 +87,20 @@ function toTicketDTO(row: TicketRow, project: { id: string; name: string } | nul
   };
 }
 
+/**
+ * The tenant filter, as one predicate.
+ *
+ * `scope` is what ticketAccessScope() returns: the ticket-store user ids whose tickets
+ * the caller may see, or NULL for "the whole store" (an administrator inside the
+ * isolated admin store, which is already a tenant boundary of its own).
+ *
+ * The shared client store b2b_ticket holds EVERY organization's tickets, so an
+ * aggregate that omits this reads across all of them. Spread it into a `where`; do not
+ * hand-roll the OR again at a new call site.
+ */
+export const scopedWhere = (scope: string[] | null) =>
+  scope ? { OR: [{ reporterId: { in: scope } }, { assigneeId: { in: scope } }] } : {};
+
 // ─── Tickets ─────────────────────────────────────────────────────────────────
 export async function listTickets(filters: TicketFilters = {}): Promise<TicketDTO[]> {
   // Each reporter/assignee OR-group goes in a separate AND clause — combining them
@@ -658,8 +672,12 @@ export async function getMyTicketUpdates(actorId: string, since: string): Promis
 }
 
 // ─── Stats source ────────────────────────────────────────────────────────────
-export async function allTicketsForStats() {
+// `scope` is NOT optional with a default: this used to read the whole table with no
+// filter, so every caller was silently aggregating every organization in the shared
+// store. Making it a required argument is what forces each call site to have decided.
+export async function allTicketsForStats(scope: string[] | null) {
   const rows = await getTicketDb().tickets.findMany({
+    where: scopedWhere(scope),
     select: {
       status: true, priority: true, type: true, projectId: true, createdAt: true,
       Users_Tickets_assigneeIdToUsers: { select: { firstName: true, lastName: true } },
@@ -672,6 +690,98 @@ export async function allTicketsForStats() {
   });
   const byId = new Map(projects.map((p) => [p.id, p]));
   return rows.map((r) => ({ ...r, Projects: byId.get(r.projectId) ?? null }));
+}
+
+// ─── Report source ───────────────────────────────────────────────────────────
+// Per-ticket rows for the Reports tab. Distinct from allTicketsForStats (which has
+// neither customer nor SLA fields) and from dashboardFeed (which has no filters and
+// no cap) — the report has to filter by date range and client, and a wide range over
+// a big store must not load the whole table.
+//
+// Everything the exported spreadsheet can show is selected here, because the FIELD
+// PICKER IS CLIENT-SIDE: the server returns the full row and the browser chooses
+// columns, so re-picking fields costs no refetch.
+export interface ReportTicketRow {
+  id: string; ticketNumber: string; title: string;
+  status: string; priority: string; type: string;
+  projectName: string | null;
+  customerId: string | null; customerName: string | null;
+  assigneeId: string | null; assigneeName: string | null;
+  reporterName: string | null; reporterEmail: string | null;
+  branch: string | null; onSiteSupportRequired: boolean; labels: string[];
+  createdAt: string; updatedAt: string; dueDate: string | null;
+  pausedTime: string | null; totalPausedTime: number;
+  slaName: string | null; slaResolutionSeconds: number | null;
+}
+
+export interface ReportFilters {
+  from?: Date; to?: Date;
+  customerId?: string;
+  assigneeId?: string;
+}
+
+/** Hard ceiling on a single report. A range wide enough to exceed this returns a
+ *  `truncated` flag rather than quietly reporting on part of the period. */
+export const REPORT_ROW_CAP = 5000;
+
+export async function listReportTickets(
+  f: ReportFilters,
+  scope: string[] | null,
+): Promise<{ rows: ReportTicketRow[]; truncated: boolean }> {
+  const db = getTicketDb();
+  const rows = await db.tickets.findMany({
+    where: {
+      ...scopedWhere(scope),
+      ...(f.customerId ? { customerId: f.customerId } : {}),
+      ...(f.assigneeId ? { assigneeId: f.assigneeId } : {}),
+      // Range pushed into SQL, not filtered in JS after loading the table.
+      ...(f.from || f.to ? { createdAt: { ...(f.from ? { gte: f.from } : {}), ...(f.to ? { lte: f.to } : {}) } } : {}),
+    },
+    select: {
+      id: true, ticketNumber: true, title: true, status: true, priority: true, type: true,
+      projectId: true, customerId: true, assigneeId: true, reporterId: true,
+      branch: true, onSiteSupportRequired: true, labels: true,
+      createdAt: true, updatedAt: true, dueDate: true, pausedTime: true, totalPausedTime: true,
+      Users_Tickets_assigneeIdToUsers: userSel,
+      Customers: { select: { name: true } },
+      SLAs: { select: { name: true, resolutionTime: true, timeUnit: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: REPORT_ROW_CAP + 1,
+  });
+
+  const page = rows.slice(0, REPORT_ROW_CAP);
+  // Projects and reporters are required relations the admin store can orphan, so both
+  // are batch-loaded and missing rows tolerated rather than `include`d (see ticketInclude).
+  const [projects, reporters] = await Promise.all([
+    db.projects.findMany({ where: { id: { in: [...new Set(page.map((r) => r.projectId))] } }, select: { id: true, name: true } }),
+    db.users.findMany({ where: { id: { in: [...new Set(page.map((r) => r.reporterId))] } }, ...userSel }),
+  ]);
+  const projectById = new Map(projects.map((p) => [p.id, p]));
+  const reporterById = new Map(reporters.map((u) => [u.id, u]));
+
+  return {
+    rows: page.map((r) => {
+      const a = r.Users_Tickets_assigneeIdToUsers;
+      const rep = reporterById.get(r.reporterId) ?? null;
+      return {
+        id: r.id, ticketNumber: r.ticketNumber, title: r.title,
+        status: r.status, priority: r.priority, type: r.type,
+        projectName: projectById.get(r.projectId)?.name ?? null,
+        customerId: r.customerId, customerName: r.Customers?.name ?? null,
+        assigneeId: r.assigneeId, assigneeName: a ? `${a.firstName} ${a.lastName}`.trim() : null,
+        reporterName: rep ? `${rep.firstName} ${rep.lastName}`.trim() : null,
+        reporterEmail: rep?.email ?? null,
+        branch: r.branch, onSiteSupportRequired: r.onSiteSupportRequired, labels: r.labels,
+        createdAt: r.createdAt.toISOString(), updatedAt: r.updatedAt.toISOString(),
+        dueDate: r.dueDate?.toISOString() ?? null,
+        pausedTime: r.pausedTime?.toISOString() ?? null, totalPausedTime: r.totalPausedTime,
+        slaName: r.SLAs?.name ?? null,
+        slaResolutionSeconds: r.SLAs ? convertToSeconds(r.SLAs.resolutionTime, r.SLAs.timeUnit as TimeUnit) : null,
+      };
+    }),
+    truncated: rows.length > REPORT_ROW_CAP,
+  };
 }
 
 // ─── Dashboard feed ──────────────────────────────────────────────────────────
@@ -691,10 +801,14 @@ export interface FeedTicket {
 }
 export interface FeedProject { id: string; status: string; endDate: string | null }
 
-export async function dashboardFeed(): Promise<{ tickets: FeedTicket[]; projects: FeedProject[] }> {
+// `scope` as above: required, because an unscoped feed aggregates every organization
+// sharing b2b_ticket. Projects are deliberately NOT scoped — they are shared across
+// organizations and carry no owner column (see orgDeletion.service.ts).
+export async function dashboardFeed(scope: string[] | null): Promise<{ tickets: FeedTicket[]; projects: FeedProject[] }> {
   const db = getTicketDb();
   const [rows, projects] = await Promise.all([
     db.tickets.findMany({
+      where: scopedWhere(scope),
       select: {
         id: true, ticketNumber: true, title: true, status: true, priority: true,
         branch: true, projectId: true, assigneeId: true, reporterId: true, customerId: true,

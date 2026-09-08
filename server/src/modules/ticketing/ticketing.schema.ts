@@ -152,8 +152,17 @@ export const UpdateEscalationSchema = z.object({
   assignee: z.string().max(120).nullable().optional(),
 }).refine((d) => Object.keys(d).length > 0, { message: 'At least one field required' });
 
+// Ticket report. The four types are groupings, not different queries — `client` and
+// `assignee` group the same rows differently, `overall` doesn't group, and `sla_breach`
+// filters to breached-and-open before grouping by client.
+//
+// Every filter goes through blank(): the report bar sends `?customerId=` when "All
+// clients" is chosen, and .uuid().optional() rejects the empty string — which would
+// 400 the whole report over a filter the user deliberately cleared.
 export const ReportSchema = z.object({
-  type: z.enum(['status', 'priority', 'type', 'project', 'assignee']).default('status'),
-  from: z.string().optional(),
-  to: z.string().optional(),
+  type: z.enum(['client', 'assignee', 'overall', 'sla_breach']).default('overall'),
+  customerId: blank(z.string().uuid()),
+  assigneeId: blank(z.string().uuid()),
+  from: blank(z.coerce.date()),
+  to: blank(z.coerce.date()),
 });

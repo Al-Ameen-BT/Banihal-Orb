@@ -1,11 +1,12 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, Area, BarChart, Bar, LabelList, XAxis, YAxis } from 'recharts';
 import { agentApi, ticketingApi } from '@/lib/api';
+import { exportXlsx } from '@/lib/exportXlsx';
 import { useAuth } from '@/contexts/AuthContext';
 import GlowButton from '@/components/ui/GlowButton';
 import { ShimmerCard, ShimmerRow } from '@/components/ui/Shimmer';
@@ -16,9 +17,10 @@ import {
   Toolbar, Segmented, SearchInput, EmptyState, Avatar, Icons,
   priorityCls, timeAgo, STATUS_OPTIONS, PRIORITY_OPTIONS, staffLabel, apiErrorMessage,
   TicketActionsMenu, EditTicketModal, useDeleteTicket, useTicketProjects, useTicketAssignees,
+  Modal, ESCALATE_ADMINS_ID, fmtDate, type TicketCustomer,
 } from './shared';
 import AdminTicketDetail from './AdminTicketDetail';
-import type { TicketDTO, TicketProject, TicketSla, TicketStats, TicketAnalytics, TicketReport, TicketStatus, TicketPriority, TicketActivityLogRow } from '@/lib/schemas';
+import type { TicketDTO, TicketProject, TicketSla, TicketStats, TicketAnalytics, TicketReport, TicketReportType, ReportTicketRow, TicketStatus, TicketPriority, TicketActivityLogRow } from '@/lib/schemas';
 
 const STATUS_TONES: Record<string, string> = { todo: '#64748b', in_progress: '#06b6d4', client_pending: '#f59e0b', completed: '#10b981' };
 
@@ -229,6 +231,17 @@ function TopComplaintsChart() {
 }
 
 // ─── Tickets ───────────────────────────────────────────────────────────────────
+/**
+ * Which organization is this ticket for?
+ *
+ * The Customers row is the answer when there is one, but an ESCALATED ticket copied
+ * into the admin store may have only the `org:<name>` label escalation stamps on it
+ * — so a bare dash would hide the client on exactly the tickets an administrator most
+ * needs it for. Shared by the card below and the escalated grouping in TicketsTab.
+ */
+const orgOf = (t: TicketDTO): string =>
+  t.customer?.name ?? t.labels.find((l) => l.startsWith('org:'))?.slice(4) ?? 'Unknown organization';
+
 // Image-matched admin card: #TKT + title + status/priority/type badges, assignee,
 // "Created X ago", and the dual Response/Resolution SLA bars.
 function AdminTicketCard({ ticket, onOpen, onEdit, onDelete }: {
@@ -244,7 +257,14 @@ function AdminTicketCard({ ticket, onOpen, onEdit, onDelete }: {
             <StatusBadge status={ticket.status} /><PriorityBadge priority={ticket.priority} /><TypeBadge type={ticket.type} />
           </div>
           <p className="text-sm font-semibold text-slate-900 leading-snug mt-1.5 line-clamp-2">{ticket.title}</p>
-          <p className="text-[11px] text-slate-400 mt-1">Created {timeAgo(ticket.createdAt)}</p>
+          <div className="flex items-center gap-2 mt-1.5 text-[11px] text-slate-500 flex-wrap">
+            <span className="inline-flex items-center gap-1.5 min-w-0" title={orgOf(ticket)}>
+              <Avatar name={orgOf(ticket)} size="xs" />
+              <span className="truncate max-w-[180px] font-medium text-slate-600">{orgOf(ticket)}</span>
+            </span>
+            <span className="text-slate-300">·</span>
+            <span className="text-slate-400">Created {timeAgo(ticket.createdAt)}</span>
+          </div>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           {ticket.assignee
@@ -320,7 +340,6 @@ function TicketsTab({ projectFilter, onClearProject, initialTicketId }: { projec
   const gridCls = view === 'grid' ? 'grid grid-cols-1 xl:grid-cols-2 gap-3' : 'space-y-3';
 
   // Group by originating organization for the Escalated category.
-  const orgOf = (t: TicketDTO) => t.customer?.name ?? t.labels.find((l) => l.startsWith('org:'))?.slice(4) ?? 'Unknown organization';
   const groups = new Map<string, TicketDTO[]>();
   if (category === 'escalated') for (const t of tickets) { const k = orgOf(t); (groups.get(k) ?? groups.set(k, []).get(k)!).push(t); }
 
@@ -771,60 +790,348 @@ function SlasTab() {
 }
 
 // ─── Reports ───────────────────────────────────────────────────────────────────
+// Report type + client + date range → a field picker → an on-screen table and an
+// .xlsx download.
+//
+// The server returns EVERY selectable column on every row, so the field picker is
+// pure presentation: changing the column set re-renders, it never refetches.
+
+const REPORT_TYPES: { value: TicketReportType; label: string }[] = [
+  { value: 'client', label: 'Client-wise Report' },
+  { value: 'assignee', label: 'Assignee-wise Report' },
+  { value: 'overall', label: 'Overall Report' },
+  { value: 'sla_breach', label: 'SLA Breach Report' },
+];
+
+// Every column the report can carry. `key` is what gets persisted, so renaming one
+// silently drops it from a returning user's saved selection — add, don't rename.
+interface ReportField {
+  key: string;
+  label: string;
+  /** Cell value for the sheet: a real Date/number/boolean where the data is one, so
+   *  Excel sorts and filters the column instead of treating it as text. */
+  value: (t: ReportTicketRow) => string | number | boolean | Date | null;
+  /** On-screen cell. Defaults to the exported value stringified. */
+  render?: (t: ReportTicketRow) => React.ReactNode;
+  numeric?: boolean;
+}
+
+const secondsToHours = (s: number): number => Math.round((s / 3600) * 10) / 10;
+
+/** Age minus paused time — the same clock the server's breach rule runs, so the
+ *  "Time open" column can never disagree with the SLA column beside it. */
+function openHours(t: ReportTicketRow): number {
+  const wall = (Date.now() - new Date(t.createdAt).getTime()) / 1000;
+  let paused = t.totalPausedTime;
+  if (t.status === 'client_pending' && t.pausedTime) paused += (Date.now() - new Date(t.pausedTime).getTime()) / 1000;
+  return secondsToHours(Math.max(wall - paused, 0));
+}
+
+const isOpenStatus = (s: string) => s !== 'completed';
+function breached(t: ReportTicketRow): boolean {
+  if (!isOpenStatus(t.status) || t.slaResolutionSeconds === null) return false;
+  return openHours(t) * 3600 > t.slaResolutionSeconds;
+}
+
+const REPORT_FIELDS: ReportField[] = [
+  { key: 'ticketNumber', label: 'Ticket #', value: (t) => t.ticketNumber,
+    render: (t) => <span className="font-mono text-xs font-semibold text-slate-900">{t.ticketNumber}</span> },
+  { key: 'title', label: 'Title', value: (t) => t.title,
+    render: (t) => <span className="block max-w-[320px] truncate">{t.title}</span> },
+  { key: 'customerName', label: 'Client', value: (t) => t.customerName ?? '' },
+  { key: 'projectName', label: 'Project', value: (t) => t.projectName ?? '' },
+  { key: 'status', label: 'Status', value: (t) => t.status, render: (t) => <StatusBadge status={t.status} /> },
+  { key: 'priority', label: 'Priority', value: (t) => t.priority, render: (t) => <PriorityBadge priority={t.priority} /> },
+  { key: 'type', label: 'Type', value: (t) => t.type },
+  { key: 'reporterName', label: 'Reporter', value: (t) => t.reporterName ?? '' },
+  { key: 'reporterEmail', label: 'Reporter email', value: (t) => t.reporterEmail ?? '' },
+  { key: 'assigneeName', label: 'Assignee', value: (t) => t.assigneeName ?? 'Unassigned' },
+  { key: 'createdAt', label: 'Created', value: (t) => new Date(t.createdAt), render: (t) => timeAgo(t.createdAt) },
+  { key: 'updatedAt', label: 'Updated', value: (t) => new Date(t.updatedAt), render: (t) => timeAgo(t.updatedAt) },
+  { key: 'dueDate', label: 'Due', value: (t) => (t.dueDate ? new Date(t.dueDate) : null),
+    render: (t) => (t.dueDate ? fmtDate(t.dueDate) : '—') },
+  { key: 'slaName', label: 'SLA policy', value: (t) => t.slaName ?? '' },
+  { key: 'slaBreached', label: 'SLA breached', value: (t) => breached(t),
+    render: (t) => (breached(t)
+      ? <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold text-red-700 bg-red-50">Breached</span>
+      : <span className="text-slate-400">—</span>) },
+  { key: 'openHours', label: 'Time open (h)', numeric: true, value: (t) => openHours(t) },
+  { key: 'branch', label: 'Branch', value: (t) => t.branch ?? '' },
+  { key: 'onSiteSupportRequired', label: 'On-site', value: (t) => t.onSiteSupportRequired,
+    render: (t) => (t.onSiteSupportRequired ? 'Yes' : 'No') },
+  { key: 'labels', label: 'Labels', value: (t) => t.labels.join(', ') },
+];
+
+// Mirrors REPORT_ROW_CAP in server/src/modules/ticketing/ticketing.client.ts — used
+// only to word the truncation notice, so a drift here misstates a number, it does not
+// change what the server returns.
+const REPORT_ROW_CAP = 5000;
+
+const DEFAULT_FIELDS = ['ticketNumber', 'title', 'customerName', 'status', 'priority', 'assigneeName', 'createdAt'];
+const FIELDS_STORAGE_KEY = 'ticket-report-fields';
+
+// localStorage throws in some privacy modes and can hold a stale key list from an
+// older build — fall back to the defaults rather than rendering an empty table.
+function loadFields(): string[] {
+  try {
+    const raw = window.localStorage.getItem(FIELDS_STORAGE_KEY);
+    if (!raw) return DEFAULT_FIELDS;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return DEFAULT_FIELDS;
+    const known = parsed.filter((k): k is string => typeof k === 'string' && REPORT_FIELDS.some((f) => f.key === k));
+    return known.length ? known : DEFAULT_FIELDS;
+  } catch { return DEFAULT_FIELDS; }
+}
+
 function ReportsTab() {
   const toast = useToast();
-  const [type, setType] = useState<'status' | 'priority' | 'type' | 'project' | 'assignee'>('status');
+  const { user } = useAuth();
+  // The client pool lives behind `ticket.store.admin`; an ORG_ADMIN calling it gets a
+  // 403 and lib/api.ts hard-navigates the whole app to /403. So the query is GATED on
+  // the role, not merely hidden — and every ticket in an org admin's store is their
+  // own organization's anyway, which is why the filter is meaningless for them.
+  const isPlatformAdmin = user?.role === 'ADMINISTRATOR';
+
+  const [type, setType] = useState<TicketReportType>('client');
+  const [customerId, setCustomerId] = useState('');
+  const [assigneeId, setAssigneeId] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+
   const [report, setReport] = useState<TicketReport | null>(null);
   const [generating, setGenerating] = useState(false);
-  const typeLbl: Record<string, string> = { status: 'By Status', priority: 'By Priority', type: 'By Type', project: 'By Project', assignee: 'By Assignee' };
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [fields, setFields] = useState<string[]>(DEFAULT_FIELDS);
+  const [draftFields, setDraftFields] = useState<string[]>(DEFAULT_FIELDS);
+  // Set while the picker is the FIRST step of Generate, so confirming runs the report;
+  // false when it was reopened via "Change fields", which must not refetch.
+  const [pickerGenerates, setPickerGenerates] = useState(false);
+
+  // Read once on mount rather than in useState's initialiser: localStorage does not
+  // exist during the server render, and touching it there is a hydration mismatch.
+  useEffect(() => { const f = loadFields(); setFields(f); setDraftFields(f); }, []);
+
+  const { data: customers } = useQuery<TicketCustomer[]>({
+    queryKey: ['ticketing', 'customers'],
+    queryFn: () => ticketingApi.listCustomers().then((r) => (r.data as { customers: TicketCustomer[] }).customers),
+    enabled: isPlatformAdmin,
+    staleTime: 60_000,
+  });
+  const { data: assignees } = useTicketAssignees();
+  // The org-admin pool is prefixed with a synthetic "Escalate to Administrators"
+  // entry, which is not a person and would filter to nothing.
+  const realAssignees = (assignees ?? []).filter((a) => a.id !== ESCALATE_ADMINS_ID);
+
+  const activeFields = REPORT_FIELDS.filter((f) => fields.includes(f.key));
+
+  function openPickerThenGenerate() {
+    setDraftFields(fields);
+    setPickerGenerates(true);
+    setPickerOpen(true);
+  }
+
+  function confirmFields() {
+    // Never let the picker produce a table with no columns.
+    const chosen = draftFields.length ? draftFields : DEFAULT_FIELDS;
+    setFields(chosen);
+    try { window.localStorage.setItem(FIELDS_STORAGE_KEY, JSON.stringify(chosen)); } catch { /* private mode */ }
+    setPickerOpen(false);
+    if (pickerGenerates) void generate();
+  }
 
   async function generate() {
     setGenerating(true);
     try {
-      const { data } = await ticketingApi.getReport({ type });
+      const { data } = await ticketingApi.getReport({
+        type,
+        ...(isPlatformAdmin && customerId ? { customerId } : {}),
+        // Only when its picker is actually on screen. The state survives a change of
+        // report type, so sending it unconditionally would silently narrow a
+        // Client-wise report to one person the user picked on a different tab and can
+        // no longer see — a filter with no visible cause.
+        ...(type === 'assignee' && assigneeId ? { assigneeId } : {}),
+        ...(from ? { from: `${from}T00:00:00` } : {}),
+        ...(to ? { to: `${to}T23:59:59` } : {}),
+      });
       setReport(data as TicketReport);
     } catch (err) {
       // Called as `void generate()`, so without this catch a failed report was an
-      // unhandled rejection: the button simply reset and nothing ever appeared.
+      // unhandled rejection: the button reset and nothing ever appeared.
       toast(apiErrorMessage(err, 'Could not generate the report'), 'error');
     } finally { setGenerating(false); }
   }
-  function exportCsv() {
+
+  async function download() {
     if (!report) return;
-    const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const rows = [['Group', 'Total', 'Completed', 'In Progress', 'To Do', 'High/Urgent'], ...report.rows.map((r) => [r.group, r.total, r.completed, r.inProgress, r.todo, r.highPriority])];
-    const blob = new Blob([rows.map((r) => r.map(esc).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8;' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `ticket-report-${type}.csv`; a.click(); URL.revokeObjectURL(a.href);
+    const rows = report.groups.flatMap((g) => g.tickets);
+    if (rows.length === 0) { toast('Nothing to export — the report is empty.', 'error'); return; }
+    try {
+      const label = REPORT_TYPES.find((r) => r.value === report.type)?.label ?? 'report';
+      await exportXlsx(
+        `${label.toLowerCase().replace(/\s+/g, '-')}-${new Date().toISOString().slice(0, 10)}`,
+        // Group is a column in the sheet: a flat file loses the on-screen grouping
+        // otherwise, and "which client is this row?" is the report's whole point.
+        [
+          { header: type === 'assignee' ? 'Assignee group' : 'Group', value: (r: ReportTicketRow & { __group: string }) => r.__group },
+          ...activeFields.map((f) => ({ header: f.label, value: (r: ReportTicketRow) => f.value(r) })),
+        ],
+        report.groups.flatMap((g) => g.tickets.map((t) => ({ ...t, __group: g.label }))),
+      );
+    } catch (err) {
+      toast(apiErrorMessage(err, 'Could not build the spreadsheet.'), 'error');
+    }
   }
+
+  const typeLabel = REPORT_TYPES.find((r) => r.value === type)?.label ?? '';
 
   return (
     <div className="space-y-4">
+      {/* Filters */}
       <div className="card p-5 flex items-end gap-3 flex-wrap">
-        <div><label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Report Type</label>
-          <select value={type} onChange={(e) => setType(e.target.value as typeof type)} className="input !py-1.5 text-xs w-auto">{Object.entries(typeLbl).map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></div>
-        <GlowButton className="py-1.5 px-4 text-xs" onClick={() => void generate()} disabled={generating} loading={generating}>{generating ? 'Generating…' : 'Generate'}</GlowButton>
-        {report && <GlowButton variant="secondary" className="py-1.5 px-3 text-xs ml-auto" onClick={exportCsv}>CSV ↓</GlowButton>}
+        <div>
+          <label htmlFor="rep-type" className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Report Type</label>
+          <select id="rep-type" value={type} onChange={(e) => setType(e.target.value as TicketReportType)} className="input !py-1.5 text-xs w-auto">
+            {REPORT_TYPES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+          </select>
+        </div>
+
+        {isPlatformAdmin && (
+          <div>
+            <label htmlFor="rep-client" className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Select Client</label>
+            <select id="rep-client" value={customerId} onChange={(e) => setCustomerId(e.target.value)} className="input !py-1.5 text-xs w-auto">
+              <option value="">All clients</option>
+              {(customers ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+        )}
+
+        {type === 'assignee' && (
+          <div>
+            <label htmlFor="rep-assignee" className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Assignee</label>
+            <select id="rep-assignee" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} className="input !py-1.5 text-xs w-auto">
+              <option value="">Everyone</option>
+              {realAssignees.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          </div>
+        )}
+
+        <div>
+          <label htmlFor="rep-from" className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Start Date</label>
+          <input id="rep-from" type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} className="input !py-1.5 text-xs w-auto" />
+        </div>
+        <div>
+          <label htmlFor="rep-to" className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">End Date</label>
+          <input id="rep-to" type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className="input !py-1.5 text-xs w-auto" />
+        </div>
+
+        <GlowButton className="py-1.5 px-4 text-xs inline-flex items-center gap-1.5" onClick={openPickerThenGenerate}
+          disabled={generating} loading={generating}>
+          {generating ? 'Generating…' : 'Generate Report'}
+        </GlowButton>
+
+        {report && (
+          <div className="ml-auto flex items-end gap-2">
+            <GlowButton variant="ghost" className="py-1.5 px-3 text-xs"
+              onClick={() => { setDraftFields(fields); setPickerGenerates(false); setPickerOpen(true); }}>
+              Change fields
+            </GlowButton>
+            <GlowButton variant="secondary" className="py-1.5 px-3 text-xs" onClick={() => void download()}>
+              Download .xlsx
+            </GlowButton>
+          </div>
+        )}
       </div>
+
+      {/* Field picker */}
+      <Modal open={pickerOpen} onClose={() => setPickerOpen(false)} title="Select report fields" width="max-w-xl">
+        <p className="text-sm text-slate-500 mb-4">
+          Choose the columns for the report and its spreadsheet. Your selection is remembered on this device.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 max-h-[45vh] overflow-y-auto pr-1">
+          {REPORT_FIELDS.map((f) => {
+            const locked = f.key === 'ticketNumber';   // without it a row identifies nothing
+            const checked = locked || draftFields.includes(f.key);
+            return (
+              <label key={f.key} className={`flex items-center gap-2.5 py-1.5 text-sm ${locked ? 'text-slate-400' : 'text-slate-700 cursor-pointer'}`}>
+                <input type="checkbox" checked={checked} disabled={locked}
+                  onChange={(e) => setDraftFields((prev) => (e.target.checked ? [...prev, f.key] : prev.filter((k) => k !== f.key)))}
+                  className="w-4 h-4 rounded border-slate-300 text-brand focus:ring-2 focus:ring-brand/30 disabled:opacity-60" />
+                {f.label}{locked && <span className="text-[11px] text-slate-400">(always)</span>}
+              </label>
+            );
+          })}
+        </div>
+        <div className="mt-5 flex items-center justify-between gap-3 border-t border-slate-100 pt-4">
+          <button type="button" onClick={() => setDraftFields(DEFAULT_FIELDS)} className="text-xs text-slate-500 hover:text-slate-800 cursor-pointer">
+            Reset to defaults
+          </button>
+          <div className="flex gap-2">
+            <GlowButton variant="secondary" className="py-1.5 px-4 text-xs" onClick={() => setPickerOpen(false)}>Cancel</GlowButton>
+            <GlowButton className="py-1.5 px-4 text-xs" onClick={confirmFields}>
+              {pickerGenerates ? 'Generate Report' : 'Apply'}
+            </GlowButton>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Result */}
       {!report ? (
-        <EmptyState icon={Icons.filter({ className: 'w-6 h-6' })} title="No report generated yet" hint="Pick a grouping and generate a breakdown of your tickets." />
+        <EmptyState icon={Icons.filter({ className: 'w-6 h-6' })} title="No report generated yet"
+          hint='Configure the filters above and click "Generate Report" to create a report.' />
       ) : (
         <div className="card overflow-hidden">
-          <div className="px-5 py-3 border-b border-slate-100 flex items-baseline justify-between"><p className="text-sm font-semibold text-slate-900">{typeLbl[report.type]}</p><span className="text-xs text-slate-400 tabular-nums">{report.totalTickets} tickets</span></div>
-          <table className="min-w-full">
-            <thead><tr className="bg-slate-50 border-b border-slate-200">{['Group', 'Total', 'Completed', 'In Progress', 'To Do', 'High/Urgent'].map((h, i) => <th key={h} className={`px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500 ${i === 0 ? 'text-left' : 'text-right'}`}>{h}</th>)}</tr></thead>
-            <tbody>
-              {report.rows.length === 0 ? <tr><td colSpan={6} className="px-5 py-10 text-center text-sm text-slate-500">No tickets in range.</td></tr> : report.rows.map((r) => (
-                <tr key={r.group} className="border-b border-slate-100 last:border-0">
-                  <td className="px-5 py-3 text-sm font-medium text-slate-900 capitalize">{r.group}</td>
-                  <td className="px-5 py-3 text-right font-mono tabular-nums text-sm font-semibold text-slate-900">{r.total}</td>
-                  <td className="px-5 py-3 text-right font-mono tabular-nums text-sm text-emerald-600">{r.completed}</td>
-                  <td className="px-5 py-3 text-right font-mono tabular-nums text-sm text-cyan-600">{r.inProgress}</td>
-                  <td className="px-5 py-3 text-right font-mono tabular-nums text-sm text-slate-600">{r.todo}</td>
-                  <td className="px-5 py-3 text-right font-mono tabular-nums text-sm text-red-600">{r.highPriority}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="px-5 py-3 border-b border-slate-100 flex items-baseline justify-between gap-3 flex-wrap">
+            <p className="text-sm font-semibold text-slate-900">{typeLabel}</p>
+            <span className="text-xs text-slate-400 tabular-nums">
+              {report.totals.tickets} tickets · {report.totals.open} open · {report.totals.completed} completed
+              {report.totals.breached > 0 && <span className="text-red-600"> · {report.totals.breached} SLA breached</span>}
+            </span>
+          </div>
+
+          {report.truncated && (
+            <p className="px-5 py-2 text-xs text-amber-700 bg-amber-50 border-b border-amber-100">
+              This range exceeds the {REPORT_ROW_CAP.toLocaleString()}-ticket limit — only the most recent {REPORT_ROW_CAP.toLocaleString()} are shown. Narrow the dates for a complete report.
+            </p>
+          )}
+
+          {report.groups.length === 0 ? (
+            <p className="px-5 py-10 text-center text-sm text-slate-500">No tickets match these filters.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50 border-b border-slate-200">
+                  <tr>
+                    {activeFields.map((f) => (
+                      <th key={f.key} className={`px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500 whitespace-nowrap ${f.numeric ? 'text-right' : 'text-left'}`}>
+                        {f.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                {report.groups.map((g) => (
+                  <tbody key={g.key} className="border-b border-slate-200 last:border-0">
+                    {/* One header row per group — 'overall' has a single group, so this
+                        degrades to a plain total line rather than needing its own branch. */}
+                    <tr className="bg-slate-50/70">
+                      <th colSpan={activeFields.length} className="px-4 py-2 text-left text-xs font-semibold text-slate-700">
+                        {g.label}
+                        <span className="ml-2 font-normal text-slate-400 tabular-nums">{g.tickets.length} ticket{g.tickets.length === 1 ? '' : 's'}</span>
+                      </th>
+                    </tr>
+                    {g.tickets.map((t) => (
+                      <tr key={t.id} className="border-t border-slate-100 hover:bg-slate-50/70">
+                        {activeFields.map((f) => (
+                          <td key={f.key} className={`px-4 py-2.5 text-slate-600 ${f.numeric ? 'text-right font-mono tabular-nums' : ''}`}>
+                            {f.render ? f.render(t) : (String(f.value(t) ?? '') || '—')}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                ))}
+              </table>
+            </div>
+          )}
         </div>
       )}
     </div>

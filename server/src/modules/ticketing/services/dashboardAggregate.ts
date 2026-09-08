@@ -115,18 +115,45 @@ function pct(part: number, whole: number): number {
 
 const ms = (iso: string): number => new Date(iso).getTime();
 
+/**
+ * The fields the SLA clock below actually reads.
+ *
+ * Structural rather than `FeedTicket` so the report path (ReportTicketRow) runs the
+ * SAME breach rule as the dashboard. A ticket that counts as breached on the ops
+ * dashboard and healthy in the SLA Breach report would be worse than either alone.
+ */
+export interface SlaClockTicket {
+  status: string;
+  createdAt: string;
+  pausedTime: string | null;
+  totalPausedTime: number;
+  slaResolutionSeconds: number | null;
+}
+
 /** Wall-clock age minus all paused time — the same clock slaService runs, so a
  *  ticket never looks breached here and healthy there. */
-function effectiveElapsedSeconds(t: FeedTicket, now: number): number {
+export function effectiveElapsedSeconds(t: SlaClockTicket, now: number): number {
   const wall = (now - ms(t.createdAt)) / 1000;
   let paused = t.totalPausedTime;
   if (t.status === PAUSED && t.pausedTime) paused += (now - ms(t.pausedTime)) / 1000;
   return Math.max(wall - paused, 0);
 }
 
-/** True when an open ticket has burned through its resolution budget. Tickets with
- *  no SLA policy attached can never breach. */
-function isBreached(t: FeedTicket, now: number): boolean {
+/**
+ * True when an open ticket has burned through its resolution budget. A ticket with no
+ * SLA policy attached can never breach, and `completed` is not open so it cannot either.
+ *
+ * NOTE — `client_pending` IS open here (OPEN_STATUSES above). A paused ticket accrues
+ * no NEW elapsed time, but one that had already blown its budget before being paused
+ * stays breached: pausing must not be a way to make a breach disappear.
+ *
+ * This deliberately DIVERGES from slaService.evaluateAgainstBudget, which reports a
+ * paused ticket as status 'paused' and never 'breached' — so the SLA badge on a ticket
+ * can read "Paused" while this counts it as a breach. Both are defensible; they should
+ * not both be true at once. Left as-is rather than silently changed, because the ops
+ * dashboard's slaBreachPct and breachSpark are computed from this exact rule.
+ */
+export function isBreached(t: SlaClockTicket, now: number): boolean {
   if (!isOpen(t.status)) return false;
   if (t.slaResolutionSeconds === null) return false;
   return effectiveElapsedSeconds(t, now) > t.slaResolutionSeconds;

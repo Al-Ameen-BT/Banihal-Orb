@@ -475,13 +475,15 @@ const span = (f: FormField) => (FULL_WIDTH.has(f) ? 'sm:col-span-2' : undefined)
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-type TicketCustomer = { id: string; name: string; email: string | null; contactPerson: string | null; company: string | null };
+// Exported: the Reports tab's client picker reads the same admin-store pool as the
+// New Ticket form's.
+export type TicketCustomer = { id: string; name: string; email: string | null; contactPerson: string | null; company: string | null };
 
 // Synthetic assignee (org-admin only) that auto-escalates the new ticket to the
 // platform administrators. Must match ESCALATE_ADMINS_ID in the server's
 // ticketing.controller.ts — the server emits this option and interprets the
 // resulting { escalateToAdministrators: true } payload.
-const ESCALATE_ADMINS_ID = '__escalate_admins__';
+export const ESCALATE_ADMINS_ID = '__escalate_admins__';
 
 // Mirrors the server's multer config (uploads.ts): images only, 5 files, 10 MB each.
 const MAX_IMAGES = 5;
@@ -1321,10 +1323,24 @@ export function EditTicketModal({ ticket, open, onClose }: { ticket: TicketDTO; 
 
 // ─── Modal shell (centered) ─────────────────────────────────────────────────────
 export function Modal({ open, onClose, title, children, width = 'max-w-2xl' }: { open: boolean; onClose: () => void; title?: React.ReactNode; children: React.ReactNode; width?: string }) {
+  // Escape to dismiss + scroll lock. This modal was built for read-only detail views,
+  // where clicking the backdrop was enough; it now also hosts real keyboard surfaces
+  // (the report's field checklist), and a dialog a keyboard user cannot leave is a
+  // trap. Registered before the early return so the hook order stays stable.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } };
+    document.addEventListener('keydown', onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = prev; };
+  }, [open, onClose]);
+
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-slate-900/40 backdrop-blur-sm p-4 sm:p-8" onClick={onClose}>
       <motion.div initial={{ opacity: 0, y: 12, scale: 0.99 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.18 }}
+        role="dialog" aria-modal="true" aria-label={typeof title === 'string' ? title : undefined}
         onClick={(e) => e.stopPropagation()} className={`card w-full ${width} my-2 shadow-pop overflow-hidden`}>
         {title && (
           <div className="flex items-center justify-between gap-3 px-6 py-4 border-b border-slate-100">

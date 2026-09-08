@@ -338,12 +338,48 @@ export interface TicketAnalytics {
   analyzed: number;
 }
 
+// ─── Ticket report ───────────────────────────────────────────────────────────
+// Per-ticket rows, grouped. Replaced an aggregate that returned only group counts —
+// the Reports tab now picks which ticket columns to show and export, which needs the
+// tickets themselves. Mirrors ReportTicketRow / TicketReportResult on the server.
+export type TicketReportType = 'client' | 'assignee' | 'overall' | 'sla_breach';
+
+export interface ReportTicketRow {
+  id: string;
+  ticketNumber: string;
+  title: string;
+  status: string;
+  priority: string;
+  type: string;
+  projectName: string | null;
+  customerId: string | null;
+  customerName: string | null;
+  assigneeId: string | null;
+  assigneeName: string | null;
+  reporterName: string | null;
+  reporterEmail: string | null;
+  branch: string | null;
+  onSiteSupportRequired: boolean;
+  labels: string[];
+  createdAt: string;
+  updatedAt: string;
+  dueDate: string | null;
+  pausedTime: string | null;
+  totalPausedTime: number;
+  slaName: string | null;
+  slaResolutionSeconds: number | null;
+}
+
 export interface TicketReport {
-  rows: Array<{ group: string; total: number; completed: number; inProgress: number; todo: number; highPriority: number }>;
-  totalTickets: number;
+  type: TicketReportType;
   from: string | null;
   to: string | null;
-  type: string;
+  customerId: string | null;
+  assigneeId: string | null;
+  groups: Array<{ key: string; label: string; tickets: ReportTicketRow[] }>;
+  totals: { tickets: number; open: number; completed: number; breached: number };
+  /** True when the row cap was hit — the report covers only part of the range. */
+  truncated: boolean;
 }
 
 // ─── Slack bots ──────────────────────────────────────────────────────────────

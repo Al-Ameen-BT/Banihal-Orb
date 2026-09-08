@@ -17,12 +17,12 @@
     "clsx": "^2.1.1",
     "framer-motion": "^12.40.0",
     "geist": "^1.7.1",
-    "jspdf": "^4.2.1",
     "next": "14.2.35",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-markdown": "^10.1.0",
     "recharts": "^2.12.2",
+    "write-excel-file": "^4.1.1",
     "zod": "^3.22.4"
   },
   "devDependencies": {

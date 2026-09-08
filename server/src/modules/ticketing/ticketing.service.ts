@@ -10,6 +10,7 @@ import { getNextAssignee, withLastAssigned } from './utils/roundRobin';
 import { pausePatch } from './services/slaService';
 import { notifyTicketAssignedInBackground } from './services/ticketNotify';
 import { mirrorComment, mirrorFields, mirrorInBackground } from './services/escalationMirror';
+import { isBreached } from './services/dashboardAggregate';
 import { prisma } from '../../config/database';
 import type { z } from 'zod';
 import type { CreateTicketSchema, UpdateTicketSchema, CreateProjectSchema, UpdateProjectSchema, CreateSlaSchema } from './ticketing.schema';
@@ -327,8 +328,11 @@ export async function updateSla(id: string, input: Partial<z.infer<typeof Create
 export const deleteSla = (id: string) => db.deleteSlaById(id);
 
 // Alert polling for staff: tickets created since `since`, excluding the viewer's own.
-export async function getNewTickets(since: string, excludeUserId: string) {
-  const tickets = await db.listTickets({ since });
+// Same tenant rule as every other read: without `scope` this polled the whole shared
+// store, so an ORG_ADMIN's "new tickets" alerts surfaced other organizations' ticket
+// TITLES — a worse leak than the aggregate counts, since it is verbatim customer text.
+export async function getNewTickets(since: string, excludeUserId: string, scope: string[] | null) {
+  const tickets = await db.listTickets({ since, ...(scope ? { reporterOrAssigneeIn: scope } : {}) });
   return tickets.filter((t) => t.reporter?.id !== excludeUserId).slice(0, 10);
 }
 
@@ -454,8 +458,12 @@ export async function addTicketAttachments(actorId: string, ticketId: string, fi
 // ─── In-app stats / analytics / reports (computed in-process) ───────────────────
 const OPEN = ['todo', 'in_progress', 'client_pending'];
 
-export async function getStats() {
-  const tickets = await db.allTicketsForStats();
+// Every function below takes the caller's `scope` (from ticketAccessScope) and passes
+// it to the query. They used to read the whole store, so an ORG_ADMIN's numbers were
+// inflated by every OTHER organization sharing b2b_ticket. `null` means the whole
+// store and is correct only for an administrator inside the isolated admin store.
+export async function getStats(scope: string[] | null) {
+  const tickets = await db.allTicketsForStats(scope);
   const total = tickets.length;
   const completed = tickets.filter((t) => t.status === 'completed').length;
   const inProgress = tickets.filter((t) => t.status === 'in_progress').length;
@@ -473,8 +481,8 @@ export async function getStats() {
   };
 }
 
-export async function getAnalytics() {
-  const tickets = await db.allTicketsForStats();
+export async function getAnalytics(scope: string[] | null) {
+  const tickets = await db.allTicketsForStats(scope);
   const byType = new Map<string, number>();
   for (const t of tickets) byType.set(t.type, (byType.get(t.type) ?? 0) + 1);
   const issueDistribution = [...byType.entries()].sort((a, b) => b[1] - a[1]).map(([issue, count]) => ({ issue, count }));
@@ -488,26 +496,89 @@ export async function getAnalytics() {
   return { issueDistribution, daily, byPriority, analyzed: tickets.length };
 }
 
-export async function getReport(type: 'status' | 'priority' | 'type' | 'project' | 'assignee', from?: string, to?: string) {
-  const tickets = await db.allTicketsForStats();
-  const inRange = tickets.filter((t) => (!from || t.createdAt >= new Date(from)) && (!to || t.createdAt <= new Date(to)));
-  const keyOf = (t: typeof tickets[number]): string =>
-    type === 'status' ? t.status :
-    type === 'priority' ? t.priority :
-    type === 'type' ? t.type :
-    type === 'project' ? (t.Projects?.name ?? 'No project') :
-    (t.Users_Tickets_assigneeIdToUsers ? `${t.Users_Tickets_assigneeIdToUsers.firstName} ${t.Users_Tickets_assigneeIdToUsers.lastName}`.trim() : 'Unassigned');
+// ─── Ticket report ─────────────────────────────────────────────────────────────
+// Per-ticket rows, grouped. This replaced an aggregate that returned only group
+// COUNTS — the Reports tab now lets the user choose which ticket columns to export,
+// which needs the tickets themselves.
+//
+// Every selectable field is returned regardless of what the user ticked: the field
+// picker lives in the browser, so changing the column set is a re-render rather than
+// a refetch. Filtering server-side by field would buy nothing and cost a round trip.
 
-  const groups = new Map<string, typeof tickets>();
-  for (const t of inRange) { const k = keyOf(t); const g = groups.get(k) ?? []; g.push(t); groups.set(k, g); }
-  const rows = [...groups.entries()].map(([group, list]) => ({
-    group,
-    total: list.length,
-    completed: list.filter((t) => t.status === 'completed').length,
-    inProgress: list.filter((t) => t.status === 'in_progress').length,
-    todo: list.filter((t) => t.status === 'todo').length,
-    highPriority: list.filter((t) => t.priority === 'high' || t.priority === 'urgent').length,
-  })).sort((a, b) => b.total - a.total);
+export type ReportType = 'client' | 'assignee' | 'overall' | 'sla_breach';
 
-  return { rows, totalTickets: inRange.length, from: from ?? null, to: to ?? null, type };
+export interface ReportGroup {
+  key: string;
+  label: string;
+  tickets: db.ReportTicketRow[];
+}
+
+export interface TicketReportResult {
+  type: ReportType;
+  from: string | null;
+  to: string | null;
+  customerId: string | null;
+  assigneeId: string | null;
+  groups: ReportGroup[];
+  totals: { tickets: number; open: number; completed: number; breached: number };
+  truncated: boolean;
+}
+
+export async function getReport(
+  input: { type: ReportType; customerId?: string; assigneeId?: string; from?: Date; to?: Date },
+  scope: string[] | null,
+): Promise<TicketReportResult> {
+  const { rows, truncated } = await db.listReportTickets({
+    ...(input.customerId ? { customerId: input.customerId } : {}),
+    ...(input.assigneeId ? { assigneeId: input.assigneeId } : {}),
+    ...(input.from ? { from: input.from } : {}),
+    ...(input.to ? { to: input.to } : {}),
+  }, scope);
+
+  const now = Date.now();
+  // Resolution breaches only. isBreached is the DASHBOARD's rule, imported rather than
+  // re-derived so a ticket cannot read as breached on one screen and healthy on the
+  // other. Response-SLA breach is deliberately excluded: nothing records a first
+  // response, so slaService computes it as an approximation (slaService.ts:70-72) and
+  // a report is the wrong place to present an estimate as a fact.
+  const considered = input.type === 'sla_breach' ? rows.filter((t) => isBreached(t, now)) : rows;
+
+  const groupOf = (t: db.ReportTicketRow): { key: string; label: string } => {
+    switch (input.type) {
+      case 'assignee':
+        return { key: t.assigneeId ?? '__unassigned__', label: t.assigneeName ?? 'Unassigned' };
+      case 'overall':
+        return { key: '__all__', label: 'All tickets' };
+      // sla_breach groups by client too — "who is being let down" is the question it
+      // exists to answer.
+      case 'client':
+      case 'sla_breach':
+      default:
+        return { key: t.customerId ?? '__no_client__', label: t.customerName ?? 'No client' };
+    }
+  };
+
+  const byKey = new Map<string, ReportGroup>();
+  for (const t of considered) {
+    const { key, label } = groupOf(t);
+    const g = byKey.get(key) ?? { key, label, tickets: [] };
+    g.tickets.push(t);
+    byKey.set(key, g);
+  }
+
+  return {
+    type: input.type,
+    from: input.from?.toISOString() ?? null,
+    to: input.to?.toISOString() ?? null,
+    customerId: input.customerId ?? null,
+    assigneeId: input.assigneeId ?? null,
+    groups: [...byKey.values()].sort((a, b) => b.tickets.length - a.tickets.length),
+    totals: {
+      tickets: considered.length,
+      open: considered.filter((t) => OPEN.includes(t.status)).length,
+      completed: considered.filter((t) => t.status === 'completed').length,
+      breached: considered.filter((t) => isBreached(t, now)).length,
+    },
+    truncated,
+  };
 }
