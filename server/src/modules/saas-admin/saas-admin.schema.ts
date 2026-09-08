@@ -48,6 +48,17 @@ export const UpdateRequestSchema = z.object({
   internalNotes: z.string().max(4000).nullable().optional(),
 });
 
+// Deleting an organization. `confirm` is the org's exact NAME, typed by the caller
+// — the service re-checks it server-side (deleteProject pattern) so a destructive
+// endpoint never trusts the client to have asked.
+// `keepTickets` decides whether the two ticket stores are wiped (default) or kept:
+// the org, its users, chat sessions and everything else still go, but the ticket
+// history (shared + internal admin store) is retained as a record.
+export const DeleteOrgSchema = z.object({
+  confirm: z.string().min(1).max(200),
+  keepTickets: z.boolean().optional(),
+});
+
 // ─── Announcements (platform broadcasts) ─────────────────────────────────────
 export const CreateAnnouncementSchema = z.object({
   title: z.string().min(3).max(120),
@@ -151,6 +162,7 @@ export const UpdateUserSchema = z.object({
 
 export type ListOrgsInput = z.infer<typeof ListOrgsSchema>;
 export type UpdateOrgInput = z.infer<typeof UpdateOrgSchema>;
+export type DeleteOrgInput = z.infer<typeof DeleteOrgSchema>;
 export type ToggleFlagInput = z.infer<typeof ToggleFlagSchema>;
 export type ListRequestsInput = z.infer<typeof ListRequestsSchema>;
 export type UpdateRequestInput = z.infer<typeof UpdateRequestSchema>;

@@ -1,13 +1,17 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
-import { app, request, createTestOrg, createTestUser, loginAs, cleanDb } from './helpers';
+import { app, request, createTestOrg, createTestUser, loginAs, cleanDb, ticketTestDbReady, ticketDbSkipReason } from './helpers';
 import { prisma } from '../src/config/database';
+import { runWithTicketDb, getTicketDb } from '../src/config/ticketDatabase';
 
 // Organization deletion is irreversible and spans four databases. These pin the
 // two things that matter: the refusals that stop it happening by accident, and
 // that the audit trail SURVIVES the organization it describes.
 
-const del = (orgId: string, cookies: string[]) =>
-  request(app).delete(`/api/saas-admin/orgs/${orgId}`).set('Cookie', cookies);
+const del = (orgId: string, cookies: string[], data: { confirm?: string; keepTickets?: boolean } = {}) =>
+  request(app).delete(`/api/saas-admin/orgs/${orgId}`).set('Cookie', cookies).send({
+    confirm: data.confirm ?? '',
+    keepTickets: data.keepTickets,
+  });
 
 let adminCookies: string[];
 let platformOrgId: string;
@@ -29,12 +33,40 @@ async function deletableOrg(name = 'Doomed Ltd') {
   return org;
 }
 
+/** Insert a believable ticket row (customer + user + project + ticket) into one store. */
+async function seedStoreTicket(scope: 'default' | 'admin', orgName: string, email: string, ticketNumber: string) {
+  return runWithTicketDb(scope, async () => {
+    const db = getTicketDb();
+    const customer = await db.customers.create({ data: { name: orgName, email }});
+    const user = await db.users.create({
+      data: { firstName: 'Member', lastName: 'Test', email, password: 'x', role: 'admin' },
+    });
+    // Format is genuinely random (blank DM, internal, etc.) — mimic seed-tickets.ts.
+    const project = await db.projects.create({
+      data: { name: `Proj ${ticketNumber}`, category: 'internal', leadId: user.id, type: 'software' },
+    });
+    await db.tickets.create({
+      data: {
+        ticketNumber, title: `Ticket ${ticketNumber}`, description: 'x', status: 'todo',
+        projectId: project.id, reporterId: user.id, createdBy: user.id, customerId: customer.id,
+        labels: ['org:' + orgName],
+      },
+    });
+  });
+}
+
+/** Assert a ticket still exists for the org in a store (the keep-tickets case). */
+async function storeTicketCount(scope: 'default' | 'admin', orgName: string) {
+  return runWithTicketDb(scope, () =>
+    getTicketDb().tickets.count({ where: { Customers: { is: { name: orgName } } } }));
+}
+
 describe('refusals — each blocks a different accident', () => {
   it('refuses an organization that is not suspended', async () => {
     const org = await createTestOrg('Live Ltd');
     await createTestUser(org.id, 'live@member.test', 'USER');
 
-    const res = await del(org.id, adminCookies);
+    const res = await del(org.id, adminCookies, { confirm: 'Live Ltd' });
 
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('NOT_SUSPENDED');
@@ -44,11 +76,21 @@ describe('refusals — each blocks a different accident', () => {
   it('refuses the provider organization — it holds the platform staff', async () => {
     // Deliberately NOT suspended: the provider guard fires first, and suspending
     // the acting admin's own org would log them out before the handler runs.
-    const res = await del(platformOrgId, adminCookies);
+    const res = await del(platformOrgId, adminCookies, { confirm: 'Provider Co' });
 
     expect(res.status).toBe(403);
     expect(res.body.code).toBe('PROVIDER_ORG');
     expect(await prisma.customer.count({ where: { id: platformOrgId } })).toBe(1);
+  });
+
+  it('refuses a mistyped confirmation name', async () => {
+    const org = await deletableOrg();
+
+    const res = await del(org.id, adminCookies, { confirm: 'not the name' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('CONFIRM_MISMATCH');
+    expect(await prisma.customer.count({ where: { id: org.id } })).toBe(1);
   });
 
   it('refuses a role without orgs.delete, even one that can edit orgs', async () => {
@@ -57,26 +99,47 @@ describe('refusals — each blocks a different accident', () => {
     await createTestUser(platformOrgId, 'employee@example.com', 'ADMINISTRATOR', 'employee');
     const employeeCookies = await loginAs('employee@example.com');
 
-    expect((await del(org.id, employeeCookies)).status).toBe(403);
+    expect((await del(org.id, employeeCookies, { confirm: 'Doomed Ltd' })).status).toBe(403);
+    expect(await prisma.customer.count({ where: { id: org.id } })).toBe(1);
+  });
+
+  it('refuses intern — no permission is ever implicit, whatever the page guard lets through', async () => {
+    const org = await deletableOrg();
+    await createTestUser(platformOrgId, 'intern@example.com', 'ADMINISTRATOR', 'intern');
+    const internCookies = await loginAs('intern@example.com');
+
+    expect((await del(org.id, internCookies, { confirm: 'Doomed Ltd' })).status).toBe(403);
     expect(await prisma.customer.count({ where: { id: org.id } })).toBe(1);
   });
 
   it('404s an unknown organization', async () => {
-    expect((await del('clnonexistent00000000000', adminCookies)).status).toBe(404);
+    expect((await del('clnonexistent00000000000', adminCookies, { confirm: 'x' })).status).toBe(404);
   });
 });
 
 describe('a successful deletion clears the org and keeps the record', () => {
-  it('removes the organization and its users', async () => {
+  it('removes the organization and its users (full wipe)', async () => {
     const org = await deletableOrg();
 
-    const res = await del(org.id, adminCookies);
+    const res = await del(org.id, adminCookies, { confirm: 'Doomed Ltd' });
 
     expect(res.status).toBe(200);
     expect(res.body.orgName).toBe('Doomed Ltd');
     expect(res.body.users).toBe(1);
+    expect(res.body.mode).toBe('wipe');
     expect(await prisma.customer.count({ where: { id: org.id } })).toBe(0);
     expect(await prisma.user.count({ where: { customerId: org.id } })).toBe(0);
+  });
+
+  it('HR ADMIN can delete an organization — the page edits orgs, the delete needs its own key', async () => {
+    const org = await deletableOrg();
+    await createTestUser(platformOrgId, 'hr@example.com', 'ADMINISTRATOR', 'hr_admin');
+    const hrCookies = await loginAs('hr@example.com');
+
+    const res = await del(org.id, hrCookies, { confirm: 'Doomed Ltd' });
+
+    expect(res.status).toBe(200);
+    expect(await prisma.customer.count({ where: { id: org.id } })).toBe(0);
   });
 
   it('RETAINS the audit trail — the record outlives the organization', async () => {
@@ -86,20 +149,21 @@ describe('a successful deletion clears the org and keeps the record', () => {
       data: { action: 'LOGIN', performedById: null, customerId: org.id, metadata: {} },
     });
 
-    await del(org.id, adminCookies);
+    await del(org.id, adminCookies, { confirm: 'Doomed Ltd' });
 
     const rows = await prisma.auditLog.findMany({ where: { customerId: org.id } });
     expect(rows.length, 'audit rows must survive the org they describe').toBeGreaterThanOrEqual(2);
     const deletion = rows.find((r) => r.action === 'ORG_DELETED');
     expect(deletion, 'the deletion itself must be recorded').toBeDefined();
     expect((deletion!.metadata as { orgName?: string }).orgName).toBe('Doomed Ltd');
+    expect((deletion!.metadata as { mode?: string }).mode).toBe('wipe');
   });
 
   it('purges the FK-less tables nothing cascades', async () => {
     const org = await deletableOrg();
     await prisma.slackBotOrg.create({ data: { botId: 'bot-x', customerId: org.id } }).catch(() => {});
 
-    await del(org.id, adminCookies);
+    await del(org.id, adminCookies, { confirm: 'Doomed Ltd' });
 
     expect(await prisma.slackBotOrg.count({ where: { customerId: org.id } })).toBe(0);
     expect(await prisma.adCredentialDelivery.count({ where: { customerId: org.id } })).toBe(0);
@@ -113,8 +177,43 @@ describe('a successful deletion clears the org and keeps the record', () => {
       data: { title: 'Platform notice', message: 'x', level: 'INFO', createdById: author!.id, customerId: null },
     });
 
-    await del(org.id, adminCookies);
+    await del(org.id, adminCookies, { confirm: 'Doomed Ltd' });
 
     expect(await prisma.announcement.count({ where: { id: global.id } })).toBe(1);
+  });
+});
+
+describe.skipIf(!ticketTestDbReady())(`keep-ticketing mode — ticket history survives${ticketTestDbReady() ? '' : ` (SKIPPED: ${ticketDbSkipReason()})`}`, () => {
+  it('deletes the org but leaves BOTH ticket stores intact', async () => {
+    const org = await deletableOrg(`Keep Tix ${Date.now()}`);
+    const name = org.name;
+    const email = `keep-tix-${Date.now()}@example.com`;
+    await seedStoreTicket('default', name, email, `TKT-KT-${String(Date.now()).slice(-5)}`);
+    await seedStoreTicket('admin', name, email, `TKT-KA-${String(Date.now()).slice(-5)}`);
+
+    const res = await del(org.id, adminCookies, { confirm: name, keepTickets: true });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.mode).toBe('keep_tickets');
+    expect(res.body.tickets).toBe(0);
+    expect(await prisma.customer.count({ where: { id: org.id } })).toBe(0);
+    expect(await storeTicketCount('default', name)).toBe(1);
+    expect(await storeTicketCount('admin', name)).toBe(1);
+  });
+
+  it('full wipe (default) destroys tickets in BOTH stores', async () => {
+    const org = await deletableOrg(`Wipe Tix ${Date.now()}`);
+    const name = org.name;
+    const email = `wipe-tix-${Date.now()}@example.com`;
+    await seedStoreTicket('default', name, email, `TKT-WT-${String(Date.now()).slice(-5)}`);
+    await seedStoreTicket('admin', name, email, `TKT-WA-${String(Date.now()).slice(-5)}`);
+
+    const res = await del(org.id, adminCookies, { confirm: name });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.mode).toBe('wipe');
+    expect(res.body.tickets).toBe(2);
+    expect(await storeTicketCount('default', name)).toBe(0);
+    expect(await storeTicketCount('admin', name)).toBe(0);
   });
 });

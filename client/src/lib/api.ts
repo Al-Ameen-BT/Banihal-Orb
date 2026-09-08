@@ -356,6 +356,9 @@ export const chatApi = {
 export const saasAdminApi = {
   listOrgs: (params?: Record<string, unknown>) => api.get('/saas-admin/orgs', { params }),
   updateOrg: (id: string, data: unknown) => api.patch(`/saas-admin/orgs/${id}`, data),
+  // Irreversible. `confirm` must be the org's exact name (the server re-checks it)
+  // and `keepTickets` decides whether the two ticket stores are wiped or retained.
+  deleteOrg: (id: string, data: { confirm: string; keepTickets?: boolean }) => api.delete(`/saas-admin/orgs/${id}`, { data }),
   listPendingOrgs: () => api.get('/saas-admin/orgs/pending'),
   reissueOrgApproval: (id: string) => api.post(`/saas-admin/orgs/${id}/reissue-approval`),
   impersonate: (userId: string) => api.post(`/saas-admin/impersonate/${userId}`),

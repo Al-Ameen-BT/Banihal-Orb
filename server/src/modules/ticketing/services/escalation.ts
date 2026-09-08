@@ -1,19 +1,19 @@
 import type { Role } from '@prisma/client';
 import * as db from '../ticketing.client';
-import { runWithTicketDb } from '../../../config/ticketDatabase';
+import { runWithTicketDb, getTicketDb } from '../../../config/ticketDatabase';
 import { resolveTicketActor, resolveB2bIdentity } from '../identity';
 import { nextTicketNumber } from '../utils/ticketNumber';
 import { getTicketNumberFormat } from './numberFormat';
 import { prisma } from '../../../config/database';
+import { notify } from '../../notifications/notifications.service';
 
 // ─── Escalation: client (b2b_ticket) → administrators (b2b_ticketing_admin) ────
 // Both stores share the SAME 14-table schema. An ORG_ADMIN escalates an UNCLOSED ticket
-// to the platform ADMINISTRATORS as a group (not an individual admin). We COPY it into
-// the admin store as a fresh ticket — new number, "Escalations" project, reported by the
-// bridged actor, left UNASSIGNED (any administrator can pick it up), linked to a
-// replicated org Customers row (so it groups per organization and shows Client details) —
-// and flag the source with an `escalated` label + activity. Cross-store reads/writes are
-// wrapped in the matching runWithTicketDb scope. Additive only: nothing is deleted/altered.
+// to the platform ADMINISTRATORS as a group. We COPY it into the admin store as a fresh
+// ticket — new number, "Escalations" project, reported by the bridged actor, ASSIGNED to
+// the first active platform ADMINISTRATOR ("Banihal Support") — and flag the source with
+// an `escalated` label + activity. Cross-store reads/writes are wrapped in the matching
+// runWithTicketDb scope. Additive only: nothing is deleted/altered.
 
 const notFound = (w: string) => Object.assign(new Error(`${w} not found`), { status: 404, code: 'NOT_FOUND' });
 
@@ -54,7 +54,7 @@ export async function escalateTicket(
 
   // Copy into the ADMIN store (14-table). Reporter + project + customer are resolved in
   // that store; the ticket number is allocated from the admin store's sequence; the copy
-  // is left unassigned for the administrator group to handle.
+  // is assigned to the first active platform ADMINISTRATOR ("Banihal Support").
   // The escalated copy must be REPORTED BY the original requester, not by whoever
   // escalated it — administrators triage by requester. The requester exists only in
   // the source store, so bridge across: ticket user → B2B account → ticket user in
@@ -81,11 +81,32 @@ export async function escalateTicket(
     });
     const fmt = await getTicketNumberFormat();
 
+    // "Banihal Support" = the platform's support team. A Tickets row needs a single
+    // concrete assignee, so the escalated copy goes to the FIRST ACTIVE platform
+    // ADMINISTRATOR (same name-order the admin assignee dropdown uses). If the whole
+    // admin roster has been deactivated, the copy stays unassigned and the
+    // escalation-alerts queue keeps surfacing it to every administrator.
+    let assigneeTicketUserId: string | null = null;
+    let assigneeB2bId: string | null = null;
+    let assigneeTenant: string | null = null;
+    const adminAccounts = await prisma.user.findMany({
+      where: { role: 'ADMINISTRATOR' },
+      select: { id: true, customerId: true },
+      orderBy: { name: 'asc' },
+    });
+    for (const a of adminAccounts) {
+      const bridged = await resolveTicketActor(a.id, 'ADMINISTRATOR'); // upserts into this (admin) store
+      const active = await getTicketDb().users.findUnique({ where: { id: bridged.id }, select: { isActive: true } });
+      if (active?.isActive !== false) { assigneeTicketUserId = bridged.id; assigneeB2bId = a.id; assigneeTenant = a.customerId; break; }
+    }
+
     let created = false;
+    let createdTicketId = '';
+    let ticketNumber = '';
     for (let attempt = 0; attempt < 10 && !created; attempt++) {
-      const ticketNumber = await nextTicketNumber(fmt, orgCode);
+      ticketNumber = await nextTicketNumber(fmt, orgCode);
       try {
-        await db.createTicketRow({
+        createdTicketId = await db.createTicketRow({
           ticketNumber,
           title: source.title,
           description: `Escalated from ${source.ticketNumber} (${orgName}).\n${requestedByLine}\n\n${source.description}`,
@@ -95,6 +116,7 @@ export async function escalateTicket(
           projectId,
           reporterId,
           createdBy: actor.id,
+          assigneeId: assigneeTicketUserId,
           customerId,
           labels: ['escalated', `src:${source.ticketNumber}`, `org:${orgName}`],
           branch: source.branch,
@@ -107,6 +129,21 @@ export async function escalateTicket(
       }
     }
     if (!created) throw Object.assign(new Error('Could not allocate an escalation ticket number'), { status: 500, code: 'TICKET_NUMBER_RACE' });
+
+    // The assigned administrator is told directly (in-app + push); the rest of the
+    // team still sees it through the escalation-alerts feed.
+    if (assigneeB2bId && assigneeTenant) {
+      await notify({
+        userId: assigneeB2bId,
+        customerId: assigneeTenant, // the RECIPIENT's org — see notifications.service
+        kind: 'ticket_assigned',
+        title: `${ticketNumber} assigned to you`,
+        body: `${source.title}${orgName ? ` · ${orgName}` : ''}`,
+        url: `/ticketing?ticket=${createdTicketId}`,
+        actorId: b2bUserId,
+        entityId: createdTicketId,
+      });
+    }
   });
 
   // Flag + log the source in the shared store.

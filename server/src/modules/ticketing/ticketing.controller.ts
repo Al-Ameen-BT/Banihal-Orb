@@ -14,6 +14,8 @@ import { resolveTicketActor } from './identity';
 import { aggregate } from './services/dashboardAggregate';
 import { cached, cacheKey, TTL, invalidate } from '../../lib/cache';
 import { audit } from '../../lib/audit';
+import { prisma } from '../../config/database';
+import { notify } from '../notifications/notifications.service';
 import type { AuditAction } from '../../config/auditActions';
 
 // Bridge the B2B-Site user to a ticketing staff Users row (id + mapped role).
@@ -98,6 +100,36 @@ const auditTicket = (
 // on submit. Kept in sync with the same id in client/src/app/ticketing/shared.tsx.
 export const ESCALATE_ADMINS_ID = '__escalate_admins__';
 
+// A plain organization member's ticket is created with the pending:org-admin label
+// and NO assignee; this is the "notification" half of the flow — every ORG_ADMIN of
+// the organization gets an in-app row + web push deep-linked to the ticket, and
+// OPENING it fires the auto-assign (see getTicket's claim-on-open). The caller
+// awaits it; the caller's try/catch keeps a notification problem from failing an
+// already-committed ticket creation.
+async function notifyOrgAdminsOfPendingTicket(
+  b2bCustomerId: string | null | undefined,
+  ticket: { id: string; ticketNumber: string; title: string },
+  actorB2bUserId: string,
+): Promise<void> {
+  if (!b2bCustomerId) return;
+  const admins = await prisma.user.findMany({
+    where: { customerId: b2bCustomerId, role: 'ORG_ADMIN' },
+    select: { id: true, customerId: true },
+  });
+  for (const admin of admins) {
+    await notify({
+      userId: admin.id,
+      customerId: admin.customerId,
+      kind: 'ticket_pending_org_admin',
+      title: `${ticket.ticketNumber} needs your review`,
+      body: `${ticket.title} · waiting for your assignment`,
+      url: `/ticketing?ticket=${ticket.id}`,
+      actorId: actorB2bUserId,
+      entityId: ticket.id,
+    });
+  }
+}
+
 export async function listTickets(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const input = ListTicketsSchema.parse(req.query);
@@ -123,8 +155,18 @@ export async function getTicket(req: Request, res: Response, next: NextFunction)
   try {
     const scope = await service.ticketAccessScope(req.user);
     await service.assertTicketAccess(scope, req.params['id']!);
-    const ticket = await service.getTicket(req.params['id']!);
+    let ticket = await service.getTicket(req.params['id']!);
     if (!ticket) { res.status(404).json({ error: 'Ticket not found', code: 'NOT_FOUND' }); return; }
+
+    // Claim-on-open: the first ORG_ADMIN who opens a member-created ticket with the
+    // pending:org-admin label takes it. "Opening" here is the ticket detail view —
+    // the same request the ticket's notification deep-links to — so clicking the
+    // notification (or the ticket itself) carries out the auto-assignment.
+    if (req.user.role === 'ORG_ADMIN' && ticket.assignee === null && ticket.labels.includes('pending:org-admin')) {
+      const me = await actor(req);
+      ticket = (await service.claimPendingOrgAdminTicket(me.id, ticket.id)) ?? ticket;
+    }
+
     res.json(ticket);
   } catch (err) { next(err); }
 }
@@ -152,7 +194,7 @@ export async function createTicket(req: Request, res: Response, next: NextFuncti
           { status: 403, code: 'FORBIDDEN' },
         );
       }
-      const ticket = await service.createTicket(me.id, { ...input, assigneeId: null }, req.user.customerId);
+      const ticket = await service.createTicket(me.id, { ...input, assigneeId: null }, req.user.customerId, req.user.role);
       await auditTicket(req, 'TICKET_CREATED', ticket);
       await escalation.escalateTicket(req.user.userId, req.user.role, ticket.id);
       // Two rows on purpose: the ticket was raised AND routed to the platform team.
@@ -161,8 +203,15 @@ export async function createTicket(req: Request, res: Response, next: NextFuncti
       return;
     }
 
-    const ticket = await service.createTicket(me.id, input, req.user.customerId);
+    const ticket = await service.createTicket(me.id, input, req.user.customerId, req.user.role);
     await auditTicket(req, 'TICKET_CREATED', ticket);
+    // The Notification row is the delivery guarantee of the "ticket notification"
+    // half of the org-admin auto-assignment, so it is awaited — but a notification
+    // failure must never fail an already-committed ticket creation, hence the catch.
+    if (req.user.role === 'USER' && ticket.labels.includes('pending:org-admin')) {
+      await notifyOrgAdminsOfPendingTicket(req.user.customerId, ticket, req.user.userId).catch((err) =>
+        console.error('⚠️  Org-admin pending-ticket notification failed:', err instanceof Error ? err.message : err));
+    }
     res.status(201).json(ticket);
   } catch (err) { next(err); }
 }

@@ -30,9 +30,22 @@ import { audit } from '../../lib/audit';
 export interface OrgDeletionReport {
   orgName: string;
   users: number;
-  tickets: number;
-  attachments: number;
+  tickets: number;       // ticket-store rows destroyed; 0 in keep-tickets mode
+  attachments: number;   // attachment files destroyed; 0 in keep-tickets mode
   chatSessions: number;
+  /** 'wipe' purged both ticket stores; 'keep_tickets' retained them. */
+  mode: 'wipe' | 'keep_tickets';
+}
+
+export interface DeleteOrgOptions {
+  /** The org's exact name, typed by the caller. Re-checked HERE — see CONFIRM_MISMATCH. */
+  confirmName: string;
+  /**
+   * true → keep both ticket stores (shared + internal admin) and their upload
+   * files; everything else (users, chat, escalations, amenities) still goes.
+   * false / omitted → purge both ticket stores (the full wipe).
+   */
+  keepTickets?: boolean;
 }
 
 /**
@@ -136,8 +149,20 @@ async function purgeTicketStore(scope: TicketDbScope, orgName: string, emails: s
  * key precisely so the record of an organization outlives the organization —
  * including the record of this deletion.
  */
-export async function deleteOrganization(orgId: string, actorId: string): Promise<OrgDeletionReport> {
-  await assertDeletable(orgId);
+export async function deleteOrganization(orgId: string, actorId: string, opts: DeleteOrgOptions): Promise<OrgDeletionReport> {
+  const guarded = await assertDeletable(orgId);
+
+  // Same contract as deleteProject: a destructive endpoint that trusts the client
+  // to have asked is not confirmed, it is merely inconvenient to call by hand.
+  if (opts.confirmName.trim() !== guarded.name.trim()) {
+    throw Object.assign(new Error('The typed name does not match this organization.'), {
+      status: 400, code: 'CONFIRM_MISMATCH',
+    });
+  }
+
+  const keepTickets = opts.keepTickets === true;
+  const mode: OrgDeletionReport['mode'] = keepTickets ? 'keep_tickets' : 'wipe';
+
   // Captured while it still exists — see constraint 1 above.
   const org = await prisma.customer.findUniqueOrThrow({
     where: { id: orgId },
@@ -145,13 +170,17 @@ export async function deleteOrganization(orgId: string, actorId: string): Promis
   });
   const snap = { ...org, emails: org.users.map((u) => u.email.toLowerCase()) };
 
-  // Both stores. Escalated tickets live in the admin one.
+  // Both stores. Escalated tickets live in the admin one. In keep-tickets mode the
+  // stores are left whole on purpose — the org is leaving the platform, but its
+  // ticket history (and the attachment bytes it points at) stays as a record.
   let tickets = 0;
   let attachments = 0;
-  for (const scope of ['default', 'admin'] as const) {
-    const r = await purgeTicketStore(scope, snap.name, snap.emails);
-    tickets += r.tickets;
-    attachments += r.attachments;
+  if (!keepTickets) {
+    for (const scope of ['default', 'admin'] as const) {
+      const r = await purgeTicketStore(scope, snap.name, snap.emails);
+      tickets += r.tickets;
+      attachments += r.attachments;
+    }
   }
 
   // Chat lives in its own database — no cross-database cascade reaches it.
@@ -169,7 +198,7 @@ export async function deleteOrganization(orgId: string, actorId: string): Promis
   await prisma.announcement.deleteMany({ where: { customerId: orgId } }).catch(() => {});
 
   const report: OrgDeletionReport = {
-    orgName: snap.name, users: snap.emails.length, tickets, attachments, chatSessions: chat.count,
+    orgName: snap.name, users: snap.emails.length, tickets, attachments, chatSessions: chat.count, mode,
   };
 
   // Logged BEFORE the point of no return, so the record exists even if the final

@@ -12,6 +12,7 @@ import { notifyTicketAssignedInBackground } from './services/ticketNotify';
 import { mirrorComment, mirrorFields, mirrorInBackground } from './services/escalationMirror';
 import { isBreached } from './services/dashboardAggregate';
 import { prisma } from '../../config/database';
+import type { Role } from '@prisma/client';
 import type { z } from 'zod';
 import type { CreateTicketSchema, UpdateTicketSchema, CreateProjectSchema, UpdateProjectSchema, CreateSlaSchema } from './ticketing.schema';
 import type { TicketDTO, ProjectDTO, SlaDTO, TicketFilters, TicketPriority } from './ticketing.types';
@@ -28,7 +29,7 @@ const notFound = (what: string) => Object.assign(new Error(`${what} not found`),
 export const listTickets = (filters: TicketFilters = {}) => db.listTickets(filters);
 export const getTicket = (id: string) => db.getTicketById(id);
 
-export async function createTicket(actorId: string, input: CreateTicketInput, b2bCustomerId?: string | null): Promise<TicketDTO> {
+export async function createTicket(actorId: string, input: CreateTicketInput, b2bCustomerId?: string | null, creatorRole?: Role): Promise<TicketDTO> {
   const project = await db.getProjectSettings(input.projectId);
   if (!project) throw notFound('Project');
 
@@ -40,10 +41,17 @@ export async function createTicket(actorId: string, input: CreateTicketInput, b2
   // SLA: first active SLA matching the ticket priority.
   const slaId = await db.findActiveSlaIdByPriority(input.priority);
 
+  // A plain organization member's ticket is routed to its ORG ADMIN — LAZILY. The
+  // ticket is stored UNASSIGNED with the `pending:org-admin` label, and the first
+  // org admin who opens it (from the ticket list or its notification) claims it in
+  // getTicket. Round-robin is bypassed for these: they already have a designated
+  // taker, and an explicit assignee the user picked always wins over both.
+  const pendingOrgAdmin = creatorRole === 'USER' && Boolean(b2bCustomerId) && !input.assigneeId;
+
   // Round-robin: only when no explicit assignee and the project enables it.
   let assigneeId = input.assigneeId ?? null;
   let settingsToPersist: object | null = null;
-  if (!assigneeId) {
+  if (!assigneeId && !pendingOrgAdmin) {
     const next = getNextAssignee(project.settings);
     if (next) { assigneeId = next; settingsToPersist = withLastAssigned(project.settings, next); }
   }
@@ -79,6 +87,8 @@ export async function createTicket(actorId: string, input: CreateTicketInput, b2
     await db.setCustomerEmail(customerId, input.customerEmail);
   }
 
+  const labels = [...(input.labels ?? []), ...(pendingOrgAdmin ? ['pending:org-admin'] : [])];
+
   const base = {
     title: input.title,
     description: input.description,
@@ -92,7 +102,7 @@ export async function createTicket(actorId: string, input: CreateTicketInput, b2
     customerId,
     storyPoints: input.storyPoints ?? null,
     dueDate: input.dueDate ? new Date(input.dueDate) : null,
-    ...(input.labels ? { labels: input.labels } : {}),
+    ...(labels.length ? { labels } : {}),
     SLAId: slaId,
     branch: input.branch ?? null,
     onSiteSupportRequired: input.onSiteSupportRequired ?? false,
@@ -351,6 +361,20 @@ export async function claimTicket(claimerId: string, ticketId: string): Promise<
     throw Object.assign(new Error(`Already claimed by ${t?.assignee?.name ?? 'another administrator'}.`), { status: 409, code: 'ALREADY_CLAIMED' });
   }
   await db.writeActivity({ type: 'assigned', ticketId, userId: claimerId, field: 'assigneeId', newValue: claimerId, description: 'Claimed the escalated ticket' });
+  return (await db.getTicketById(ticketId))!;
+}
+
+// The lazy half of auto-assign-to-org-admin: a plain member's ticket carries the
+// pending:org-admin label, and OPENING it as an ORG_ADMIN claims it (first-wins).
+// Best-effort by design — losing the race, or encountering an already-assigned
+// label-free ticket, simply yields the caller's existing ticket unchanged.
+export async function claimPendingOrgAdminTicket(claimerId: string, ticketId: string): Promise<TicketDTO | null> {
+  const current = await db.getTicketById(ticketId);
+  if (!current || current.assignee !== null || !current.labels.includes('pending:org-admin')) return null;
+  const won = await db.claimTicket(ticketId, claimerId); // atomic: WHERE assigneeId IS NULL
+  if (!won) return null;
+  await db.updateTicketRow(ticketId, { labels: current.labels.filter((l) => l !== 'pending:org-admin') });
+  await db.writeActivity({ type: 'assigned', ticketId, userId: claimerId, field: 'assigneeId', newValue: claimerId, description: 'Auto-assigned to the organization admin on open' });
   return (await db.getTicketById(ticketId))!;
 }
 

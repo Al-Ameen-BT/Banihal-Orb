@@ -6,10 +6,12 @@ import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { saasAdminApi } from '@/lib/api';
+import { useAuth } from '@/contexts/AuthContext';
 import RoleGuard from '@/components/guards/RoleGuard';
 import Sidebar from '@/components/ui/Sidebar';
 import GlowButton from '@/components/ui/GlowButton';
 import { useConfirm } from '@/components/ui/ConfirmDialog';
+import { notify } from '@/lib/toast-bus';
 import { mfaStatus } from '@/lib/display';
 import { Shimmer } from '@/components/ui/Shimmer';
 
@@ -208,6 +210,162 @@ function CatalogPickerModal({ orgId, onClose }: { orgId: string; onClose: () => 
             </div>
           </div>
         )}
+      </motion.div>
+    </div>
+  );
+}
+
+// ─── Delete Organization (2-step confirmation) ───────────────────────────────
+type DeleteMode = 'wipe' | 'keep_tickets';
+
+function ModeCard({ selected, onSelect, title, badge, description }: {
+  selected: boolean; onSelect: () => void; title: string; badge?: string; description: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`w-full text-left px-4 py-3.5 rounded-xl border transition-all cursor-pointer ${
+        selected ? 'border-brand bg-brand-50/50 ring-1 ring-brand' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+      }`}
+    >
+      <div className="flex items-center gap-2 mb-1">
+        <span className={`w-3.5 h-3.5 rounded-full border-4 transition-colors ${selected ? 'border-brand bg-brand-600' : 'border-slate-300 bg-white'}`} />
+        <p className="text-sm font-semibold text-slate-900">{title}</p>
+        {badge && <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">Default</span>}
+      </div>
+      <p className="text-xs text-slate-500 leading-relaxed pl-6">{description}</p>
+    </button>
+  );
+}
+
+function DeleteOrgModal({ org, onClose, onDeleted }: { org: OrgDetail['org']; onClose: () => void; onDeleted: () => void }) {
+  const [step, setStep] = useState(0);
+  const [mode, setMode] = useState<DeleteMode>('wipe');
+  const [confirmText, setConfirmText] = useState('');
+  const [error, setError] = useState('');
+
+  const mutation = useMutation({
+    mutationFn: () => saasAdminApi.deleteOrg(org.id, { confirm: org.name, keepTickets: mode === 'keep_tickets' }),
+    onSuccess: () => {
+      notify(mode === 'keep_tickets' ? 'Organization deleted — ticketing data retained' : 'Organization and all data deleted', 'success');
+      onDeleted();
+    },
+    // 400 codes come back with a plain `error` message; anything else (network,
+    // 5xx mid-flight) is a generic refusal from the interceptor, not this modal's.
+    onError: (e: unknown) => {
+      const data = (e as { response?: { data?: { error?: string } } })?.response?.data;
+      setError(data?.error ?? 'The organization could not be deleted. Reload the page and try again.');
+    },
+  });
+
+  const continueBlocked = !org.suspended;
+  const canConfirm = confirmText === org.name;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96, y: 8 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96, y: 8 }}
+        transition={{ duration: 0.18 }}
+        className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden max-h-[85vh]"
+      >
+        <div className="px-6 py-5 border-b border-slate-100 flex items-start gap-4 flex-shrink-0">
+          <div className="w-11 h-11 rounded-full bg-red-50 flex items-center justify-center flex-shrink-0">
+            <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+            </svg>
+          </div>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-base font-semibold text-slate-900">Delete organization</h2>
+            <p className="text-xs text-slate-400 mt-0.5">Step {step + 1} of 2 · {org.name} · irreversible</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors cursor-pointer" aria-label="Close">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+
+        <div className="px-6 py-5 space-y-4 flex-1 overflow-y-auto min-h-0">
+          {continueBlocked && (
+            <div className="bg-amber-50 border border-amber-100 rounded-lg px-3.5 py-2.5 text-sm text-amber-800 flex items-start gap-2">
+              <svg className="w-4 h-4 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3.75m9.303 3.376c-.866 1.5.217 3.374 1.948 3.374H4.749c-1.731 0-2.814-1.874-1.948-3.374L10.052 3.378c.866-1.5 3.032-1.5 3.898 0l6.353 11.998Z" />
+              </svg>
+              <span>This organization is still <b>active</b>. Suspend it first — only suspended organizations can be deleted.</span>
+            </div>
+          )}
+
+          {step === 0 ? (
+            <div className="space-y-3">
+              <p className="text-sm text-slate-600">Choose what happens to this organization&rsquo;s data:</p>
+              <ModeCard
+                selected={mode === 'wipe'}
+                onSelect={() => setMode('wipe')}
+                title="Full data wipe"
+                badge="Default"
+                description="Destroys the organization, its users, chat history, every ticket in both the shared and internal ticketing stores, and all uploaded attachments. Nothing is recoverable."
+              />
+              <ModeCard
+                selected={mode === 'keep_tickets'}
+                onSelect={() => setMode('keep_tickets')}
+                title="Keep ticketing data"
+                description="Deletes the organization, its users, chat history, services and requests — but leaves the ticketing data (tickets, comments, attachments) in both stores as a historical record."
+              />
+              <p className="text-[11px] text-slate-400 pt-1">{org._count.users} user(s) · {org.plan} plan</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="bg-slate-50 border border-slate-100 rounded-lg px-4 py-3">
+                <p className="text-sm font-medium text-slate-700">
+                  {mode === 'keep_tickets' ? 'Keeping ticketing data' : 'Full data wipe'}
+                </p>
+                <p className="text-xs text-slate-500 mt-1">
+                  {mode === 'keep_tickets'
+                    ? `${org.name} and its ${org._count.users} user(s), chat history and non-ticketing data will be deleted. Tickets stay in both stores.`
+                    : `${org.name}, all ${org._count.users} user(s), chat history and every ticket in both stores will be permanently destroyed.`}
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                  Type <span className="font-semibold text-red-600">{org.name}</span> to confirm
+                </label>
+                <input
+                  value={confirmText}
+                  onChange={(e) => setConfirmText(e.target.value)}
+                  placeholder={org.name}
+                  className="input font-mono text-sm"
+                  autoFocus
+                />
+              </div>
+              {error && <p className="text-sm text-red-600">{error}</p>}
+            </div>
+          )}
+        </div>
+
+        <div className="px-6 py-4 bg-slate-50/80 border-t border-slate-100 flex items-center justify-end gap-3 flex-shrink-0">
+          <GlowButton variant="ghost" onClick={onClose} disabled={mutation.isPending}>
+            Cancel
+          </GlowButton>
+          {step === 0 ? (
+            <GlowButton onClick={() => setStep(1)} disabled={continueBlocked}>
+              Continue
+            </GlowButton>
+          ) : (
+            <>
+              <GlowButton variant="ghost" onClick={() => { setStep(0); setError(''); }} disabled={mutation.isPending}>
+                Back
+              </GlowButton>
+              <GlowButton
+                variant="danger"
+                disabled={!canConfirm || mutation.isPending}
+                loading={mutation.isPending}
+                onClick={() => mutation.mutate()}
+              >
+                Delete organization forever
+              </GlowButton>
+            </>
+          )}
+        </div>
       </motion.div>
     </div>
   );
@@ -515,7 +673,9 @@ export default function OrgDetailPage() {
   const router = useRouter();
   const qc = useQueryClient();
   const confirm = useConfirm();
+  const { can } = useAuth();
   const orgId = params?.['id'] as string;
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const { data, isLoading, error } = useQuery<OrgDetail>({
     queryKey: ['org-detail', orgId],
@@ -624,16 +784,26 @@ export default function OrgDetailPage() {
                     </p>
                   </div>
                 </div>
-                <GlowButton variant={org.suspended ? 'primary' : 'danger'}
-                  onClick={async () => {
-                    const ok = await confirm(org.suspended
-                      ? { title: 'Restore organization', message: <>Restore access for <b>{org.name}</b>?</>, confirmText: 'Restore' }
-                      : { title: 'Suspend organization', message: <><b>{org.name}</b> will be suspended and members will lose access.</>, confirmText: 'Suspend', variant: 'danger' });
-                    if (ok) suspendMutation.mutate();
-                  }}
-                  disabled={suspendMutation.isPending} loading={suspendMutation.isPending}>
-                  {org.suspended ? 'Restore Access' : 'Suspend Org'}
-                </GlowButton>
+                <div className="flex items-center gap-2.5">
+                  <GlowButton variant={org.suspended ? 'primary' : 'danger'}
+                    onClick={async () => {
+                      const ok = await confirm(org.suspended
+                        ? { title: 'Restore organization', message: <>Restore access for <b>{org.name}</b>?</>, confirmText: 'Restore' }
+                        : { title: 'Suspend organization', message: <><b>{org.name}</b> will be suspended and members will lose access.</>, confirmText: 'Suspend', variant: 'danger' });
+                      if (ok) suspendMutation.mutate();
+                    }}
+                    disabled={suspendMutation.isPending} loading={suspendMutation.isPending}>
+                    {org.suspended ? 'Restore Access' : 'Suspend Org'}
+                  </GlowButton>
+                  {can('orgs.delete') && (
+                    <GlowButton variant="danger" onClick={() => setDeleteOpen(true)}>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                      </svg>
+                      Delete Organization
+                    </GlowButton>
+                  )}
+                </div>
               </div>
             </motion.div>
 
@@ -849,6 +1019,23 @@ export default function OrgDetailPage() {
       <AnimatePresence>
         {showCatalogPicker && (
           <CatalogPickerModal orgId={orgId} onClose={() => setShowCatalogPicker(false)} />
+        )}
+      </AnimatePresence>
+
+      {/* Delete organization (2-step confirmation) */}
+      <AnimatePresence>
+        {deleteOpen && (
+          <DeleteOrgModal
+            org={org}
+            onClose={() => setDeleteOpen(false)}
+            onDeleted={() => {
+              setDeleteOpen(false);
+              void qc.invalidateQueries({ queryKey: ['org-detail'] });
+              void qc.invalidateQueries({ queryKey: ['saas-orgs-overview'] });
+              void qc.invalidateQueries({ queryKey: ['saas-metrics'] });
+              router.push('/saas-admin');
+            }}
+          />
         )}
       </AnimatePresence>
     </RoleGuard>

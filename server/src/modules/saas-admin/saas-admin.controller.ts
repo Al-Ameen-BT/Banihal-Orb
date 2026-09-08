@@ -10,7 +10,7 @@ import {
   ListEscalationsSchema, UpdateEscalationSchema,
   TicketNumberFormatSchema,
   InviteStaffSchema, UpdateSadminSchema, CreatePlatformRoleSchema, UpdatePlatformRoleSchema,
-  RedeemImpersonationSchema,
+  RedeemImpersonationSchema, DeleteOrgSchema,
 } from './saas-admin.schema';
 import * as platformRoles from '../platform-roles/platformRoles.service';
 import { PERMISSIONS } from '../../config/permissions';
@@ -53,7 +53,11 @@ export async function updateOrg(req: Request, res: Response, next: NextFunction)
 
 export async function deleteOrg(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const report = await orgDeletion.deleteOrganization(req.params['id']!, req.user.userId);
+    const input = DeleteOrgSchema.parse(req.body);
+    const report = await orgDeletion.deleteOrganization(req.params['id']!, req.user.userId, {
+      confirmName: input.confirm,
+      keepTickets: input.keepTickets,
+    });
     res.json({ success: true, ...report });
   } catch (err) { next(err); }
 }

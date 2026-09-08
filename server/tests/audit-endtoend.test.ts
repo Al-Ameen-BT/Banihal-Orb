@@ -80,7 +80,8 @@ describe('cross-tenant admin routes are not narrowed by tenant scope', () => {
     const adminCookies = await loginAs('admin@example.com');
     await prisma.customer.update({ where: { id: orgId }, data: { suspended: true } });
 
-    const res = await request(app).delete(`/api/saas-admin/orgs/${orgId}`).set('Cookie', adminCookies);
+    const res = await request(app).delete(`/api/saas-admin/orgs/${orgId}`)
+      .set('Cookie', adminCookies).send({ confirm: 'E2E Client Org' });
 
     // The acting admin belongs to a DIFFERENT org. If tenant scoping leaked into
     // this path the deletes would silently match nothing and the org would remain.
