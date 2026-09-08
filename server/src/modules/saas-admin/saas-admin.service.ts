@@ -11,6 +11,7 @@ import type { PermissionKey } from '../../config/permissions';
 import { passwordFingerprint } from '../auth/passwordReuse';
 import { syncTicketUpdated } from '../requests/ticketing.provider';
 import { getTicketNumberFormat as readTicketNumberFormat } from '../ticketing/services/numberFormat';
+import { deactivateUserInTicketStores } from '../ticketing/ticketing.client';
 import type {
   ListOrgsInput, UpdateOrgInput, ToggleFlagInput,
   ListRequestsInput, UpdateRequestInput,
@@ -538,13 +539,15 @@ export async function removeUser(targetUserId: string, adminUserId: string) {
   if (!target) throw Object.assign(new Error('User not found'), { status: 404, code: 'NOT_FOUND' });
   if (target.role === 'ADMINISTRATOR') throw Object.assign(new Error('Platform admin accounts cannot be removed via this endpoint'), { status: 403, code: 'PROTECTED_ACCOUNT' });
 
-  await prisma.auditLog.create({
-    data: {
-      action: 'ADMIN_USER_REMOVE', performedById: adminUserId, targetId: targetUserId,
-      customerId: target.customerId,
-      metadata: { targetEmail: target.email, targetName: target.name, targetRole: target.role },
-    },
+  await audit({
+    action: 'ADMIN_USER_REMOVE', performedById: adminUserId, targetId: targetUserId,
+    customerId: target.customerId,
+    metadata: { targetEmail: target.email, targetName: target.name, targetRole: target.role },
   });
+
+  // The ticket stores keep the bridged Users row (FK target of their ticket
+  // history) but it must stop being assignable the moment the account is gone.
+  await deactivateUserInTicketStores(target.email);
 
   await prisma.user.delete({ where: { id: targetUserId } });
   // Chat history lives in the dedicated chat DB — no cross-database cascade.
@@ -891,13 +894,14 @@ export async function removeSadmin(targetUserId: string, administratorId: string
   if (!target) throw Object.assign(new Error('User not found'), { status: 404, code: 'NOT_FOUND' });
   if (target.role !== 'ADMINISTRATOR') throw Object.assign(new Error('Target is not an Administrator'), { status: 400, code: 'INVALID_TARGET' });
 
-  await prisma.auditLog.create({
-    data: {
-      action: 'ADMINISTRATOR_SADMIN_REMOVE', performedById: administratorId, targetId: targetUserId,
-      customerId: target.customerId,
-      metadata: { targetEmail: target.email, targetName: target.name },
-    },
+  await audit({
+    action: 'ADMINISTRATOR_SADMIN_REMOVE', performedById: administratorId, targetId: targetUserId,
+    customerId: target.customerId,
+    metadata: { targetEmail: target.email, targetName: target.name },
   });
+
+  // Deleted platform staff must drop out of the ticket-store assignee pools too.
+  await deactivateUserInTicketStores(target.email);
 
   await prisma.user.delete({ where: { id: targetUserId } });
 }

@@ -92,9 +92,10 @@ const auditTicket = (
 });
 
 // Synthetic assignee that routes a new ticket to the platform administrators
-// (auto-escalation) instead of a person. Offered to ORG_ADMIN only; the client
-// translates it into { escalateToAdministrators: true } on submit. Kept in sync
-// with the same id in client/src/app/ticketing/shared.tsx.
+// Synthetic assignee for the org-admin New Ticket form (auto-escalation) instead of
+// a person. It renders as "Banihal Support" in the dropdown — the platform's support
+// team — and the client translates selecting it into { escalateToAdministrators: true }
+// on submit. Kept in sync with the same id in client/src/app/ticketing/shared.tsx.
 export const ESCALATE_ADMINS_ID = '__escalate_admins__';
 
 export async function listTickets(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -140,7 +141,7 @@ export async function createTicket(req: Request, res: Response, next: NextFuncti
       : { ...parsed, customerId: undefined, contactPerson: undefined, customerEmail: undefined };
     const me = await actor(req);
 
-    // Org admin picked "Escalate to Administrators" as the assignee: create the
+    // Org admin picked "Banihal Support" as the assignee: create the
     // ticket in the org store UNASSIGNED, then auto-escalate it to the platform
     // administrators' store. Restricted to ORG_ADMIN (regular users never get the
     // option, and this is the server-side guard).
@@ -278,14 +279,16 @@ export async function listAssignees(req: Request, res: Response, next: NextFunct
       res.json({ assignees: await cached(cacheKey('assignees', 'admin'), TTL.reference, () => listAdminAssignees()) });
       return;
     }
-    // Org store's pool is its own staff (platform admins are excluded by listStaff).
-    // ORG_ADMINs additionally get a synthetic "Escalate to Administrators" option at
-    // the top; regular users never see it — so the role is part of the cache key,
-    // or a USER would be served the org-admin list from a warm entry.
-    const assignees = await cached(cacheKey('assignees', req.user.role), TTL.reference, async () => {
-      const staff = await db.listStaff();
+    // Org store's pool is the caller's OWN organization's staff (listOrgStaff) —
+    // NEVER the global roster: the shared store spans every tenant and the old
+    // listStaff() call offered one org's people to another (a cross-org leak).
+    // ORG_ADMINs additionally get a synthetic "Banihal Support" escalate option at
+    // the top; regular users never see it. The cache key carries role AND org id,
+    // or a warm entry from org A would be served to org B.
+    const assignees = await cached(cacheKey('assignees', req.user.role, req.user.customerId ?? 'none'), TTL.reference, async () => {
+      const staff = req.user.customerId ? await db.listOrgStaff(req.user.customerId) : [];
       return req.user.role === 'ORG_ADMIN'
-        ? [{ id: ESCALATE_ADMINS_ID, name: 'Escalate to Administrators', email: '', role: 'ADMINISTRATOR' }, ...staff]
+        ? [{ id: ESCALATE_ADMINS_ID, name: 'Banihal Support', email: '', role: 'ADMINISTRATOR' }, ...staff]
         : staff;
     });
     res.json({ assignees });

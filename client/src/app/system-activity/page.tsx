@@ -22,7 +22,10 @@ interface SystemLogEntry {
   action: string;
   createdAt: string;
   metadata: Record<string, unknown> | null;
-  performedBy: { id: string; name: string; email: string; role: string };
+  // NULL once the performer's account has been deleted (AuditLog.performedById is
+  // ON DELETE SET NULL) — the name then comes back from the metadata snapshot that
+  // lib/audit.ts writes at insert time, so deleted users stay identifiable.
+  performedBy: { id: string; name: string; email: string; role: string } | null;
   organization: { id: string; name: string; slug: string } | null;
 }
 interface SystemActivityResp { items: SystemLogEntry[]; total: number; page: number; limit: number }
@@ -257,11 +260,11 @@ export default function SystemActivityPage() {
                             <tr key={e.id} className="hover:bg-slate-50 transition-colors">
                               <td className="px-4 py-3 whitespace-nowrap text-slate-500" title={new Date(e.createdAt).toLocaleString()}>{timeAgo(e.createdAt)}</td>
                               <td className="px-4 py-3">
-                                <div className="font-medium text-slate-900">{e.performedBy?.name ?? '—'}</div>
-                                <div className="text-xs text-slate-400">{e.performedBy?.email ?? ''}</div>
+                                <div className="font-medium text-slate-900">{e.performedBy?.name ?? (e.metadata?.performedByName as string | undefined) ?? 'Deleted user'}</div>
+                                <div className="text-xs text-slate-400">{e.performedBy?.email ?? (e.metadata?.performedByEmail as string | undefined) ?? ''}</div>
                               </td>
                               <td className="px-4 py-3">
-                                <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${roleBadgeCls[e.performedBy?.role] ?? 'text-slate-600 bg-slate-100'}`}>{e.performedBy?.role ?? '—'}</span>
+                                <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${roleBadgeCls[((e.performedBy?.role ?? e.metadata?.performedByRole) as string) ?? ''] ?? 'text-slate-600 bg-slate-100'}`}>{e.performedBy?.role ?? (e.metadata?.performedByRole as string | undefined) ?? '—'}</span>
                               </td>
                               <td className="px-4 py-3">
                                 <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-semibold ${cfg.cls}`}>{cfg.icon} {cfg.label}</span>

@@ -1,4 +1,4 @@
-import { prisma } from '../config/database';
+import { prisma, customerContext } from '../config/database';
 import type { AuditAction } from '../config/auditActions';
 
 // ─── The audit writer ────────────────────────────────────────────────────────
@@ -26,15 +26,30 @@ export interface AuditEntry {
   metadata?: Record<string, unknown>;
 }
 
+// The AuditLog.performedById FK is ON DELETE SET NULL: deleting the actor's account
+// later would anonymize every row they ever wrote — the "user" and "role" columns
+// of the system-activity page collapse to '—'. Snapshot the identity into metadata
+// at write time so the trail stays attributable after the account is gone. Resolved
+// OUTSIDE the tenant context: an ADMINISTRATOR auditing another org's event must not
+// have the performer lookup tenant-filtered away.
+async function actorSnapshot(performedById: string | null): Promise<Record<string, string> | null> {
+  if (!performedById) return null;
+  const actor = await customerContext.exit(() =>
+    prisma.user.findUnique({ where: { id: performedById }, select: { name: true, email: true, role: true } }),
+  );
+  return actor ? { performedByName: actor.name, performedByEmail: actor.email, performedByRole: actor.role } : null;
+}
+
 /** Write an audit row. Blocking: a failure propagates and fails the request. */
 export async function audit(entry: AuditEntry): Promise<void> {
+  const actor = await actorSnapshot(entry.performedById);
   await prisma.auditLog.create({
     data: {
       action: entry.action,
       performedById: entry.performedById,
       targetId: entry.targetId ?? null,
       customerId: entry.customerId,
-      ...(entry.metadata ? { metadata: entry.metadata } : {}),
+      metadata: { ...entry.metadata, ...actor },
     },
   });
 }

@@ -13,7 +13,11 @@ export interface NumberFormat {
   padWidth: number;
 }
 
-export const DEFAULT_FORMAT: NumberFormat = { prefix: 'TKT', includeOrgCode: false, separator: '-', padWidth: 3 };
+// Per-org codes are the intended multi-tenant behaviour and the DEFAULT: without a
+// TicketNumberSetting row the fallback MUST NOT collapse every organization onto one
+// global TKT-NNN counter. Admin-created tickets (b2bCustomerId null) simply omit the
+// org segment, so the admin store keeps its own plain TKT-NNN sequence.
+export const DEFAULT_FORMAT: NumberFormat = { prefix: 'TKT', includeOrgCode: true, separator: '-', padWidth: 3 };
 
 export async function getTicketNumberFormat(): Promise<NumberFormat> {
   const row = await prisma.ticketNumberSetting.findUnique({ where: { id: 'default' } });

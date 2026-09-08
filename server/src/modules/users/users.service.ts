@@ -4,6 +4,7 @@ import { prisma } from '../../config/database';
 import { audit } from '../../lib/audit';
 import { assertPasswordNotReused, passwordFingerprint } from '../auth/passwordReuse';
 import { chatPrisma } from '../../config/chatDatabase';
+import { deactivateUserInTicketStores } from '../ticketing/ticketing.client';
 import { permissionsFor } from '../platform-roles/platformRoles.service';
 import { sendInviteEmail } from '../mail/mail.service';
 import type { UpdateMeInput, InviteUserInput, ChangeRoleInput, PaginationInput, ChangePasswordInput } from './users.schema';
@@ -200,15 +201,20 @@ export async function removeUser(targetUserId: string, requestingUserId: string)
   });
 
   if (target) {
-    await prisma.auditLog.create({
-      data: {
-        action: 'USER_REMOVED',
-        performedById: requestingUserId,
-        targetId: targetUserId,
-        customerId: target.customerId,
-        metadata: { targetEmail: target.email, targetName: target.name, targetRole: target.role }
-      }
+    // audit() snapshots the performer's name into metadata, and the target's
+    // identity is captured below — so deleting either account later cannot blank
+    // this record on the system-activity page (AuditLog.performedById is SET NULL).
+    await audit({
+      action: 'USER_REMOVED',
+      performedById: requestingUserId,
+      targetId: targetUserId,
+      customerId: target.customerId,
+      metadata: { targetEmail: target.email, targetName: target.name, targetRole: target.role }
     });
+
+    // The ticket stores keep the bridged Users row (FK target of their ticket
+    // history) but it must stop being assignable the moment the account is gone.
+    await deactivateUserInTicketStores(target.email);
   }
 
   await prisma.user.delete({ where: { id: targetUserId } });

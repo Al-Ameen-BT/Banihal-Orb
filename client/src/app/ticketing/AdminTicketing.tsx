@@ -929,7 +929,7 @@ function ReportsTab() {
     staleTime: 60_000,
   });
   const { data: assignees } = useTicketAssignees();
-  // The org-admin pool is prefixed with a synthetic "Escalate to Administrators"
+  // The org-admin pool is prefixed with a synthetic "Banihal Support" escalate-to-platform option
   // entry, which is not a person and would filter to nothing.
   const realAssignees = (assignees ?? []).filter((a) => a.id !== ESCALATE_ADMINS_ID);
 

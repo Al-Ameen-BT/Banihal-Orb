@@ -2,7 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import type { enum_Activities_type } from '@prisma/ticket-client';
 import { prisma } from '../../config/database';
-import { ticketPrisma, getTicketDb } from '../../config/ticketDatabase';
+import { runWithTicketDb, ticketPrisma, getTicketDb } from '../../config/ticketDatabase';
 import { UPLOAD_DIR } from './uploads';
 import { evaluateSla, evaluateResponseSla, convertToSeconds, type TimeUnit } from './services/slaService';
 import type {
@@ -487,6 +487,52 @@ export async function listStaff(opts?: { includeAdmins?: boolean }): Promise<Arr
     orderBy: [{ firstName: 'asc' }],
   });
   return rows.map((u) => ({ id: u.id, name: `${u.firstName} ${u.lastName}`.trim(), email: u.email, role: u.role as string }));
+}
+
+// ─── Org-scoped assignee pool ─────────────────────────────────────────────────
+// The shared ticket store holds bridged Users rows for EVERY organization that has
+// ever acted in it — plus the platform's own staff. listStaff() above scans ALL of
+// them, which is what let one org's New Ticket form offer another org's people as
+// assignees (a cross-org data leak) and surfaced the platform team in client orgs.
+//
+// The ticket-store Users row carries NO org column, so the only correct scoping key
+// is email: the caller's organization in the Application (main DB) is the source of
+// truth for who belongs to them. An org may only ever assign tickets to its OWN
+// staff — everyone else has no business being in the pool. Platform administrators
+// (role 'admin') stay excluded exactly as listStaff excludes them: they live in the
+// isolated admin store, not in a client org's roster.
+export async function listOrgStaff(b2bCustomerId: string): Promise<Array<{ id: string; name: string; email: string; role: string }>> {
+  const orgUsers = await prisma.user.findMany({
+    where: { customerId: b2bCustomerId },
+    select: { id: true, email: true },
+  });
+  const emails = orgUsers.map((u) => u.email.toLowerCase()).filter(Boolean);
+  if (!emails.length) return [];
+
+  const rows = await getTicketDb().users.findMany({
+    where: {
+      isActive: true,
+      email: { in: emails },
+      role: { not: 'admin' as const },
+      NOT: { email: { endsWith: BOT_EMAIL_DOMAIN } },
+    },
+    select: { id: true, firstName: true, lastName: true, email: true, role: true },
+    orderBy: [{ firstName: 'asc' }],
+  });
+  return rows.map((u) => ({ id: u.id, name: `${u.firstName} ${u.lastName}`.trim(), email: u.email, role: u.role as string }));
+}
+
+// When a B2B account is deleted the ticket stores keep the bridged Users row (it is
+// the FK target of tickets they opened / were assigned / commented on, so it must
+// survive for history). It must NOT stay assignable: listStaff/listOrgStaff gate on
+// isActive — flip it in BOTH stores so a deleted platform/org member drops out of
+// every assignee pool immediately.
+export async function deactivateUserInTicketStores(email: string): Promise<void> {
+  const lower = email.toLowerCase();
+  await Promise.all([
+    getTicketDb().users.updateMany({ where: { email: lower }, data: { isActive: false } }),
+    runWithTicketDb('admin', () => getTicketDb().users.updateMany({ where: { email: lower }, data: { isActive: false } })),
+  ]);
 }
 
 // ─── Customers (client pool) ───────────────────────────────────────────────────

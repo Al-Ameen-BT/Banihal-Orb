@@ -98,12 +98,14 @@ describe.skipIf(!ready)('@mentions in ticket comments', () => {
     const authorCookies = await loginAs('admin@example.com');
     const ticket = await createTicket(authorCookies);
 
-    const native = await adminTicketPrisma.users.create({
-      data: {
+    const native = await adminTicketPrisma.users.upsert({
+      where: { email: 'native@ticketing.local' },
+      create: {
         email: 'native@ticketing.local',
         firstName: 'Native', lastName: 'Staff',
         password: 'x', role: 'developer',
       },
+      update: { firstName: 'Native', lastName: 'Staff', password: 'x', role: 'developer' },
     });
 
     await request(app).post(`/api/ticketing/tickets/${ticket.id}/comments`)

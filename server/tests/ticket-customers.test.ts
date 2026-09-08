@@ -70,6 +70,9 @@ describe.skipIf(!ready)('GET /ticketing/customers', () => {
     const cookies = await loginAs('unverified-admin@example.com');
 
     // No matching Application customer — nothing to verify or reconcile against.
+    // cleanDb() leaves the admin store alone, and this email is a fixed literal,
+    // so sweep any rows left by previous runs of this very test first.
+    await adminTicketPrisma.customers.deleteMany({ where: { email: 'someone-else@example.com' } });
     const created = await adminTicketPrisma.customers.create({
       data: { name: 'External Client', email: 'someone-else@example.com' },
       select: { id: true },

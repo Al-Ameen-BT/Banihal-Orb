@@ -57,7 +57,7 @@ export const CreateTicketSchema = z.object({
   labels: z.array(z.string().max(60)).max(30).optional(),
   branch: z.string().max(255).nullable().optional(),
   onSiteSupportRequired: z.coerce.boolean().optional(),
-  // ORG_ADMIN only: chose "Escalate to Administrators" as the assignee. The ticket
+  // ORG_ADMIN only: chose the "Banihal Support" (auto-escalation) assignee. The ticket
   // is created unassigned in the org store, then auto-escalated to the platform
   // administrators' store. Enforced server-side in the controller.
   escalateToAdministrators: z.boolean().optional(),
