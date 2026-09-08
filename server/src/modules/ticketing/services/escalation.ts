@@ -40,7 +40,7 @@ export async function escalateTicket(
   const requester = source.reporter; // original requester: { id, name, email }
   const b2bOrg = await prisma.user.findUnique({
     where: { id: b2bUserId },
-    select: { customer: { select: { name: true, mailId: true, contactPerson: true } } },
+    select: { customer: { select: { name: true, mailId: true, contactPerson: true, orgCode: true } } },
   }).catch(() => null);
   const orgName = source.customer?.name ?? b2bOrg?.customer?.name ?? source.projectName ?? 'Unknown organization';
   const orgEmail = source.customer?.email ?? b2bOrg?.customer?.mailId ?? requester?.email ?? null;
@@ -49,6 +49,7 @@ export async function escalateTicket(
   // the first escalation's requester forever.) The per-ticket requester is carried in the
   // description below, which is accurate for every escalation.
   const orgContact = source.customer?.contactPerson ?? b2bOrg?.customer?.contactPerson ?? null;
+  const orgCode = b2bOrg?.customer?.orgCode ?? null;
   const requestedByLine = `Requested by ${requester?.name ?? 'Unknown user'}${requester?.email ? ` <${requester.email}>` : ''}.`;
 
   // Copy into the ADMIN store (14-table). Reporter + project + customer are resolved in
@@ -82,7 +83,7 @@ export async function escalateTicket(
 
     let created = false;
     for (let attempt = 0; attempt < 10 && !created; attempt++) {
-      const ticketNumber = await nextTicketNumber(fmt, null);
+      const ticketNumber = await nextTicketNumber(fmt, orgCode);
       try {
         await db.createTicketRow({
           ticketNumber,

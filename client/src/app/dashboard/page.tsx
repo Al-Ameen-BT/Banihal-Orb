@@ -4,15 +4,16 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
-import { orgsApi, requestsApi, chatApi, announcementsApi } from '@/lib/api';
+import { orgsApi, chatApi, announcementsApi, ticketingApi } from '@/lib/api';
 import RoleGuard from '@/components/guards/RoleGuard';
 import { useConfirm } from '@/components/ui/ConfirmDialog';
 import Sidebar from '@/components/ui/Sidebar';
 import { ShimmerCard } from '@/components/ui/Shimmer';
 import { useAuth } from '@/contexts/AuthContext';
 import AdminPlatformDashboard from './AdminDashboard';
+import { StatusBadge, PriorityBadge } from '@/app/ticketing/shared';
 import type {
-  Customer, OrganizationService, ServiceRequest, OrgServiceRequest, RequestStatus,
+  Customer, OrganizationService, TicketDTO, TicketStatus,
   ChatSessionSummary, ChatSessionDetail, Announcement, AnnouncementLevel,
 } from '@/lib/schemas';
 
@@ -22,21 +23,6 @@ const serviceStatusConfig: Record<string, { cls: string; dot: string; label: str
   EXPIRING:  { cls: 'text-amber-700 bg-amber-50',     dot: 'bg-amber-500',   label: 'Expiring Soon' },
   EXPIRED:   { cls: 'text-red-700 bg-red-50',         dot: 'bg-red-500',     label: 'Expired' },
   SUSPENDED: { cls: 'text-slate-600 bg-slate-100',    dot: 'bg-slate-400',   label: 'Suspended' },
-};
-
-const ticketStatusConfig: Record<RequestStatus, { cls: string; dot: string; label: string }> = {
-  OPEN:        { cls: 'text-amber-700 bg-amber-50',   dot: 'bg-amber-500',   label: 'Open' },
-  IN_PROGRESS: { cls: 'text-cyan-700 bg-cyan-50',     dot: 'bg-cyan-500',    label: 'In Progress' },
-  RESOLVED:    { cls: 'text-emerald-700 bg-emerald-50', dot: 'bg-emerald-500', label: 'Resolved' },
-  CLOSED:      { cls: 'text-slate-600 bg-slate-100',  dot: 'bg-slate-400',   label: 'Closed' },
-  ESCALATED:   { cls: 'text-red-700 bg-red-50',       dot: 'bg-red-500',     label: 'Escalated' },
-};
-
-const priorityConfig: Record<string, string> = {
-  CRITICAL: 'text-red-700 bg-red-50',
-  HIGH:     'text-amber-700 bg-amber-50',
-  MEDIUM:   'text-cyan-700 bg-cyan-50',
-  LOW:      'text-slate-600 bg-slate-100',
 };
 
 function daysUntil(iso: string): number {
@@ -88,22 +74,8 @@ function ServiceCard({ svc }: { svc: OrganizationService }) {
 }
 
 // ─── Ticket row (expandable) ────────────────────────────────────────────────
-function TicketRow({ ticket }: { ticket: ServiceRequest }) {
-  const queryClient = useQueryClient();
+function TicketRow({ ticket }: { ticket: TicketDTO }) {
   const [expanded, setExpanded] = useState(false);
-  const [closing, setClosing] = useState(false);
-  const status = ticketStatusConfig[ticket.status];
-  const canClose = ticket.status !== 'CLOSED' && ticket.status !== 'RESOLVED';
-
-  async function handleClose() {
-    setClosing(true);
-    try {
-      await requestsApi.close(ticket.id);
-      await queryClient.invalidateQueries({ queryKey: ['my-requests'] });
-    } finally {
-      setClosing(false);
-    }
-  }
 
   return (
     <div className="card overflow-hidden">
@@ -112,20 +84,15 @@ function TicketRow({ ticket }: { ticket: ServiceRequest }) {
         onClick={() => setExpanded((v) => !v)}
         className="w-full flex items-center gap-3 px-5 py-3.5 text-left hover:bg-slate-50/60 transition-colors cursor-pointer"
       >
-        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-semibold flex-shrink-0 ${status.cls}`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`} />
-          {status.label}
-        </span>
+        <StatusBadge status={ticket.status} />
         <span className="flex-1 min-w-0">
-          <span className="block text-sm font-semibold text-slate-900 truncate">{ticket.subject}</span>
+          <span className="block text-sm font-semibold text-slate-900 truncate">{ticket.title}</span>
           <span className="block text-[11px] text-slate-400 mt-0.5">
-            {ticket.type.replace('_', ' ')} · {formatDate(ticket.createdAt)}
+            {ticket.projectName ?? 'No project'} · {formatDate(ticket.createdAt)}
           </span>
         </span>
-        <span className={`hidden sm:inline-flex px-2 py-0.5 rounded-md text-[11px] font-semibold flex-shrink-0 ${priorityConfig[ticket.priority]}`}>
-          {ticket.priority}
-        </span>
-        <span className="font-mono text-[10px] text-slate-300 flex-shrink-0">TKT-{ticket.id.slice(-8).toUpperCase()}</span>
+        <span className="hidden sm:inline-flex"><PriorityBadge priority={ticket.priority} /></span>
+        <span className="font-mono text-[10px] text-slate-300 flex-shrink-0">{ticket.ticketNumber}</span>
         <svg className={`w-4 h-4 text-slate-400 flex-shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
@@ -141,26 +108,18 @@ function TicketRow({ ticket }: { ticket: ServiceRequest }) {
             className="overflow-hidden border-t border-slate-100"
           >
             <div className="px-5 py-4 space-y-3">
-              {ticket.service && (
-                <p className="text-xs"><span className="text-slate-400">Service:</span> <span className="font-medium text-slate-700">{ticket.service}</span></p>
+              {ticket.assignee && (
+                <p className="text-xs"><span className="text-slate-400">Assignee:</span> <span className="font-medium text-slate-700">{ticket.assignee.name}</span></p>
               )}
               <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
                 {ticket.description || <span className="text-slate-400 italic">No description provided.</span>}
               </p>
-              <div className="flex items-center gap-4 text-[11px] text-slate-400 pt-1">
-                <span>Updated {relativeTime(ticket.updatedAt)}</span>
-                {ticket.resolvedAt && <span>Resolved {formatDate(ticket.resolvedAt)}</span>}
+              <div className="flex items-center justify-between gap-4 pt-1">
+                <span className="text-[11px] text-slate-400">Updated {relativeTime(ticket.updatedAt)}</span>
+                <Link href={`/ticketing?ticket=${ticket.id}`} className="text-xs font-semibold text-brand hover:text-brand-700 transition-colors">
+                  Open in Ticketing →
+                </Link>
               </div>
-              {canClose && (
-                <button
-                  type="button"
-                  onClick={handleClose}
-                  disabled={closing}
-                  className="text-xs font-semibold text-slate-600 hover:text-red-600 disabled:opacity-50 transition-colors cursor-pointer"
-                >
-                  {closing ? 'Closing…' : 'Close this ticket'}
-                </button>
-              )}
             </div>
           </motion.div>
         )}
@@ -169,11 +128,10 @@ function TicketRow({ ticket }: { ticket: ServiceRequest }) {
   );
 }
 
-// ─── Org-admin ticket row (read-only overview, shows the creator) ───────────
-function OrgTicketRow({ ticket }: { ticket: OrgServiceRequest }) {
+// ─── Org-admin ticket row (read-only overview, shows the reporter) ──────────
+function OrgTicketRow({ ticket }: { ticket: TicketDTO }) {
   const [expanded, setExpanded] = useState(false);
-  const status = ticketStatusConfig[ticket.status];
-  const creator = ticket.createdBy?.name ?? 'Unknown user';
+  const reporter = ticket.reporter?.name ?? 'Unknown user';
 
   return (
     <div className="card overflow-hidden">
@@ -182,19 +140,15 @@ function OrgTicketRow({ ticket }: { ticket: OrgServiceRequest }) {
         onClick={() => setExpanded((v) => !v)}
         className="w-full flex items-center gap-3 px-5 py-3.5 text-left hover:bg-slate-50/60 transition-colors cursor-pointer"
       >
-        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-semibold flex-shrink-0 ${status.cls}`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`} />
-          {status.label}
-        </span>
+        <StatusBadge status={ticket.status} />
         <span className="flex-1 min-w-0">
-          <span className="block text-sm font-semibold text-slate-900 truncate">{ticket.subject}</span>
+          <span className="block text-sm font-semibold text-slate-900 truncate">{ticket.title}</span>
           <span className="block text-[11px] text-slate-400 mt-0.5">
-            {creator} · {ticket.type.replace('_', ' ')} · {formatDate(ticket.createdAt)}
+            {reporter} · {ticket.projectName ?? 'No project'} · {formatDate(ticket.createdAt)}
           </span>
         </span>
-        <span className={`hidden sm:inline-flex px-2 py-0.5 rounded-md text-[11px] font-semibold flex-shrink-0 ${priorityConfig[ticket.priority]}`}>
-          {ticket.priority}
-        </span>
+        <span className="hidden sm:inline-flex"><PriorityBadge priority={ticket.priority} /></span>
+        <span className="font-mono text-[10px] text-slate-300 flex-shrink-0">{ticket.ticketNumber}</span>
         <svg className={`w-4 h-4 text-slate-400 flex-shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
@@ -211,16 +165,18 @@ function OrgTicketRow({ ticket }: { ticket: OrgServiceRequest }) {
           >
             <div className="px-5 py-4 space-y-3">
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-                <span><span className="text-slate-400">Raised by:</span> <span className="font-medium text-slate-700">{creator}</span></span>
-                {ticket.createdBy?.email && <span className="text-slate-400">{ticket.createdBy.email}</span>}
-                {ticket.service && <span><span className="text-slate-400">Service:</span> <span className="font-medium text-slate-700">{ticket.service}</span></span>}
+                <span><span className="text-slate-400">Raised by:</span> <span className="font-medium text-slate-700">{reporter}</span></span>
+                {ticket.reporter?.email && <span className="text-slate-400">{ticket.reporter.email}</span>}
+                {ticket.assignee && <span><span className="text-slate-400">Assignee:</span> <span className="font-medium text-slate-700">{ticket.assignee.name}</span></span>}
               </div>
               <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
                 {ticket.description || <span className="text-slate-400 italic">No description provided.</span>}
               </p>
-              <div className="flex items-center gap-4 text-[11px] text-slate-400 pt-1">
-                <span>Updated {relativeTime(ticket.updatedAt)}</span>
-                {ticket.resolvedAt && <span>Resolved {formatDate(ticket.resolvedAt)}</span>}
+              <div className="flex items-center justify-between gap-4 pt-1">
+                <span className="text-[11px] text-slate-400">Updated {relativeTime(ticket.updatedAt)}</span>
+                <Link href={`/ticketing?ticket=${ticket.id}`} className="text-xs font-semibold text-brand hover:text-brand-700 transition-colors">
+                  Open in Ticketing →
+                </Link>
               </div>
             </div>
           </motion.div>
@@ -364,8 +320,8 @@ function MemberDashboard() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const confirm = useConfirm();
-  const [statusFilter, setStatusFilter] = useState<RequestStatus | 'ALL'>('ALL');
-  const [orgStatusFilter, setOrgStatusFilter] = useState<RequestStatus | 'ALL'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<TicketStatus | 'ALL'>('ALL');
+  const [orgStatusFilter, setOrgStatusFilter] = useState<TicketStatus | 'ALL'>('ALL');
   const [openSession, setOpenSession] = useState<string | null>(null);
 
   const isAdmin = user?.role === 'ORG_ADMIN' || user?.role === 'ADMINISTRATOR';
@@ -382,9 +338,14 @@ function MemberDashboard() {
     staleTime: 30_000,
   });
 
-  const { data: requestsData, isLoading: ticketsLoading } = useQuery<{ requests: ServiceRequest[] }>({
-    queryKey: ['my-requests'],
-    queryFn: () => requestsApi.list({ limit: 100 }).then((r) => r.data as { requests: ServiceRequest[] }),
+  // Both ticket sources come from the ticketing store (the same API the /ticketing
+  // page reads) — the old ServiceRequest API only ever served legacy records, so the
+  // dashboard's counts silently diverged from the ticketing dashboard. `mine: true`
+  // narrows to the caller's own reported tickets; an org admin's plain list is scoped
+  // server-side (ticketAccessScope) to every member of their organization.
+  const { data: mineData, isLoading: ticketsLoading } = useQuery<{ tickets: TicketDTO[] }>({
+    queryKey: ['ticketing', 'my-tickets'],
+    queryFn: () => ticketingApi.listTickets({ mine: true }).then((r) => r.data as { tickets: TicketDTO[] }),
     staleTime: 15_000,
   });
 
@@ -395,9 +356,9 @@ function MemberDashboard() {
   });
 
   // Org-admin only: every ticket raised across the organization.
-  const { data: orgData, isLoading: orgTicketsLoading } = useQuery<{ requests: OrgServiceRequest[]; counts: Record<string, number>; total: number }>({
-    queryKey: ['org-requests'],
-    queryFn: () => requestsApi.listOrg({ limit: 200 }).then((r) => r.data as { requests: OrgServiceRequest[]; counts: Record<string, number>; total: number }),
+  const { data: orgData, isLoading: orgTicketsLoading } = useQuery<{ tickets: TicketDTO[] }>({
+    queryKey: ['ticketing', 'org-tickets'],
+    queryFn: () => ticketingApi.listTickets({}).then((r) => r.data as { tickets: TicketDTO[] }),
     enabled: isAdmin,
     staleTime: 15_000,
   });
@@ -406,21 +367,20 @@ function MemberDashboard() {
   const timeLabel = hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
 
   const services = servicesData?.services ?? [];
-  const tickets = requestsData?.requests ?? [];
+  const tickets = mineData?.tickets ?? [];
   const sessions = sessionsData?.sessions ?? [];
 
-  const openCount       = tickets.filter((t) => t.status === 'OPEN' || t.status === 'ESCALATED').length;
-  const inProgressCount = tickets.filter((t) => t.status === 'IN_PROGRESS').length;
-  const resolvedCount   = tickets.filter((t) => t.status === 'RESOLVED' || t.status === 'CLOSED').length;
+  const openCount       = tickets.filter((t) => t.status !== 'completed').length;
+  const inProgressCount = tickets.filter((t) => t.status === 'in_progress').length;
+  const resolvedCount   = tickets.filter((t) => t.status === 'completed').length;
 
   const filteredTickets = statusFilter === 'ALL' ? tickets : tickets.filter((t) => t.status === statusFilter);
 
-  const orgTickets = orgData?.requests ?? [];
-  const orgCounts = orgData?.counts ?? {};
-  const orgOpen       = (orgCounts['OPEN'] ?? 0) + (orgCounts['ESCALATED'] ?? 0);
-  const orgInProgress = orgCounts['IN_PROGRESS'] ?? 0;
-  const orgResolved   = (orgCounts['RESOLVED'] ?? 0) + (orgCounts['CLOSED'] ?? 0);
-  const orgTotal      = orgData?.total ?? 0;
+  const orgTickets = orgData?.tickets ?? [];
+  const orgOpen       = orgTickets.filter((t) => t.status !== 'completed').length;
+  const orgInProgress = orgTickets.filter((t) => t.status === 'in_progress').length;
+  const orgResolved   = orgTickets.filter((t) => t.status === 'completed').length;
+  const orgTotal      = orgTickets.length;
   const filteredOrgTickets = orgStatusFilter === 'ALL' ? orgTickets : orgTickets.filter((t) => t.status === orgStatusFilter);
 
   // Same prompt (and same "don't ask me again" key) as the rail on /chat, so the
@@ -470,15 +430,14 @@ function MemberDashboard() {
                   </div>
                   <select
                     value={orgStatusFilter}
-                    onChange={(e) => setOrgStatusFilter(e.target.value as RequestStatus | 'ALL')}
+                    onChange={(e) => setOrgStatusFilter(e.target.value as TicketStatus | 'ALL')}
                     className="input !py-1 !px-2 text-xs w-auto"
                   >
                     <option value="ALL">All statuses</option>
-                    <option value="OPEN">Open</option>
-                    <option value="IN_PROGRESS">In Progress</option>
-                    <option value="RESOLVED">Resolved</option>
-                    <option value="CLOSED">Closed</option>
-                    <option value="ESCALATED">Escalated</option>
+                    <option value="todo">To Do</option>
+                    <option value="in_progress">In Progress</option>
+                    <option value="client_pending">Client Pending</option>
+                    <option value="completed">Completed</option>
                   </select>
                 </div>
 
@@ -522,15 +481,14 @@ function MemberDashboard() {
                   <Link href="/ticketing" className="text-xs font-semibold text-brand hover:text-brand-700 transition-colors">New ticket →</Link>
                   <select
                     value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value as RequestStatus | 'ALL')}
+                    onChange={(e) => setStatusFilter(e.target.value as TicketStatus | 'ALL')}
                     className="input !py-1 !px-2 text-xs w-auto"
                   >
                     <option value="ALL">All statuses</option>
-                    <option value="OPEN">Open</option>
-                    <option value="IN_PROGRESS">In Progress</option>
-                    <option value="RESOLVED">Resolved</option>
-                    <option value="CLOSED">Closed</option>
-                    <option value="ESCALATED">Escalated</option>
+                    <option value="todo">To Do</option>
+                    <option value="in_progress">In Progress</option>
+                    <option value="client_pending">Client Pending</option>
+                    <option value="completed">Completed</option>
                   </select>
                 </div>
               </div>
