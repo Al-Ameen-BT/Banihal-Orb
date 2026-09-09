@@ -26,6 +26,16 @@ describe('errorHandler — errors from a non-default Prisma client', () => {
     expect(run(err)).toMatchObject({ code: 503, body: { code: 'DATABASE_UNAVAILABLE' } });
   });
 
+  it('maps a blocked delete (P2003) to 409 with a message, not a bare 500', () => {
+    const err = new TicketPrisma.PrismaClientKnownRequestError('Foreign key constraint violated', {
+      code: 'P2003', clientVersion: '5.10.2', meta: { field_name: 'Tickets_assigneeId_fkey (index)' },
+    });
+    const res = run(err);
+    expect(res).toMatchObject({ code: 409, body: { code: 'FK_CONSTRAINT' } });
+    // The constraint name is schema detail — it belongs in the log, not the response.
+    expect(JSON.stringify(res.body)).not.toContain('assigneeId');
+  });
+
   it('still maps a unique violation to 409', () => {
     const err = new TicketPrisma.PrismaClientKnownRequestError('Unique constraint', { code: 'P2002', clientVersion: '5.10.2' });
     expect(run(err)).toMatchObject({ code: 409, body: { code: 'CONFLICT' } });

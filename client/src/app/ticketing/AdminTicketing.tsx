@@ -1208,7 +1208,7 @@ export default function AdminTicketing() {
   const visibleTabs = useMemo(() => TABS, []);
 
   return (
-    <div className="p-6 sm:p-8 max-w-[1300px] mx-auto space-y-6">
+    <div className="p-6 sm:p-8 max-w-[1600px] mx-auto space-y-6">
       {user?.role === 'ADMINISTRATOR' ? (
         <PageHeader eyebrow="Ticketing · Banihal Orb" title="Ticketing of Banihaltechnologies"
           subtitle="Manage escalations from client organizations plus tickets." icon={Icons.board({ className: 'w-6 h-6' })} />

@@ -397,7 +397,7 @@ function AdminDashboard() {
   const orgs = orgsData?.orgs ?? [];
 
   return (
-    <div className="p-8 max-w-[1400px] mx-auto space-y-8">
+    <div className="p-6 sm:p-8 max-w-[1600px] mx-auto space-y-6">
       {/* Header */}
       <PageHeader icon={icons.saas} title="Administrator Dashboard"
         eyebrow={<span className="inline-flex items-center gap-2"><span className={`w-2 h-2 rounded-full ${roleBadge.dot} animate-pulse-soft`} />{roleBadge.label} · Platform Overview</span>}
@@ -626,7 +626,7 @@ function SadminPage() {
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">
-          <div className="p-8 max-w-[1400px] mx-auto space-y-8">
+          <div className="p-6 sm:p-8 max-w-[1600px] mx-auto space-y-6">
 
             {/* ─── Header ─────────────────────────────────────────────────── */}
             <PageHeader icon={icons.saas} title="Platform Admin"

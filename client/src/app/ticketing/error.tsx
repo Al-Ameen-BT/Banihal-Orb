@@ -26,7 +26,7 @@ export default function TicketingError({
   }, [error]);
 
   return (
-    <div className="p-6 sm:p-8 max-w-[1200px] mx-auto">
+    <div className="p-6 sm:p-8 max-w-[1600px] mx-auto">
       <div className="card p-10 text-center">
         <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-50 ring-1 ring-inset ring-amber-500/15">
           <svg className="h-6 w-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">

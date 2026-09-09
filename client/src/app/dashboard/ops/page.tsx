@@ -48,7 +48,7 @@ export default function OpsDashboardPage() {
       <div className="flex min-h-screen bg-[#F5F7FB]">
         <Sidebar />
         <main className="min-w-0 flex-1 px-6 py-8">
-          <div className="mx-auto max-w-[1440px] space-y-6">
+          <div className="mx-auto max-w-[1600px] space-y-6">
 
             <PageHeader eyebrow="Operations" title="Dashboard" icon={icons.dashboard}
               subtitle={isOrgAdmin ? 'Live ticket health for your organisation.' : 'Platform-wide ticket health.'} />

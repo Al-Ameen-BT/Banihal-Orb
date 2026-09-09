@@ -329,7 +329,7 @@ export default function UsersPage() {
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">
-          <div className="p-8 max-w-[1200px] mx-auto space-y-8">
+          <div className="p-6 sm:p-8 max-w-[1600px] mx-auto space-y-6">
 
             {/* Header */}
             {/* The platform view counts every organization, so naming only the

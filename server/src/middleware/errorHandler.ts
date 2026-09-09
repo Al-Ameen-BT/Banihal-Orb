@@ -35,6 +35,20 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
       res.status(404).json({ error: 'Record not found', code: 'NOT_FOUND' });
       return;
     }
+    // P2003: something else still points at the row. Reached the generic branch
+    // before, so a blocked delete surfaced as a bare 500 "Internal server error"
+    // — the org-deletion dialog could not say what was holding the record. The
+    // constraint name goes to the server log, never to the client: it is schema
+    // detail, and this handler serves every route.
+    if (known.code === 'P2003') {
+      const meta = (known as Error & { meta?: Record<string, unknown> }).meta;
+      console.warn(`⚠️  409 FK_CONSTRAINT ${req.method} ${req.originalUrl}`, JSON.stringify(meta ?? {}));
+      res.status(409).json({
+        error: 'Other records still reference this data, so it could not be removed. Check the server log for the blocking constraint.',
+        code: 'FK_CONSTRAINT',
+      });
+      return;
+    }
     // P2021: table missing, P2010/P2022: raw query / column errors that usually
     // mean the schema hasn't been applied to this datasource. P2024: pool timeout —
     // what a store on a distant link produces once RTT eats the pool. Report as an

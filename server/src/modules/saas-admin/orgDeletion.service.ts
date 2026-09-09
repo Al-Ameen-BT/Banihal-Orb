@@ -104,7 +104,10 @@ async function purgeTicketStore(scope: TicketDbScope, orgName: string, emails: s
 
     const tickets = await db.tickets.findMany({ where: ticketWhere, select: { id: true } });
     const ticketIds = tickets.map((t) => t.id);
-    if (!ticketIds.length && !customer) return { tickets: 0, attachments: 0 };
+    // No early return on an empty sweep: an org can hold bridged Users in a store
+    // without owning a single ticket there, and returning here left those user
+    // rows behind — a "full wipe" that quietly kept the departing members. Each
+    // block below guards its own precondition instead.
 
     // ── Files BEFORE rows. Once the attachment row is gone the filename is lost.
     let attachments = 0;
@@ -132,8 +135,36 @@ async function purgeTicketStore(scope: TicketDbScope, orgName: string, emails: s
         if (!survivor) throw Object.assign(new Error('Cannot reassign shared projects: no other admin exists in the ticket store.'), { status: 400, code: 'NO_PROJECT_LEAD' });
         await db.projects.updateMany({ where: { id: { in: orphanedProjects.map((p) => p.id) } }, data: { leadId: survivor.id } });
       }
-      // Users are NoAction from Tickets/Comments/Activities, so they can only go
-      // once the tickets above are gone.
+
+      // ── Detach from tickets that SURVIVE the sweep above.
+      //
+      // The sweep only claims tickets this org reported, created, or owns through
+      // its Customers row. Every OTHER pointer at these users is ON DELETE NO
+      // ACTION (verified in both stores), so one leftover row — a ticket in
+      // another organization assigned to a departing user, their comment on it,
+      // the activity line their escalation wrote — makes users.deleteMany fail
+      // with P2003 and dead-ends the whole deletion, permanently: the retry hits
+      // the same row. This is what "foreign key constraint" in the delete dialog
+      // was; the tickets and their files were already destroyed by then.
+      //
+      // Nullable pointers are cleared. Comments.userId and Activities.userId are
+      // NOT NULL — there is no unattributed state to leave them in — so those
+      // rows leave with their author, which is also what a full wipe means.
+      const strandedFiles = await db.commentAttachments.findMany({
+        where: { Comments: { userId: { in: userIds } } }, select: { filename: true },
+      });
+      const strandedNames = strandedFiles.map((f) => f.filename).filter((n): n is string => !!n);
+      // Same rule as above: unlink BEFORE the row that names the file is gone.
+      await Promise.all(strandedNames.map((name) =>
+        fs.unlink(path.join(UPLOAD_DIR, path.basename(name))).catch(() => {})));
+      attachments += strandedNames.length;
+
+      await db.tickets.updateMany({ where: { assigneeId: { in: userIds } }, data: { assigneeId: null } });
+      await db.ticketAttachments.updateMany({ where: { uploadedBy: { in: userIds } }, data: { uploadedBy: null } });
+      await db.commentAttachments.updateMany({ where: { uploadedBy: { in: userIds } }, data: { uploadedBy: null } });
+      await db.comments.deleteMany({ where: { userId: { in: userIds } } });
+      await db.activities.deleteMany({ where: { userId: { in: userIds } } });
+
       await db.users.deleteMany({ where: { id: { in: userIds } } });
     }
     if (customer) await db.customers.deleteMany({ where: { id: customer.id } });
@@ -177,9 +208,27 @@ export async function deleteOrganization(orgId: string, actorId: string, opts: D
   let attachments = 0;
   if (!keepTickets) {
     for (const scope of ['default', 'admin'] as const) {
-      const r = await purgeTicketStore(scope, snap.name, snap.emails);
-      tickets += r.tickets;
-      attachments += r.attachments;
+      try {
+        const r = await purgeTicketStore(scope, snap.name, snap.emails);
+        tickets += r.tickets;
+        attachments += r.attachments;
+      } catch (err) {
+        // The stores are separate databases, so no transaction spans them: by the
+        // time the second one fails the first is already emptied and its
+        // attachment bytes unlinked from disk. The ORG_DELETED entry below never
+        // runs in that case, which left real destruction with NO record at all.
+        // Best-effort, and never masks the original failure.
+        await audit({
+          action: 'ORG_DELETE_FAILED', performedById: actorId, targetId: orgId, customerId: orgId,
+          metadata: {
+            orgName: snap.name, failedStore: scope,
+            ticketsDestroyedBefore: tickets, attachmentsDestroyedBefore: attachments,
+            reason: err instanceof Error ? err.message : String(err),
+            code: (err as { code?: string })?.code ?? null,
+          },
+        }).catch(() => {});
+        throw err;
+      }
     }
   }
 

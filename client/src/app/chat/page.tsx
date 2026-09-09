@@ -198,7 +198,7 @@ function ChatPageInner() {
         <main className="flex-1 flex flex-col overflow-hidden">
           {/* Header */}
           <div className="px-8 pt-8 pb-4 flex-shrink-0">
-            <div className="max-w-[1200px] mx-auto w-full">
+            <div className="max-w-[1600px] mx-auto w-full">
               <PageHeader eyebrow="AI Assistant" title="Tech Assistant" icon={icons.chat}
                 subtitle={resumeId
                   ? 'Resuming a saved conversation — your messages continue to be saved to history.'
@@ -212,7 +212,7 @@ function ChatPageInner() {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.25, delay: 0.04 }}
-              className="max-w-[1200px] mx-auto w-full h-full flex gap-6"
+              className="max-w-[1600px] mx-auto w-full h-full flex gap-6"
             >
               <ChatHistoryRail activeId={resumeId} onNewChat={startNewChat} onDeletedActive={startNewChat} />
               <div className="flex-1 min-w-0 h-full">

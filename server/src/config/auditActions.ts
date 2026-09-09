@@ -21,6 +21,7 @@ export const AUDIT_ACTIONS = [
   //    to this account" must never require knowing which filter to pick.
   { key: 'CUSTOMER_CREATED',                    group: 'Accounts', label: 'Org created',           defaultScope: true,  sadminFeed: false },
   { key: 'ORG_DELETED',                         group: 'Accounts', label: 'Org deleted',           defaultScope: true,  sadminFeed: true  },
+  { key: 'ORG_DELETE_FAILED',                   group: 'Accounts', label: 'Org deletion failed',   defaultScope: true,  sadminFeed: true  },
   { key: 'ORG_UPDATED',                         group: 'Accounts', label: 'Org updated',           defaultScope: true,  sadminFeed: true  },
   // ── Platform admission. sadminFeed on all four: admitting an organization is a
   //    staff decision made off-platform, so the audit trail is the only record

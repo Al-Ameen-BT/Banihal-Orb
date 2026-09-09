@@ -76,7 +76,7 @@ export default function ProfilePage() {
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">
-          <div className="p-8 max-w-[640px] mx-auto space-y-8">
+          <div className="p-6 sm:p-8 max-w-[820px] mx-auto space-y-6">
 
             {/* Header */}
             <PageHeader eyebrow="Account" title="My Profile" icon={icons.profile} />

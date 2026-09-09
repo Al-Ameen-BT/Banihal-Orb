@@ -79,7 +79,7 @@ function PendingOrgs() {
   const orgs = data?.orgs ?? [];
 
   return (
-    <div className="p-6 sm:p-8 max-w-[1100px] mx-auto space-y-6">
+    <div className="p-6 sm:p-8 max-w-[1600px] mx-auto space-y-6">
       <PageHeader eyebrow="Platform" title="Pending organizations" icon={icons.pending}
         subtitle="These organizations cannot sign in until you give their administrator the approval code from your email. Verify who you are speaking to first — withholding the code is how a registration is refused." />
 

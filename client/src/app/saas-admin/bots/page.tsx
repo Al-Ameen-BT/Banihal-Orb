@@ -433,7 +433,7 @@ export default function SlackBotsPage() {
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">
-          <div className="p-8 max-w-[1100px] mx-auto space-y-6">
+          <div className="p-6 sm:p-8 max-w-[1600px] mx-auto space-y-6">
             <PageHeader eyebrow="Platform" title="Slack Bots" icon={icons.bots}
               subtitle={`Connect Slack bots to the assistant, track live status, and maintain each bot's ticket form — ${connected} of ${bots.length} connected.`}
               actions={

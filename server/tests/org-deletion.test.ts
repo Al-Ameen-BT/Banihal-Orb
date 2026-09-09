@@ -55,6 +55,41 @@ async function seedStoreTicket(scope: 'default' | 'admin', orgName: string, emai
   });
 }
 
+/**
+ * The FK trap. A ticket owned by ANOTHER organization that a member of the org
+ * being deleted merely touched: assigned to them, commented on, with an activity
+ * line. The purge's sweep never claims it — different reporter, creator and
+ * customer — and every pointer at Users in both stores is ON DELETE NO ACTION,
+ * so deleting the member row used to fail with P2003 *after* the org's own
+ * tickets and their attachment files had already been destroyed.
+ */
+async function seedForeignTicketTouchedBy(scope: 'default' | 'admin', memberEmail: string, ticketNumber: string) {
+  return runWithTicketDb(scope, async () => {
+    const db = getTicketDb();
+    const other = await db.customers.create({ data: { name: `Other Co ${ticketNumber}`, email: `owner-${ticketNumber}@example.com` } });
+    const owner = await db.users.create({
+      data: { firstName: 'Other', lastName: 'Owner', email: `owner-${ticketNumber}@example.com`, password: 'x', role: 'admin' },
+    });
+    const member = await db.users.upsert({
+      where: { email: memberEmail }, update: {},
+      create: { firstName: 'Member', lastName: 'Test', email: memberEmail, password: 'x', role: 'admin' },
+    });
+    const project = await db.projects.create({
+      data: { name: `Other ${ticketNumber}`, category: 'internal', leadId: owner.id, type: 'software' },
+    });
+    const ticket = await db.tickets.create({
+      data: {
+        ticketNumber, title: `Foreign ${ticketNumber}`, description: 'x', status: 'todo',
+        projectId: project.id, reporterId: owner.id, createdBy: owner.id,
+        assigneeId: member.id, customerId: other.id,
+      },
+    });
+    await db.comments.create({ data: { ticketId: ticket.id, userId: member.id, content: 'looked at this' } });
+    await db.activities.create({ data: { ticketId: ticket.id, userId: member.id, type: 'assigned', description: 'x' } });
+    return ticket.id;
+  });
+}
+
 /** Assert a ticket still exists for the org in a store (the keep-tickets case). */
 async function storeTicketCount(scope: 'default' | 'admin', orgName: string) {
   return runWithTicketDb(scope, () =>
@@ -215,5 +250,34 @@ describe.skipIf(!ticketTestDbReady())(`keep-ticketing mode — ticket history su
     expect(res.body.tickets).toBe(2);
     expect(await storeTicketCount('default', name)).toBe(0);
     expect(await storeTicketCount('admin', name)).toBe(0);
+  });
+  it('deletes an org whose member is assignee/commenter on ANOTHER org\'s ticket', async () => {
+    const stamp = String(Date.now()).slice(-6);
+    const org = await deletableOrg(`FK Trap ${stamp}`);
+    const member = await prisma.user.findFirstOrThrow({ where: { customerId: org.id } });
+    // The production shape: the org owns tickets of its own in the store AND its
+    // member is left holding rows on someone else's ticket.
+    await seedStoreTicket('default', org.name, member.email.toLowerCase(), `TKT-FKO-${stamp}`);
+    const foreign = await seedForeignTicketTouchedBy('default', member.email.toLowerCase(), `TKT-FK-${stamp}`);
+
+    const res = await del(org.id, adminCookies, { confirm: org.name });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(await prisma.customer.count({ where: { id: org.id } })).toBe(0);
+
+    // The other org's ticket survives, merely unassigned — its history is not ours
+    // to delete, but the departing member's own rows on it go with them.
+    const left = await runWithTicketDb('default', async () => {
+      const db = getTicketDb();
+      return {
+        ticket: await db.tickets.findUnique({ where: { id: foreign }, select: { assigneeId: true } }),
+        comments: await db.comments.count({ where: { ticketId: foreign } }),
+        activities: await db.activities.count({ where: { ticketId: foreign } }),
+      };
+    });
+    expect(left.ticket, 'another org\'s ticket must not be deleted').not.toBeNull();
+    expect(left.ticket!.assigneeId).toBeNull();
+    expect(left.comments).toBe(0);
+    expect(left.activities).toBe(0);
   });
 });

@@ -715,7 +715,7 @@ export default function OrgDetailPage() {
         <div className="flex h-screen overflow-hidden bg-canvas">
           <Sidebar />
           <main className="flex-1 overflow-y-auto">
-            <div className="p-8 max-w-[1400px] mx-auto space-y-6">
+            <div className="p-6 sm:p-8 max-w-[1600px] mx-auto space-y-6">
               <Shimmer className="h-8 w-64" />
               <Shimmer className="h-32 w-full" />
               <Shimmer className="h-64 w-full" />
@@ -750,7 +750,7 @@ export default function OrgDetailPage() {
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">
-          <div className="p-8 max-w-[1400px] mx-auto space-y-8">
+          <div className="p-6 sm:p-8 max-w-[1600px] mx-auto space-y-6">
 
             {/* Back + Header */}
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.22 }}>

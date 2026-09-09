@@ -459,7 +459,7 @@ export default function AdminPlatformDashboard() {
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">
-          <div className="p-8 max-w-[1400px] mx-auto space-y-10">
+          <div className="p-6 sm:p-8 max-w-[1600px] mx-auto space-y-6">
 
             {/* Header */}
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.22 }} className="flex items-start justify-between gap-4 flex-wrap">

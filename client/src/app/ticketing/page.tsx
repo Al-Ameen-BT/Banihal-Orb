@@ -76,7 +76,7 @@ function UserTicketing() {
   ];
 
   return (
-    <div className="p-6 sm:p-8 max-w-[1200px] mx-auto space-y-6">
+    <div className="p-6 sm:p-8 max-w-[1600px] mx-auto space-y-6">
       {detailId && <TicketDetail ticketId={detailId} onClose={closeDetail} />}
 
       <Modal open={showForm} onClose={() => setShowForm(false)} title="Raise a ticket" width="max-w-2xl">

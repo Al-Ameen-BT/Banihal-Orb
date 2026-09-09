@@ -130,7 +130,7 @@ export default function SystemActivityPage() {
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">
-          <div className="p-6 sm:p-8 max-w-[1200px] mx-auto space-y-6">
+          <div className="p-6 sm:p-8 max-w-[1600px] mx-auto space-y-6">
 
             <PageHeader eyebrow="Platform" title="System Activity" icon={icons.activity}
               subtitle="Every audited action across the platform — logins, account changes and organization events." />

@@ -88,7 +88,7 @@ export default function CredentialsPage() {
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">
-          <div className="p-8 max-w-[820px] mx-auto space-y-6">
+          <div className="p-6 sm:p-8 max-w-[1100px] mx-auto space-y-6">
             <PageHeader eyebrow="Security" title="Secure Credentials" icon={icons.key}
               subtitle="Temporary passwords delivered by an AD bot for your account or a request you raised. Each can be revealed once, then it's erased." />
 
