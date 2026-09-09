@@ -220,6 +220,7 @@ model Tickets {
   branch                          String?               @db.VarChar(255)
   onSiteSupportRequired           Boolean               @default(false)
   resolvedMethods                 String?
+  resolvedAt                      DateTime?             @db.Timestamptz(6)
   createdAt                       DateTime              @default(now()) @db.Timestamptz(6)
   updatedAt                       DateTime              @default(now()) @db.Timestamptz(6)
   Activities                      Activities[]

@@ -85,6 +85,7 @@ function toTicketDTO(row: TicketRow, project: { id: string; name: string } | nul
     counts: { comments: row._count.Comments, attachments: row._count.TicketAttachments, watchers: row._count.TicketWatchers },
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+    resolvedAt: row.resolvedAt ? row.resolvedAt.toISOString() : null,
   };
 }
 
@@ -874,6 +875,7 @@ export interface ReportTicketRow {
   createdAt: string; updatedAt: string; dueDate: string | null;
   pausedTime: string | null; totalPausedTime: number;
   slaName: string | null; slaResolutionSeconds: number | null;
+  resolvedAt: string | null;
 }
 
 export interface ReportFilters {
@@ -906,7 +908,7 @@ export async function listReportTickets(
       id: true, ticketNumber: true, title: true, status: true, priority: true, type: true,
       projectId: true, customerId: true, assigneeId: true, reporterId: true,
       branch: true, onSiteSupportRequired: true, labels: true,
-      createdAt: true, updatedAt: true, dueDate: true, pausedTime: true, totalPausedTime: true,
+      createdAt: true, updatedAt: true, dueDate: true, pausedTime: true, totalPausedTime: true, resolvedAt: true,
       Users_Tickets_assigneeIdToUsers: userSel,
       Customers: { select: { name: true } },
       SLAs: { select: { name: true, resolutionTime: true, timeUnit: true } },
@@ -943,6 +945,7 @@ export async function listReportTickets(
         pausedTime: r.pausedTime?.toISOString() ?? null, totalPausedTime: r.totalPausedTime,
         slaName: r.SLAs?.name ?? null,
         slaResolutionSeconds: r.SLAs ? convertToSeconds(r.SLAs.resolutionTime, r.SLAs.timeUnit as TimeUnit) : null,
+        resolvedAt: r.resolvedAt?.toISOString() ?? null,
       };
     }),
     truncated: rows.length > REPORT_ROW_CAP,

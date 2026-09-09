@@ -44,6 +44,8 @@ export interface TicketDTO {
   counts: { comments: number; attachments: number; watchers: number };
   createdAt: string;
   updatedAt: string;
+  // When the ticket was last marked completed; null while it is open/reopened.
+  resolvedAt: string | null;
 }
 
 export interface ProjectDTO {

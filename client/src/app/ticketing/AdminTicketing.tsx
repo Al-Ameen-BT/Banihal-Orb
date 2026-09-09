@@ -279,6 +279,14 @@ function AdminTicketCard({ ticket, onOpen, onEdit, onDelete }: {
             </span>
             <span className="text-slate-300">·</span>
             <span className="text-slate-400">Created {timeAgo(ticket.createdAt)}</span>
+            {ticket.status === 'completed' && (
+              <>
+                <span className="text-slate-300">·</span>
+                <span className="text-emerald-600 font-semibold" title={ticket.resolvedAt ? fmtDate(ticket.resolvedAt) : undefined}>
+                  Resolved {ticket.resolvedAt ? timeAgo(ticket.resolvedAt) : '—'}
+                </span>
+              </>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
@@ -878,6 +886,8 @@ const REPORT_FIELDS: ReportField[] = [
   { key: 'assigneeName', label: 'Assignee', value: (t) => t.assigneeName ?? 'Unassigned' },
   { key: 'createdAt', label: 'Created', value: (t) => new Date(t.createdAt), render: (t) => timeAgo(t.createdAt) },
   { key: 'updatedAt', label: 'Updated', value: (t) => new Date(t.updatedAt), render: (t) => timeAgo(t.updatedAt) },
+  { key: 'resolvedAt', label: 'Resolved', value: (t) => (t.resolvedAt ? new Date(t.resolvedAt) : null),
+    render: (t) => (t.resolvedAt ? fmtDate(t.resolvedAt) : '—') },
   { key: 'dueDate', label: 'Due', value: (t) => (t.dueDate ? new Date(t.dueDate) : null),
     render: (t) => (t.dueDate ? fmtDate(t.dueDate) : '—') },
   { key: 'slaName', label: 'SLA policy', value: (t) => t.slaName ?? '' },

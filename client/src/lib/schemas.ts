@@ -231,6 +231,8 @@ export interface TicketDTO {
   counts: { comments: number; attachments: number; watchers: number };
   createdAt: string;
   updatedAt: string;
+  // When the ticket was last marked completed; null while it is open/reopened.
+  resolvedAt: string | null;
 }
 
 export interface TicketAttachment {
@@ -368,6 +370,7 @@ export interface ReportTicketRow {
   totalPausedTime: number;
   slaName: string | null;
   slaResolutionSeconds: number | null;
+  resolvedAt: string | null;
 }
 
 export interface TicketReport {

@@ -174,6 +174,7 @@ CREATE TABLE IF NOT EXISTS "Tickets" (
   "branch"                VARCHAR(255),
   "onSiteSupportRequired" BOOLEAN NOT NULL DEFAULT false,
   "resolvedMethods"       TEXT,
+  "resolvedAt"            TIMESTAMPTZ,
   "createdAt"             TIMESTAMPTZ NOT NULL DEFAULT now(),
   "updatedAt"             TIMESTAMPTZ NOT NULL DEFAULT now()
 );

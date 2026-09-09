@@ -106,6 +106,8 @@ export async function createTicket(actorId: string, input: CreateTicketInput, b2
     SLAId: slaId,
     branch: input.branch ?? null,
     onSiteSupportRequired: input.onSiteSupportRequired ?? false,
+    // A ticket created (or auto-escalated) as completed was resolved at creation.
+    ...(input.status === 'completed' ? { resolvedAt: new Date() } : {}),
   };
 
   // Generate TKT-NNN with a unique-violation retry loop (survives races).
@@ -139,6 +141,12 @@ export async function updateTicket(actorId: string, id: string, input: UpdateTic
     ? pausePatch({ status: current.status, pausedTime: current.pausedTime, totalPausedTime: current.totalPausedTime }, input.status)
     : {};
 
+  // The resolved date follows the status. Set when the ticket IS completed; cleared
+  // when a completed ticket is reopened, so the field always describes the current
+  // resolution rather than holding a stale past timestamp on a resurrected ticket.
+  const resolvedOnComplete = input.status === 'completed' && current.status !== 'completed' ? { resolvedAt: new Date() } : {};
+  const clearedOnReopen = input.status !== undefined && input.status !== 'completed' && current.status === 'completed' ? { resolvedAt: null } : {};
+
   const data = {
     ...(input.title !== undefined ? { title: input.title } : {}),
     ...(input.description !== undefined ? { description: input.description } : {}),
@@ -156,6 +164,8 @@ export async function updateTicket(actorId: string, id: string, input: UpdateTic
     ...(input.reasonForDelay !== undefined ? { reasonForDelay: input.reasonForDelay } : {}),
     ...(input.resolvedMethods !== undefined ? { resolvedMethods: input.resolvedMethods } : {}),
     ...patch,
+    ...resolvedOnComplete,
+    ...clearedOnReopen,
   };
 
   await db.updateTicketRow(id, data);
