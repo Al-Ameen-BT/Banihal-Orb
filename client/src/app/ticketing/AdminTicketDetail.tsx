@@ -276,6 +276,9 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
               <div className="space-y-2.5 text-xs">
                 <Fact label="Requested by" value={<Person person={ticket.reporter} />} />
                 <Fact label="Created" value={fmtDate(ticket.createdAt)} />
+                {ticket.status === 'completed' && (
+                  <Fact label="Resolved" value={ticket.resolvedAt ? fmtDate(ticket.resolvedAt) : '—'} />
+                )}
                 <Fact label="SLA policy" value={ticket.sla ? `${ticket.sla.name} · ${ticket.sla.responseTime}${ticket.sla.timeUnit[0]}/${ticket.sla.resolutionTime}${ticket.sla.timeUnit[0]}` : 'None'} />
               </div>
 

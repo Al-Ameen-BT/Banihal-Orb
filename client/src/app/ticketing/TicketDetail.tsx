@@ -257,7 +257,8 @@ export default function TicketDetail({ ticketId, onClose }: { ticketId: string; 
               <div className="space-y-2.5 text-xs">
                 {([['Project', ticket.projectName ?? '—'], ['Reporter', ticket.reporter?.name ?? '—'], ['Assignee', ticket.assignee?.name ?? 'Unassigned'],
                   ['SLA', ticket.sla ? `${ticket.sla.name} (${ticket.sla.resolutionTime}${ticket.sla.timeUnit[0]})` : 'None'],
-                  ['Branch', ticket.branch ?? '—'], ['On-site', ticket.onSiteSupportRequired ? 'Yes' : 'No'], ['Created', fmtDate(ticket.createdAt)]] as [string, string][]).map(([k, v]) => (
+                  ['Branch', ticket.branch ?? '—'], ['On-site', ticket.onSiteSupportRequired ? 'Yes' : 'No'], ['Created', fmtDate(ticket.createdAt)],
+                  ...(ticket.status === 'completed' ? [['Resolved', ticket.resolvedAt ? fmtDate(ticket.resolvedAt) : '—']] : [])] as [string, string][]).map(([k, v]) => (
                   <div key={k} className="flex justify-between gap-2"><span className="text-slate-400">{k}</span><span className="font-medium text-slate-700 text-right truncate">{v}</span></div>
                 ))}
               </div>

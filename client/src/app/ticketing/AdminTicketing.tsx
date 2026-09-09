@@ -279,6 +279,14 @@ function AdminTicketCard({ ticket, onOpen, onEdit, onDelete }: {
             </span>
             <span className="text-slate-300">·</span>
             <span className="text-slate-400">Created {timeAgo(ticket.createdAt)}</span>
+            {ticket.status === 'completed' && (
+              <>
+                <span className="text-slate-300">·</span>
+                <span className="text-emerald-600 font-semibold" title={ticket.resolvedAt ? fmtDate(ticket.resolvedAt) : undefined}>
+                  Resolved {ticket.resolvedAt ? timeAgo(ticket.resolvedAt) : '—'}
+                </span>
+              </>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
@@ -849,9 +857,11 @@ interface ReportField {
 const secondsToHours = (s: number): number => Math.round((s / 3600) * 10) / 10;
 
 /** Age minus paused time — the same clock the server's breach rule runs, so the
- *  "Time open" column can never disagree with the SLA column beside it. */
+ *  "Time open" column can never disagree with the SLA column beside it. For a
+ *  resolved ticket the clock stops at its resolvedAt instead of running to now. */
 function openHours(t: ReportTicketRow): number {
-  const wall = (Date.now() - new Date(t.createdAt).getTime()) / 1000;
+  const end = t.resolvedAt ? new Date(t.resolvedAt).getTime() : Date.now();
+  const wall = (end - new Date(t.createdAt).getTime()) / 1000;
   let paused = t.totalPausedTime;
   if (t.status === 'client_pending' && t.pausedTime) paused += (Date.now() - new Date(t.pausedTime).getTime()) / 1000;
   return secondsToHours(Math.max(wall - paused, 0));
@@ -888,6 +898,9 @@ const REPORT_FIELDS: ReportField[] = [
       ? <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold text-red-700 bg-red-50">Breached</span>
       : <span className="text-slate-400">—</span>) },
   { key: 'openHours', label: 'Time open (h)', numeric: true, value: (t) => openHours(t) },
+  { key: 'resolutionSeconds', label: 'Time to resolve (h)', numeric: true,
+    value: (t) => (t.resolutionSeconds === null ? null : secondsToHours(t.resolutionSeconds)),
+    render: (t) => (t.resolutionSeconds === null ? '—' : `${secondsToHours(t.resolutionSeconds)} h`) },
   { key: 'branch', label: 'Branch', value: (t) => t.branch ?? '' },
   { key: 'onSiteSupportRequired', label: 'On-site', value: (t) => t.onSiteSupportRequired,
     render: (t) => (t.onSiteSupportRequired ? 'Yes' : 'No') },
@@ -1197,8 +1210,8 @@ export default function AdminTicketing() {
   return (
     <div className="p-6 sm:p-8 max-w-[1300px] mx-auto space-y-6">
       {user?.role === 'ADMINISTRATOR' ? (
-        <PageHeader eyebrow="Platform · Administrators store" title="Platform Ticketing"
-          subtitle="The platform administrators' isolated ticket store (b2b_ticketing_admin) — escalations from client organizations plus tickets you create here. Separate from every client's tickets." icon={Icons.board({ className: 'w-6 h-6' })} />
+        <PageHeader eyebrow="Ticketing · Banihal Orb" title="Ticketing of Banihaltechnologies"
+          subtitle="Manage escalations from client organizations plus tickets." icon={Icons.board({ className: 'w-6 h-6' })} />
       ) : (
         <PageHeader eyebrow="Ticketing · Control System" title="Ticketing Dashboard"
           subtitle="Manage tickets, projects, and SLA policies — with ticket numbering, SLA timers, round-robin assignment, and an activity trail." icon={Icons.board({ className: 'w-6 h-6' })} />
