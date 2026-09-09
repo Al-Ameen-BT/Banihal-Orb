@@ -256,6 +256,7 @@ function buildEstate(password: string, now = Date.now()) {
       onSiteSupportRequired: r() < 0.12,
       createdAt,
       updatedAt,
+      resolvedAt: status === 'completed' ? updatedAt : null,
     });
   }
   return { staff, reporters, customers, slas, projects, tickets: rows };

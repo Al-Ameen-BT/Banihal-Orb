@@ -135,8 +135,20 @@ export async function updateTicket(actorId: string, id: string, input: UpdateTic
   if (!current) throw notFound('Ticket');
 
   // SLA pause accounting on a status transition.
-  const patch = input.status !== undefined
-    ? pausePatch({ status: current.status, pausedTime: current.pausedTime, totalPausedTime: current.totalPausedTime }, input.status)
+  const nextStatus = input.status;
+  const statusChanged = nextStatus !== undefined && nextStatus !== current.status;
+  const patch = statusChanged
+    ? pausePatch({ status: current.status, pausedTime: current.pausedTime, totalPausedTime: current.totalPausedTime }, nextStatus)
+    : {};
+  // resolvedAt is the moment status flips to completed: set it on resolution,
+  // clear it when a completed ticket is reopened. Column absent until migration
+  // 2026-09-09-ticket-resolvedat.sql is applied — NULL just reads as unresolved.
+  const resolutionPatch = statusChanged
+    ? nextStatus === 'completed'
+      ? { resolvedAt: new Date() }
+      : current.status === 'completed'
+        ? { resolvedAt: null }
+        : {}
     : {};
 
   const data = {
@@ -156,6 +168,7 @@ export async function updateTicket(actorId: string, id: string, input: UpdateTic
     ...(input.reasonForDelay !== undefined ? { reasonForDelay: input.reasonForDelay } : {}),
     ...(input.resolvedMethods !== undefined ? { resolvedMethods: input.resolvedMethods } : {}),
     ...patch,
+    ...resolutionPatch,
   };
 
   await db.updateTicketRow(id, data);

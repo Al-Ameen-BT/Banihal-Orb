@@ -74,6 +74,7 @@ function toTicketDTO(row: TicketRow, project: { id: string; name: string } | nul
     onSiteSupportRequired: row.onSiteSupportRequired,
     reasonForDelay: row.reasonForDelay,
     resolvedMethods: row.resolvedMethods,
+    resolvedAt: row.resolvedAt ? row.resolvedAt.toISOString() : null,
     sla,
     slaStatus: resolutionSla.status,
     slaRemainingSeconds: resolutionSla.remainingSeconds,
@@ -873,6 +874,9 @@ export interface ReportTicketRow {
   branch: string | null; onSiteSupportRequired: boolean; labels: string[];
   createdAt: string; updatedAt: string; dueDate: string | null;
   pausedTime: string | null; totalPausedTime: number;
+  resolvedAt: string | null;
+  /** Effective seconds from createdAt to resolvedAt, minus accumulated paused time. Null while open. */
+  resolutionSeconds: number | null;
   slaName: string | null; slaResolutionSeconds: number | null;
 }
 
@@ -907,6 +911,7 @@ export async function listReportTickets(
       projectId: true, customerId: true, assigneeId: true, reporterId: true,
       branch: true, onSiteSupportRequired: true, labels: true,
       createdAt: true, updatedAt: true, dueDate: true, pausedTime: true, totalPausedTime: true,
+      resolvedAt: true,
       Users_Tickets_assigneeIdToUsers: userSel,
       Customers: { select: { name: true } },
       SLAs: { select: { name: true, resolutionTime: true, timeUnit: true } },
@@ -941,6 +946,10 @@ export async function listReportTickets(
         createdAt: r.createdAt.toISOString(), updatedAt: r.updatedAt.toISOString(),
         dueDate: r.dueDate?.toISOString() ?? null,
         pausedTime: r.pausedTime?.toISOString() ?? null, totalPausedTime: r.totalPausedTime,
+        resolvedAt: r.resolvedAt?.toISOString() ?? null,
+        resolutionSeconds: r.resolvedAt
+          ? Math.max(0, (r.resolvedAt.getTime() - r.createdAt.getTime()) / 1000 - (r.totalPausedTime ?? 0))
+          : null,
         slaName: r.SLAs?.name ?? null,
         slaResolutionSeconds: r.SLAs ? convertToSeconds(r.SLAs.resolutionTime, r.SLAs.timeUnit as TimeUnit) : null,
       };

@@ -878,6 +878,8 @@ const REPORT_FIELDS: ReportField[] = [
   { key: 'assigneeName', label: 'Assignee', value: (t) => t.assigneeName ?? 'Unassigned' },
   { key: 'createdAt', label: 'Created', value: (t) => new Date(t.createdAt), render: (t) => timeAgo(t.createdAt) },
   { key: 'updatedAt', label: 'Updated', value: (t) => new Date(t.updatedAt), render: (t) => timeAgo(t.updatedAt) },
+  { key: 'resolvedAt', label: 'Resolved', value: (t) => (t.resolvedAt ? new Date(t.resolvedAt) : null),
+    render: (t) => (t.resolvedAt ? fmtDate(t.resolvedAt) : '—') },
   { key: 'dueDate', label: 'Due', value: (t) => (t.dueDate ? new Date(t.dueDate) : null),
     render: (t) => (t.dueDate ? fmtDate(t.dueDate) : '—') },
   { key: 'slaName', label: 'SLA policy', value: (t) => t.slaName ?? '' },

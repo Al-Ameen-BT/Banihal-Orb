@@ -363,10 +363,9 @@ export function aggregate(feed: Feed, nowDate: Date, withUsers: boolean): Dashbo
   const assignees = [...groupBy(tickets, (t) => t.assigneeId ?? '__unassigned__').entries()]
     .map(([id, list]) => {
       const closed = list.filter((t) => t.status === COMPLETED).length;
-      // Resolution time is inferred from updatedAt: the schema has no resolvedAt
-      // column, and the last write to a completed ticket IS the resolution. Later
-      // edits would inflate it, which is why this reads as "slowest", not as a
-      // billing figure.
+      // Resolution time is inferred from updatedAt: Tickets carries resolvedAt (set on
+      // the status flip to completed), but this feed predates it and reads "slowest",
+      // not a billing figure — later edits would inflate it either way.
       const slowest = list.filter((t) => t.status === COMPLETED)
         .reduce<FeedTicket | null>(
           (best, t) => (best === null || ms(t.updatedAt) - ms(t.createdAt) >= ms(best.updatedAt) - ms(best.createdAt) ? t : best),

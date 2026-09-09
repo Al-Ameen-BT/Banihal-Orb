@@ -31,6 +31,7 @@ export interface TicketDTO {
   onSiteSupportRequired: boolean;
   reasonForDelay: string | null;
   resolvedMethods: string | null;
+  resolvedAt: string | null;
   sla: { id: string; name: string; responseTime: number; resolutionTime: number; timeUnit: string } | null;
   slaStatus: SlaStatus;
   slaRemainingSeconds: number | null;

@@ -220,6 +220,7 @@ export interface TicketDTO {
   onSiteSupportRequired: boolean;
   reasonForDelay: string | null;
   resolvedMethods: string | null;
+  resolvedAt: string | null;
   sla: { id: string; name: string; responseTime: number; resolutionTime: number; timeUnit: string } | null;
   slaStatus: SlaStatus;
   slaRemainingSeconds: number | null;
@@ -366,6 +367,9 @@ export interface ReportTicketRow {
   dueDate: string | null;
   pausedTime: string | null;
   totalPausedTime: number;
+  resolvedAt: string | null;
+  /** Effective seconds from createdAt to resolvedAt, minus paused time. Null while open. */
+  resolutionSeconds: number | null;
   slaName: string | null;
   slaResolutionSeconds: number | null;
 }
