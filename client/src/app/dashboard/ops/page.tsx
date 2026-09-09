@@ -13,7 +13,8 @@ import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { dashboardApi } from '@/lib/api';
 import RoleGuard from '@/components/guards/RoleGuard';
-import Sidebar from '@/components/ui/Sidebar';
+import Sidebar, { icons } from '@/components/ui/Sidebar';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { ShimmerCard } from '@/components/ui/Shimmer';
 import { useAuth } from '@/contexts/AuthContext';
 import type { DashOverview } from '@/lib/schemas';
@@ -49,14 +50,8 @@ export default function OpsDashboardPage() {
         <main className="min-w-0 flex-1 px-6 py-8">
           <div className="mx-auto max-w-[1440px] space-y-6">
 
-            <header>
-              <h1 className="text-3xl font-bold tracking-tight text-brand">Dashboard</h1>
-              <p className="mt-1 text-sm text-slate-600">
-                {isOrgAdmin
-                  ? 'Live ticket health for your organisation.'
-                  : 'Platform-wide ticket health.'}
-              </p>
-            </header>
+            <PageHeader eyebrow="Operations" title="Dashboard" icon={icons.dashboard}
+              subtitle={isOrgAdmin ? 'Live ticket health for your organisation.' : 'Platform-wide ticket health.'} />
 
             <StatusStrip data={data} isError={isError} isFetching={isFetching} updatedAt={dataUpdatedAt} />
 

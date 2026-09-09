@@ -5,7 +5,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { adSecretsApi } from '@/lib/api';
 import RoleGuard from '@/components/guards/RoleGuard';
-import Sidebar from '@/components/ui/Sidebar';
+import Sidebar, { icons } from '@/components/ui/Sidebar';
+import { PageHeader } from '@/components/ui/PageHeader';
 import GlowButton from '@/components/ui/GlowButton';
 import { Shimmer } from '@/components/ui/Shimmer';
 import type { AdCredentialDelivery } from '@/lib/schemas';
@@ -88,11 +89,8 @@ export default function CredentialsPage() {
         <Sidebar />
         <main className="flex-1 overflow-y-auto">
           <div className="p-8 max-w-[820px] mx-auto space-y-6">
-            <div>
-              <p className="text-sm text-slate-500 mb-1">Security</p>
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900">Secure Credentials</h1>
-              <p className="mt-1 text-sm text-slate-500">Temporary passwords delivered by an AD bot for your account or a request you raised. Each can be revealed once, then it&apos;s erased.</p>
-            </div>
+            <PageHeader eyebrow="Security" title="Secure Credentials" icon={icons.key}
+              subtitle="Temporary passwords delivered by an AD bot for your account or a request you raised. Each can be revealed once, then it's erased." />
 
             {isLoading ? (
               <div className="space-y-3">{[...Array(2)].map((_, i) => <Shimmer key={i} className="h-20 rounded-xl" />)}</div>

@@ -4,7 +4,8 @@ import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { orgsApi } from '@/lib/api';
 import RoleGuard from '@/components/guards/RoleGuard';
-import Sidebar from '@/components/ui/Sidebar';
+import Sidebar, { icons } from '@/components/ui/Sidebar';
+import { PageHeader } from '@/components/ui/PageHeader';
 import type { Customer, OrganizationService } from '@/lib/schemas';
 
 const statusConfig: Record<string, { cls: string; dot: string; label: string }> = {
@@ -45,15 +46,8 @@ export default function ServicesPage() {
           <div className="p-8 max-w-[1200px] mx-auto space-y-8">
 
             {/* Header */}
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.25 }}>
-              <p className="text-sm text-slate-500 mb-1">Subscriptions</p>
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900">Services</h1>
-              {org && (
-                <p className="mt-1 text-sm text-slate-500">
-                  Active subscriptions for <span className="font-semibold text-slate-700">{org.name}</span>
-                </p>
-              )}
-            </motion.div>
+            <PageHeader eyebrow="Subscriptions" title="Services" icon={icons.services}
+              subtitle={org ? <>Active subscriptions for <span className="font-semibold text-slate-700">{org.name}</span></> : undefined} />
 
             {/* Summary tiles */}
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.04 }}>

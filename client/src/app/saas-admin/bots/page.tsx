@@ -5,7 +5,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { slackBotsApi } from '@/lib/api';
 import RoleGuard from '@/components/guards/RoleGuard';
-import Sidebar from '@/components/ui/Sidebar';
+import Sidebar, { icons } from '@/components/ui/Sidebar';
+import { PageHeader } from '@/components/ui/PageHeader';
 import GlowButton from '@/components/ui/GlowButton';
 import { Shimmer } from '@/components/ui/Shimmer';
 import { useConfirm } from '@/components/ui/ConfirmDialog';
@@ -433,17 +434,14 @@ export default function SlackBotsPage() {
         <Sidebar />
         <main className="flex-1 overflow-y-auto">
           <div className="p-8 max-w-[1100px] mx-auto space-y-6">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.22 }} className="flex items-start justify-between gap-4 flex-wrap">
-              <div>
-                <p className="text-sm text-slate-500 mb-1">Platform</p>
-                <h1 className="text-2xl font-bold tracking-tight text-slate-900">Slack Bots</h1>
-                <p className="mt-1 text-sm text-slate-500">Connect Slack bots to the assistant, track live status, and maintain each bot&apos;s ticket form — {connected} of {bots.length} connected.</p>
-              </div>
-              <GlowButton onClick={() => setAdding(true)}>
-                <svg className="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.5v15m7.5-7.5h-15" /></svg>
-                Add Bot
-              </GlowButton>
-            </motion.div>
+            <PageHeader eyebrow="Platform" title="Slack Bots" icon={icons.bots}
+              subtitle={`Connect Slack bots to the assistant, track live status, and maintain each bot's ticket form — ${connected} of ${bots.length} connected.`}
+              actions={
+                <GlowButton onClick={() => setAdding(true)}>
+                  <svg className="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                  Add Bot
+                </GlowButton>
+              } />
 
             {isLoading ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{[...Array(3)].map((_, i) => <Shimmer key={i} className="h-40 rounded-xl" />)}</div>

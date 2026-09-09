@@ -8,7 +8,8 @@ import { orgsApi, chatApi, type ChatTurn } from '@/lib/api';
 import { timeAgo } from '@/lib/display';
 import { useConfirm } from '@/components/ui/ConfirmDialog';
 import RoleGuard from '@/components/guards/RoleGuard';
-import Sidebar from '@/components/ui/Sidebar';
+import Sidebar, { icons } from '@/components/ui/Sidebar';
+import { PageHeader } from '@/components/ui/PageHeader';
 import Chatbot from '@/components/ui/Chatbot';
 import { ShimmerRow } from '@/components/ui/Shimmer';
 import { useAuth } from '@/contexts/AuthContext';
@@ -198,15 +199,10 @@ function ChatPageInner() {
           {/* Header */}
           <div className="px-8 pt-8 pb-4 flex-shrink-0">
             <div className="max-w-[1200px] mx-auto w-full">
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.25 }}>
-                <p className="text-sm text-slate-500 mb-1">AI Assistant</p>
-                <h1 className="text-2xl font-bold tracking-tight text-slate-900">Tech Assistant</h1>
-                <p className="mt-1 text-sm text-slate-500">
-                  {resumeId
-                    ? 'Resuming a saved conversation — your messages continue to be saved to history.'
-                    : 'Describe an IT issue — printer, AD, proxy, VPN — or ask anything; conversations are saved to your history.'}
-                </p>
-              </motion.div>
+              <PageHeader eyebrow="AI Assistant" title="Tech Assistant" icon={icons.chat}
+                subtitle={resumeId
+                  ? 'Resuming a saved conversation — your messages continue to be saved to history.'
+                  : 'Describe an IT issue — printer, AD, proxy, VPN — or ask anything; conversations are saved to your history.'} />
             </div>
           </div>
 

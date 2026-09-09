@@ -6,7 +6,8 @@ import { motion } from 'framer-motion';
 import { saasAdminApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import RoleGuard from '@/components/guards/RoleGuard';
-import Sidebar from '@/components/ui/Sidebar';
+import Sidebar, { icons } from '@/components/ui/Sidebar';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { ShimmerRow } from '@/components/ui/Shimmer';
 import GlowButton from '@/components/ui/GlowButton';
 
@@ -200,11 +201,8 @@ export default function SystemLogsPage() {
         <main className="flex-1 overflow-y-auto">
           <div className="p-6 sm:p-8 max-w-[1200px] mx-auto space-y-6">
 
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.25 }}>
-              <p className="text-sm text-slate-500 mb-1">Platform</p>
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900">Activity Logging</h1>
-              <p className="mt-1 text-sm text-slate-500">Monitor and export platform activity.</p>
-            </motion.div>
+            <PageHeader eyebrow="Platform" title="Activity Logging" icon={icons.logs}
+              subtitle="Monitor and export platform activity." />
 
             {canViewLog ? (
               <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.04 }}>

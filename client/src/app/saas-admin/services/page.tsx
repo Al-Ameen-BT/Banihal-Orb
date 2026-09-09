@@ -6,7 +6,8 @@ import { motion } from 'framer-motion';
 import Link from 'next/link';
 import { saasAdminApi } from '@/lib/api';
 import RoleGuard from '@/components/guards/RoleGuard';
-import Sidebar from '@/components/ui/Sidebar';
+import Sidebar, { icons } from '@/components/ui/Sidebar';
+import { PageHeader } from '@/components/ui/PageHeader';
 import GlowButton from '@/components/ui/GlowButton';
 
 type Status = 'ACTIVE' | 'EXPIRING' | 'EXPIRED';
@@ -67,14 +68,8 @@ export default function CustomerServicesPage() {
           <div className="p-8 max-w-[1100px] mx-auto space-y-6">
 
             {/* Header */}
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.25 }}
-              className="flex items-start justify-between gap-4 flex-wrap">
-              <div>
-                <p className="text-sm text-slate-500 mb-1">Platform</p>
-                <h1 className="text-2xl font-bold tracking-tight text-slate-900">Customer Services</h1>
-                <p className="mt-1 text-sm text-slate-500">Every customer&apos;s purchased services — manage renewals and expiries.</p>
-              </div>
-            </motion.div>
+            <PageHeader eyebrow="Platform" title="Customer Services" icon={icons.services}
+              subtitle="Every customer's purchased services — manage renewals and expiries." />
 
             {/* Filters + search */}
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.04 }}

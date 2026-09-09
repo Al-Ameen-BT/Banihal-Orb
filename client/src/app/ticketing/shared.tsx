@@ -227,24 +227,7 @@ export function apiErrorMessage(err: unknown, fallback: string): string {
 }
 
 // ─── Page header ────────────────────────────────────────────────────────────────
-export function PageHeader({ eyebrow, title, subtitle, icon, actions }: {
-  eyebrow: string; title: string; subtitle?: string; icon?: React.ReactNode; actions?: React.ReactNode;
-}) {
-  return (
-    <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}
-      className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-      <div className="flex items-start gap-3.5">
-        {icon && <div className="hidden sm:flex w-11 h-11 rounded-xl bg-gradient-to-br from-brand-50 to-brand-100 ring-1 ring-brand-200/70 items-center justify-center flex-shrink-0 text-brand">{icon}</div>}
-        <div>
-          <p className="eyebrow">{eyebrow}</p>
-          <h1 className="text-[1.6rem] font-bold tracking-tight text-slate-900 leading-tight">{title}</h1>
-          {subtitle && <p className="mt-1 text-sm text-slate-500 max-w-xl">{subtitle}</p>}
-        </div>
-      </div>
-      {actions && <div className="flex-shrink-0">{actions}</div>}
-    </motion.div>
-  );
-}
+export { PageHeader } from '@/components/ui/PageHeader';
 
 // ─── Stat strip / KPI cards ─────────────────────────────────────────────────────
 export function StatStrip({ items }: { items: { label: string; value: number | string; dot: string }[] }) {

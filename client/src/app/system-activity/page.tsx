@@ -6,7 +6,8 @@ import { motion } from 'framer-motion';
 import { saasAdminApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import RoleGuard from '@/components/guards/RoleGuard';
-import Sidebar from '@/components/ui/Sidebar';
+import Sidebar, { icons } from '@/components/ui/Sidebar';
+import { PageHeader } from '@/components/ui/PageHeader';
 import GlowButton from '@/components/ui/GlowButton';
 import { ShimmerRow } from '@/components/ui/Shimmer';
 
@@ -131,11 +132,8 @@ export default function SystemActivityPage() {
         <main className="flex-1 overflow-y-auto">
           <div className="p-6 sm:p-8 max-w-[1200px] mx-auto space-y-6">
 
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.25 }}>
-              <p className="text-sm text-slate-500 mb-1">Platform</p>
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900">System Activity</h1>
-              <p className="mt-1 text-sm text-slate-500">Every audited action across the platform — logins, account changes and organization events.</p>
-            </motion.div>
+            <PageHeader eyebrow="Platform" title="System Activity" icon={icons.activity}
+              subtitle="Every audited action across the platform — logins, account changes and organization events." />
 
             {!canViewLog ? (
               // RoleGuard admits any ADMINISTRATOR; the audit trail itself needs

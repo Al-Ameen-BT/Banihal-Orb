@@ -9,7 +9,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { roleBadgeFor, mfaStatus } from '@/lib/display';
 import { notify } from '@/lib/toast-bus';
 import RoleGuard from '@/components/guards/RoleGuard';
-import Sidebar from '@/components/ui/Sidebar';
+import Sidebar, { icons } from '@/components/ui/Sidebar';
+import { PageHeader } from '@/components/ui/PageHeader';
 import DataTable from '@/components/ui/DataTable';
 import GlowButton from '@/components/ui/GlowButton';
 import Toggle from '@/components/ui/Toggle';
@@ -331,19 +332,12 @@ export default function UsersPage() {
           <div className="p-8 max-w-[1200px] mx-auto space-y-8">
 
             {/* Header */}
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.25 }}>
-              <p className="text-sm text-slate-500 mb-1">Identity</p>
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900">Users</h1>
-              {/* The platform view counts every organization, so naming only the
-                  provider's own org here would misdescribe the tiles below it. */}
-              {isPlatformAdmin ? (
-                <p className="mt-1 text-sm text-slate-500">Every account on the platform — provider staff and client organizations</p>
-              ) : org && (
-                <p className="mt-1 text-sm text-slate-500">
-                  Manage team members in <span className="font-semibold text-slate-700">{org.name}</span>
-                </p>
-              )}
-            </motion.div>
+            {/* The platform view counts every organization, so naming only the
+                provider's own org here would misdescribe the tiles below it. */}
+            <PageHeader eyebrow="Identity" title="Users" icon={icons.users}
+              subtitle={isPlatformAdmin
+                ? 'Every account on the platform — provider staff and client organizations'
+                : org ? <>Manage team members in <span className="font-semibold text-slate-700">{org.name}</span></> : undefined} />
 
             {/* Summary tiles. Platform staff get PLATFORM-WIDE counts — the
                 org-scoped set below would have shown them only their own

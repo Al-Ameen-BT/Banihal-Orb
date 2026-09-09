@@ -12,7 +12,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { saasAdminApi } from '@/lib/api';
 import RoleGuard from '@/components/guards/RoleGuard';
-import Sidebar from '@/components/ui/Sidebar';
+import Sidebar, { icons } from '@/components/ui/Sidebar';
+import { PageHeader } from '@/components/ui/PageHeader';
 import GlowButton from '@/components/ui/GlowButton';
 import { ShimmerCard } from '@/components/ui/Shimmer';
 import { useToast } from '@/components/ui/Toast';
@@ -79,15 +80,8 @@ function PendingOrgs() {
 
   return (
     <div className="p-6 sm:p-8 max-w-[1100px] mx-auto space-y-6">
-      <div>
-        <p className="font-mono text-[11px] font-bold uppercase tracking-[0.15em] text-brand">Platform</p>
-        <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">Pending organizations</h1>
-        <p className="mt-1.5 text-sm text-slate-500">
-          These organizations cannot sign in until you give their administrator the approval code
-          from your email. Verify who you are speaking to first — withholding the code is how a
-          registration is refused.
-        </p>
-      </div>
+      <PageHeader eyebrow="Platform" title="Pending organizations" icon={icons.pending}
+        subtitle="These organizations cannot sign in until you give their administrator the approval code from your email. Verify who you are speaking to first — withholding the code is how a registration is refused." />
 
       {isLoading ? (
         <div className="space-y-3">{Array.from({ length: 2 }).map((_, i) => <ShimmerCard key={i} />)}</div>

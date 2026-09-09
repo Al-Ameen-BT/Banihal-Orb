@@ -6,7 +6,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { usersApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import RoleGuard from '@/components/guards/RoleGuard';
-import Sidebar from '@/components/ui/Sidebar';
+import Sidebar, { icons } from '@/components/ui/Sidebar';
+import { PageHeader } from '@/components/ui/PageHeader';
 import Toggle from '@/components/ui/Toggle';
 import GlowButton from '@/components/ui/GlowButton';
 import EnablePushButton from '@/components/EnablePushButton';
@@ -78,10 +79,7 @@ export default function ProfilePage() {
           <div className="p-8 max-w-[640px] mx-auto space-y-8">
 
             {/* Header */}
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.25 }}>
-              <p className="text-sm text-slate-500 mb-1">Account</p>
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900">My Profile</h1>
-            </motion.div>
+            <PageHeader eyebrow="Account" title="My Profile" icon={icons.profile} />
 
             {/* Identity */}
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.04, ease: [0.4,0,0.2,1] }}>

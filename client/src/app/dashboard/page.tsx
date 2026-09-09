@@ -7,7 +7,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { orgsApi, chatApi, announcementsApi, ticketingApi } from '@/lib/api';
 import RoleGuard from '@/components/guards/RoleGuard';
 import { useConfirm } from '@/components/ui/ConfirmDialog';
-import Sidebar from '@/components/ui/Sidebar';
+import Sidebar, { icons } from '@/components/ui/Sidebar';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { ShimmerCard } from '@/components/ui/Shimmer';
 import { useAuth } from '@/contexts/AuthContext';
 import AdminPlatformDashboard from './AdminDashboard';
@@ -407,15 +408,8 @@ function MemberDashboard() {
           <div className="p-8 max-w-[1200px] mx-auto space-y-8">
 
             {/* Greeting */}
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.25 }}>
-              <p className="text-sm text-slate-500 mb-1">Good {timeLabel},</p>
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900">{user?.name}</h1>
-              {org && (
-                <p className="mt-1 text-sm text-slate-500">
-                  Member of <span className="font-semibold text-slate-700">{org.name}</span>
-                </p>
-              )}
-            </motion.div>
+            <PageHeader eyebrow={`Good ${timeLabel},`} title={user?.name ?? ''} icon={icons.dashboard}
+              subtitle={org ? <>Member of <span className="font-semibold text-slate-700">{org.name}</span></> : undefined} />
 
             {/* Platform announcements */}
             <AnnouncementBanners />

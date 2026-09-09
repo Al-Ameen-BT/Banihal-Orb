@@ -8,7 +8,8 @@ import { saasAdminApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { roleBadgeFor, roleTextCls, mfaStatus } from '@/lib/display';
 import RoleGuard from '@/components/guards/RoleGuard';
-import Sidebar from '@/components/ui/Sidebar';
+import Sidebar, { icons } from '@/components/ui/Sidebar';
+import { PageHeader } from '@/components/ui/PageHeader';
 import KpiCard from '@/components/ui/KpiCard';
 import Toggle from '@/components/ui/Toggle';
 import GlowButton from '@/components/ui/GlowButton';
@@ -398,18 +399,9 @@ function AdminDashboard() {
   return (
     <div className="p-8 max-w-[1400px] mx-auto space-y-8">
       {/* Header */}
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.22 }} className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <div className="flex items-center gap-2 mb-1.5">
-            <span className={`w-2 h-2 rounded-full ${roleBadge.dot} animate-pulse-soft`} />
-            <p className={`text-sm font-semibold ${roleTextCls(roleBadge)}`}>{roleBadge.label} · Platform Overview</p>
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Administrator Dashboard</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Monitor Sadmin activity, platform health, and all client organizations
-          </p>
-        </div>
-      </motion.div>
+      <PageHeader icon={icons.saas} title="Administrator Dashboard"
+        eyebrow={<span className="inline-flex items-center gap-2"><span className={`w-2 h-2 rounded-full ${roleBadge.dot} animate-pulse-soft`} />{roleBadge.label} · Platform Overview</span>}
+        subtitle="Monitor Sadmin activity, platform health, and all client organizations" />
 
       {/* KPI strip */}
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.04 }}>
@@ -637,18 +629,9 @@ function SadminPage() {
           <div className="p-8 max-w-[1400px] mx-auto space-y-8">
 
             {/* ─── Header ─────────────────────────────────────────────────── */}
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.22 }} className="flex items-start justify-between gap-4 flex-wrap">
-              <div>
-                <div className="flex items-center gap-2 mb-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse-soft" />
-                  <p className="text-sm font-semibold text-emerald-600">Super Admin · Control Plane</p>
-                </div>
-                <h1 className="text-2xl font-bold tracking-tight text-slate-900">Platform Admin</h1>
-                <p className="mt-1 text-sm text-slate-500">
-                  Manage all client organizations, their admins, users, and subscribed services
-                </p>
-              </div>
-            </motion.div>
+            <PageHeader icon={icons.saas} title="Platform Admin"
+              eyebrow={<span className="inline-flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse-soft" />Super Admin · Control Plane</span>}
+              subtitle="Manage all client organizations, their admins, users, and subscribed services" />
 
             {/* ─── KPI Strip ──────────────────────────────────────────────── */}
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.04 }}>

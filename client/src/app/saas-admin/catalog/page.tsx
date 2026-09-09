@@ -5,7 +5,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { saasAdminApi } from '@/lib/api';
 import RoleGuard from '@/components/guards/RoleGuard';
-import Sidebar from '@/components/ui/Sidebar';
+import Sidebar, { icons } from '@/components/ui/Sidebar';
+import { PageHeader } from '@/components/ui/PageHeader';
 import GlowButton from '@/components/ui/GlowButton';
 import { Shimmer } from '@/components/ui/Shimmer';
 
@@ -238,22 +239,14 @@ export default function CatalogPage() {
           <div className="p-8 max-w-[1100px] mx-auto space-y-6">
 
             {/* Header */}
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.22 }}
-              className="flex items-start justify-between gap-4 flex-wrap">
-              <div>
-                <p className="text-sm text-slate-500 mb-1">Platform</p>
-                <h1 className="text-2xl font-bold tracking-tight text-slate-900">Service Catalog</h1>
-                <p className="mt-1 text-sm text-slate-500">
-                  Master list of platform services — {enabledCount} of {items.length} enabled.
-                </p>
-              </div>
-              <GlowButton onClick={() => setDrawerItem('new')}>
-                <svg className="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.5v15m7.5-7.5h-15" />
-                </svg>
-                Add Service
-              </GlowButton>
-            </motion.div>
+            <PageHeader eyebrow="Platform" title="Service Catalog" icon={icons.catalog}
+              subtitle={`Master list of platform services — ${enabledCount} of ${items.length} enabled.`}
+              actions={
+                <GlowButton onClick={() => setDrawerItem('new')}>
+                  <svg className="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                  Add Service
+                </GlowButton>
+              } />
 
             {/* Summary tiles */}
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.04 }}>
