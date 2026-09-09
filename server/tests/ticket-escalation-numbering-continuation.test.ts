@@ -8,12 +8,15 @@ import { deriveOrgCode } from '../src/utils/orgCode';
 import { DEFAULT_FORMAT } from '../src/modules/ticketing/services/numberFormat';
 import { parseEscalationNumber, validateEscalationNumbering } from '../src/modules/ticketing/services/escalationNumbering';
 
-// Escalated copies must continue the SOURCE org's per-store sequence with the
-// org-coded format (TKT-<ORGCODE>-001, -002, …) even when the customer has NO
-// stored orgCode row — the code is then derived from the org name, exactly like
-// source-ticket creation, instead of the copy silently falling into the admin
-// store's global TKT-NNN counter. These tests also exercise the validation
-// system (validateEscalationNumbering) that guards the scheme.
+// Escalated copies must keep the SOURCE org's code (TKT-<ORGCODE>-NNN) even when
+// the customer has NO stored orgCode row — the code is then derived from the org
+// name, exactly like source-ticket creation, instead of the copy silently falling
+// into the admin store's plain TKT-NNN counter. The DIGITS, however, continue the
+// admin store's store-wide MASTER sequence: every ticket in the platform store —
+// platform-created (TKT-001, …) and org copies (TKT-DVB-002, …) — advances one
+// shared clock, so "the platform's last number was N, this escalation is N+1".
+// These tests also exercise the validation system (validateEscalationNumbering)
+// that guards the scheme's one remaining invariant: copies keep their org segment.
 
 const ready = ticketTestDbReady();
 describe.skipIf(!ready)(`escalated-copy continuing numbering${ready ? '' : ` (SKIPPED: ${ticketDbSkipReason()})`}`, () => {
@@ -28,7 +31,7 @@ describe.skipIf(!ready)(`escalated-copy continuing numbering${ready ? '' : ` (SK
     return { name, code: deriveOrgCode(name), admin, ac };
   }
 
-  it('copies continue the per-org sequence using the DERIVED code (no orgCode row)', async () => {
+  it('copies continue the store-wide MASTER sequence using the DERIVED code (no orgCode row)', async () => {
     const now = `${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
     const { code, ac } = await setupOrg(`Org A ${now}`);
     await request(app).get('/api/ticketing/tickets?mine=true').set('Cookie', ac).expect(200);
@@ -48,10 +51,10 @@ describe.skipIf(!ready)(`escalated-copy continuing numbering${ready ? '' : ` (SK
     const src1 = await request(app).get(`/api/ticketing/tickets/${r1.body.id}`).set('Cookie', ac).expect(200);
     expect(src1.body.labels).toContain('escalated');
 
-    // Copies land in the ADMIN store with the derived code and a CONTINUING
-    // sequence (second copy = first + 1) — the org segment must NOT be dropped.
-    // NB: the shared test DB can already carry org-coded rows for the same derived
-    // code from earlier runs, so we assert continuation relatively, not from 001.
+    // Copies land in the ADMIN store with the derived code kept, and the SECOND copy
+    // continues the store-wide master clock (second = first + 1, since nothing else
+    // is written to the admin store between the two escalations). The digit is NOT
+    // restarted from 001 regardless of how the org numbers itself.
     const copy1 = await adminTicketPrisma.tickets.findFirst({
       where: { labels: { has: `src:${num1}` } },
       select: { ticketNumber: true, labels: true },
@@ -71,7 +74,7 @@ describe.skipIf(!ready)(`escalated-copy continuing numbering${ready ? '' : ` (SK
     expect(p2!.seq).toBe(p1!.seq + 1);
   });
 
-  it('per-org sequences stay isolated (org B starts at 001, not 003)', async () => {
+  it('org-coded copies advance ONE global platform sequence — org B does NOT restart at 001', async () => {
     const now = `${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
     const { code: codeA, ac: acA } = await setupOrg(`Org Iso A ${now}`);
     const { code: codeB, ac: acB } = await setupOrg(`Org Iso B ${now}`);
@@ -103,33 +106,45 @@ describe.skipIf(!ready)(`escalated-copy continuing numbering${ready ? '' : ` (SK
     expect(pa1!.orgCode).toBe(codeA);
     expect(pa2!.orgCode).toBe(codeA);
     expect(pa2!.seq).toBe(pa1!.seq + 1);
-    // Isolation: org B gets its OWN org segment (its counter does not continue A's).
-    expect(codeA).not.toBe(codeB);
+    // One platform master clock shared across orgs: org B's copy continues A's
+    // DIGITS (they do not restart at 001), while keeping B's own org code.
     expect(pb1!.orgCode).toBe(codeB);
+    expect(pb1!.seq).toBe(pa2!.seq + 1);
   });
 
-  it('validation reports the freshly-created per-org group as contiguous', async () => {
-    // Note: the shared test DB may carry org-coded leftovers from earlier runs,
-    // so this asserts on THIS test's own sequence rather than a global ok=true.
+  it('escalated-copy digits exceed the store-wide max that existed before the escalation', async () => {
+    // The contract that makes a platform admin trust the number: the copy is created
+    // at (store-wide max digit) + 1, so it is guaranteed to continue the platform's
+    // master sequence. `before` is read FIRST, so a concurrent writer can only push
+    // the actual allocation higher — the copy is always strictly beyond it.
     const now = `${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
     const { code, ac } = await setupOrg(`Org Healthy ${now}`);
     await request(app).get('/api/ticketing/tickets?mine=true').set('Cookie', ac).expect(200);
     const proj = await request(app).post('/api/ticketing/projects').set('Cookie', ac).send({ name: `Num Healthy Proj ${now}` });
     expect(proj.status).toBe(201);
+
+    const before = await storeWideMaxDigit();
     const made = await request(app).post('/api/ticketing/tickets').set('Cookie', ac).send({
       title: 'healthy copy', description: 'test', projectId: proj.body.id, escalateToAdministrators: true,
     });
     expect(made.status).toBe(201);
     expect(made.body.ticketNumber).toMatch(new RegExp(`^TKT-${code}-\\d{3,}$`));
 
+    const copy = await adminTicketPrisma.tickets.findFirst({
+      where: { labels: { has: `src:${made.body.ticketNumber}` } },
+      select: { ticketNumber: true },
+    });
+    expect(copy).toBeDefined();
+    const madeParsed = parseEscalationNumber(copy!.ticketNumber, DEFAULT_FORMAT);
+    expect(madeParsed).not.toBeNull();
+    expect(madeParsed!.orgCode).toBe(code);
+    expect(madeParsed!.seq).toBeGreaterThan(before);
+
+    // The validator groups it under its org code with no complaint about the segment.
     const report = await runWithTicketDb('admin', () => validateEscalationNumbering());
-    const madeParsed = parseEscalationNumber(made.body.ticketNumber, DEFAULT_FORMAT) ?? { orgCode: code, seq: -1 };
     const group = report.groups.find((g) => g.orgCode === code);
     expect(group).toBeDefined();
-    expect(group!.seqs).toContain(madeParsed.seq);
-    expect(group!.maxSeq).toBe(madeParsed.seq);
-    expect(group!.gaps).toEqual([]);
-    expect(group!.duplicatedSeqs).toEqual([]);
+    expect(group!.seqs).toContain(madeParsed!.seq);
   });
 
   it('validation flags an escalated copy that lost its org segment', async () => {
@@ -170,3 +185,14 @@ describe.skipIf(!ready)(`escalated-copy continuing numbering${ready ? '' : ` (SK
     }
   });
 });
+
+/** Max trailing sequence digit among ALL admin-store ticket numbers (store-wide clock). */
+async function storeWideMaxDigit(): Promise<number> {
+  const nums = await adminTicketPrisma.tickets.findMany({ select: { ticketNumber: true } });
+  let max = 0;
+  for (const t of nums) {
+    const m = /(\d+)\s*$/.exec(t.ticketNumber);
+    if (m) max = Math.max(max, parseInt(m[1]!, 10));
+  }
+  return max;
+}

@@ -2,12 +2,13 @@
  * validate:escalations — integrity check for escalated-ticket numbering.
  *
  * Every escalated copy in the platform ADMIN store must keep its origin org's code
- * and CONTINUE that org's per-store sequence (TKT-<ORGCODE>-NNN). This scans the
- * admin store and reports:
- *   - escalated copies with NO org segment (numbering leak into the global TKT-NNN
- *     counter — what happens when an org has no stored orgCode row),
- *   - per-org sequence gaps and duplicated numbers,
- * and exits nonzero when anything is violated.
+ * and the digits continue the admin store's MASTER sequence (nextGlobalTicketNumber:
+ * max digit of ANY admin ticket + 1), so platform-created tickets and org copies share
+ * one clock. Per-org series are gone — per-org gaps in the admin store are BY DESIGN.
+ * This scans the admin store and reports the one violation that still breaks the
+ * scheme: escalated copies with NO org segment (the numbering leak into the plain
+ * TKT-NNN counter — what happens when an org has no stored orgCode row).
+ * Exits nonzero when anything is violated.
  *
  *   npm run validate:escalations
  */
@@ -23,14 +24,14 @@ async function main(): Promise<void> {
   const width = Math.max(5, ...report.groups.map((g) => g.orgCode.length), 'org-code'.length);
   const sep = '─'.repeat(width + 4 + 'seq range'.length);
 
-  console.log(`escalation-numbering validation  target=admin store  format=${fmt.prefix}-<ORG>-<NNN>`);
+  console.log(`escalation-numbering validation  target=admin store  format=${fmt.prefix}-<ORG>-<global NNN>`);
   console.log(`  escalated copies examined: ${report.copiesExamined}`);
   console.log(`  org-coded groups:          ${report.groups.length}`);
   console.log(sep);
-  console.log(`  ${'org-code'.padEnd(width)}  seq range`);
+  console.log(`  ${'org-code'.padEnd(width)}  copies`);
   if (report.groups.length === 0) console.log('  (none)');
   for (const g of report.groups) {
-    const range = `1..${g.maxSeq}` + (g.gaps.length ? `  GAPS: ${g.gaps.join(',')}` : '') + (g.duplicatedSeqs.length ? `  DUPS: ${g.duplicatedSeqs.join(',')}` : '');
+    const range = `seq max ${g.maxSeq} (${g.count} number${g.count === 1 ? '' : 's'}, digits from the store-wide master clock)`;
     console.log(`  ${g.orgCode.padEnd(width)}  ${range}`);
   }
   console.log(sep);
@@ -39,21 +40,13 @@ async function main(): Promise<void> {
     console.error(`FAIL: ${report.uncodedCopies.length} escalated copy/copies lost the org segment:`);
     for (const c of report.uncodedCopies) console.error(`  - ${c.ticketNumber}`);
   }
-  const broken = report.groups.filter((g) => g.gaps.length || g.duplicatedSeqs.length);
-  if (broken.length) {
-    console.error(`FAIL: ${broken.length} org sequence(s) are not contiguous 1..N:`);
-    for (const g of broken) {
-      console.error(`  - ${g.orgCode}: gaps=[${g.gaps.join(',')}] dups=[${g.duplicatedSeqs.join(',')}]`);
-    }
-  }
 
   if (report.ok) {
-    console.log('OK: every escalated copy is org-coded and every per-org sequence is contiguous.');
+    console.log('OK: every escalated copy kept its org code and shares the admin store master sequence.');
     return;
   }
   process.exitCode = 1;
-  console.error(`Validation FAILED — renumber via the ticket:org-code backfill (--apply) after fixing orgCode rows, ` +
-    `or delete the offending copy if it was created before the resolveOrgCode fallback shipped.`);
+  console.error(`Validation FAILED — fix the offending copies (they were created before the resolveOrgCode fallback shipped).`);
 }
 
 main().catch((err) => {

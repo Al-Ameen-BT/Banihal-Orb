@@ -2,7 +2,7 @@ import type { Role } from '@prisma/client';
 import * as db from '../ticketing.client';
 import { runWithTicketDb, getTicketDb } from '../../../config/ticketDatabase';
 import { resolveTicketActor, resolveB2bIdentity } from '../identity';
-import { nextTicketNumber } from '../utils/ticketNumber';
+import { nextGlobalTicketNumber } from '../utils/ticketNumber';
 import { getTicketNumberFormat, resolveOrgCode } from './numberFormat';
 import { prisma } from '../../../config/database';
 import { notify } from '../../notifications/notifications.service';
@@ -10,10 +10,11 @@ import { notify } from '../../notifications/notifications.service';
 // ─── Escalation: client (b2b_ticket) → administrators (b2b_ticketing_admin) ────
 // Both stores share the SAME 14-table schema. An ORG_ADMIN escalates an UNCLOSED ticket
 // to the platform ADMINISTRATORS as a group. We COPY it into the admin store as a fresh
-// ticket — new number, "Escalations" project, reported by the bridged actor, ASSIGNED to
-// the first active platform ADMINISTRATOR ("Banihal Support") — and flag the source with
-// an `escalated` label + activity. Cross-store reads/writes are wrapped in the matching
-// runWithTicketDb scope. Additive only: nothing is deleted/altered.
+// ticket — numbered from the admin store's GLOBAL sequence with the origin org's code
+// kept (TKT-DVB-<next-platform-number>), "Escalations" project, reported by the bridged
+// actor, ASSIGNED to the first active platform ADMINISTRATOR ("Banihal Support") — and
+// flag the source with an `escalated` label + activity. Cross-store reads/writes are
+// wrapped in the matching runWithTicketDb scope. Additive only: nothing is deleted/altered.
 
 const notFound = (w: string) => Object.assign(new Error(`${w} not found`), { status: 404, code: 'NOT_FOUND' });
 
@@ -49,17 +50,23 @@ export async function escalateTicket(
   // the first escalation's requester forever.) The per-ticket requester is carried in the
   // description below, which is accurate for every escalation.
   const orgContact = source.customer?.contactPerson ?? b2bOrg?.customer?.contactPerson ?? null;
-  // The escalated copy must keep the SOURCE ticket's org-coded numbering (TKT-<CODE>-NNN).
-  // resolveOrgCode is the SAME resolution ticket creation uses: it falls back to deriving
-  // the code from the org name when no orgCode row exists. Without that fallback an escalated
-  // copy silently dropped the org segment and joined the admin store's GLOBAL TKT-NNN sequence
-  // wherever the customer had no stored code — the source said TKT-<CODE>-001, the copy TKT-456.
+  // The escalated copy must keep the SOURCE ticket's org-coded numbering
+  // (TKT-<CODE>-NNN), so resolveOrgCode is the SAME resolution ticket creation
+  // uses: it falls back to deriving the code from the org name when no orgCode row
+  // exists. Without that fallback an escalated copy silently dropped the org segment
+  // and joined the admin store's global TKT-NNN sequence wherever the customer had no
+  // stored code — the source said TKT-<CODE>-001, the copy TKT-456.
+  // The copy's DIGITS, however, continue the PLATFORM's master sequence, not the
+  // source org's: every ticket in the admin store shares one clock, so a copy always
+  // gets max(any admin ticket's number) + 1. Platform sees "last number was TKT-001,
+  // this org escalation is TKT-DVB-002" — org code retained, sequence continuous.
   const orgCode = await resolveOrgCode(b2bOrg?.customerId ?? null);
   const requestedByLine = `Requested by ${requester?.name ?? 'Unknown user'}${requester?.email ? ` <${requester.email}>` : ''}.`;
 
   // Copy into the ADMIN store (14-table). Reporter + project + customer are resolved in
-  // that store; the ticket number is allocated from the admin store's sequence; the copy
-  // is assigned to the first active platform ADMINISTRATOR ("Banihal Support").
+  // that store; the ticket number is allocated from the admin store's GLOBAL sequence
+  // (nextGlobalTicketNumber) with the origin org's code stamped on; the copy is
+  // assigned to the first active platform ADMINISTRATOR ("Banihal Support").
   // The escalated copy must be REPORTED BY the original requester, not by whoever
   // escalated it — administrators triage by requester. The requester exists only in
   // the source store, so bridge across: ticket user → B2B account → ticket user in
@@ -108,8 +115,12 @@ export async function escalateTicket(
     let created = false;
     let createdTicketId = '';
     let ticketNumber = '';
+    // Walk past a legacy collision: the admin store can already hold TKT-<CODE>-050
+    // for the org while the store-wide max digit is lower, in which case a P2002
+    // candidate must not be proposed again on the next attempt.
+    let minSeq: number | undefined;
     for (let attempt = 0; attempt < 10 && !created; attempt++) {
-      ticketNumber = await nextTicketNumber(fmt, orgCode);
+      ticketNumber = await nextGlobalTicketNumber(fmt, orgCode, minSeq);
       try {
         createdTicketId = await db.createTicketRow({
           ticketNumber,
@@ -129,7 +140,12 @@ export async function escalateTicket(
         });
         created = true;
       } catch (err) {
-        if ((err as { code?: string }).code === 'P2002') continue; // number collision → retry
+        if ((err as { code?: string }).code === 'P2002') {
+          // number collision → retry past the colliding candidate
+          const m = /(\d+)\s*$/.exec(ticketNumber);
+          if (m) minSeq = parseInt(m[1]!, 10) + 1;
+          continue;
+        }
         throw err;
       }
     }

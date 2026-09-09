@@ -6,10 +6,11 @@ import { prisma } from '../src/config/database';
 import { adminTicketPrisma } from '../src/config/ticketDatabase';
 
 // When an ORG_ADMIN escalates a ticket, the copy written to the ADMIN store
-// (b2b_ticketing_admin) must carry the SAME org-coded number format as the source
-// (TKT-<ORGCODE>-NNN), counting from the admin store's own per-org sequence.
-// Previously the copy got a plain TKT-NNN; the platform admin then saw a number
-// that shared nothing with the org ticket it came from.
+// (b2b_ticketing_admin) must carry the SAME org-coded number FORMAT as the source
+// (TKT-<ORGCODE>-NNN), with the DIGITS continuing the admin store's store-wide
+// MASTER sequence (nextGlobalTicketNumber) — so platform numbers and escalation
+// copies share one clock. Previously the copy got a plain TKT-NNN; the platform
+// admin then saw a number that shared nothing with the org ticket it came from.
 
 const ready = ticketTestDbReady();
 describe.skipIf(!ready)(`escalated copy numbering${ready ? '' : ` (SKIPPED: ${ticketDbSkipReason()})`}`, () => {

@@ -5,12 +5,14 @@ import { getTicketDb } from '../../../config/ticketDatabase';
 // Validation system for the escalated-copy numbering scheme.
 //
 // An escalated copy is written into the platform ADMIN store with its ORIGIN org's
-// code and must CONTINUE that org's per-store sequence: TKT-<ORGCODE>-001, -002, …
-// (nextTicketNumber extends the max of every `TKT-<ORGCODE>-` row in the store).
-// This module scans a ticket store and reports anything that broke the scheme:
-//   - copies with NO org segment — the historical bug where an org with no stored
-//     orgCode row made the copy fall into the admin store's GLOBAL TKT-NNN counter;
-//   - per-org sequence gaps or duplicated numbers.
+// code (TKT-<ORGCODE>-NNN) and the DIGITS continue the STORE-WIDE master sequence
+// (nextGlobalTicketNumber: max digit of ANY admin ticket + 1) — platform-created
+// tickets (TKT-001, …) and escalated copies (TKT-DVB-002, …) share one clock. The
+// org-coded per-org series that nextGlobalTicketNumber replaces is gone, so per-org
+// gaps in the admin store are EXPECTED and NOT a violation.
+// This module scans a ticket store and reports the one thing that still breaks the
+// scheme: copies with NO org segment — the historical bug where an org with no stored
+// orgCode row made the copy fall into the admin store's plain TKT-NNN counter.
 // runWithTicketDb('admin', () => validateEscalationNumbering()) checks the platform
 // store; the shared store can be checked the same way.
 
@@ -42,15 +44,12 @@ export interface OrgSequence {
   seqs: number[];
   maxSeq: number;
   count: number;
-  /** Sequence numbers missing between 1 and maxSeq (continuity broken). */
-  gaps: number[];
-  /** Sequence numbers that appear more than once. */
-  duplicatedSeqs: number[];
 }
 
 export interface EscalationValidationReport {
   ok: boolean;
-  /** All org-coded tickets in the store — the sequence nextTicketNumber extends. */
+  /** All org-coded tickets in the store, grouped per org (for reporting only — the
+   *  digits are drawn from the global clock, so per-org gaps are by design). */
   groups: OrgSequence[];
   /** Escalated copies (have a src: label) whose number has NO org segment. */
   uncodedCopies: { ticketNumber: string }[];
@@ -76,7 +75,7 @@ export async function validateEscalationNumbering(format?: NumberFormat): Promis
       continue;
     }
     const g = byOrg.get(parsed.orgCode)
-      ?? { orgCode: parsed.orgCode, numbers: [], seqs: [], maxSeq: 0, count: 0, gaps: [], duplicatedSeqs: [] };
+      ?? { orgCode: parsed.orgCode, numbers: [], seqs: [], maxSeq: 0, count: 0 };
     g.numbers.push(t.ticketNumber);
     g.seqs.push(parsed.seq);
     byOrg.set(parsed.orgCode, g);
@@ -87,15 +86,10 @@ export async function validateEscalationNumbering(format?: NumberFormat): Promis
     g.seqs.sort((a, b) => a - b);
     g.maxSeq = g.seqs[g.seqs.length - 1] ?? 0;
     g.count = g.seqs.length;
-    const seen = new Map<number, number>();
-    for (const s of g.seqs) seen.set(s, (seen.get(s) ?? 0) + 1);
-    g.duplicatedSeqs = [...seen.entries()].filter(([, n]) => n > 1).map(([s]) => s);
-    g.gaps = [];
-    for (let seq = 1; seq <= g.maxSeq; seq++) if (!seen.has(seq)) g.gaps.push(seq);
     groups.push(g);
   }
   groups.sort((a, b) => a.orgCode.localeCompare(b.orgCode));
 
-  const ok = uncodedCopies.length === 0 && groups.every((g) => g.gaps.length === 0 && g.duplicatedSeqs.length === 0);
+  const ok = uncodedCopies.length === 0;
   return { ok, groups, uncodedCopies, copiesExamined };
 }
