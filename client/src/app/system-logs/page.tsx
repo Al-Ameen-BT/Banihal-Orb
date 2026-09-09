@@ -98,7 +98,7 @@ function AuditLogSection({ orgs }: { orgs: OrgOption[] }) {
   }
 
   return (
-    <div className="card overflow-hidden">
+    <div className="card overflow-hidden h-full flex flex-col">
       {/* Filters */}
       <div className="px-4 py-3 border-b border-slate-100 flex items-end gap-3 flex-wrap">
         <div>
@@ -123,7 +123,9 @@ function AuditLogSection({ orgs }: { orgs: OrgOption[] }) {
           <input id="audit-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} className="input !py-1.5 text-xs w-auto" />
         </div>
         <div className="ml-auto flex items-center gap-3">
-          <span className="text-xs text-slate-400 tabular-nums">{data?.total ?? 0} entries</span>
+          <span className="text-xs text-slate-400 tabular-nums">
+            {(data?.total ?? 0) > items.length ? `${items.length} of ${data?.total} entries` : `${data?.total ?? 0} entries`}
+          </span>
           <GlowButton variant="secondary" className="py-1.5 px-3 text-xs" onClick={exportCsv} disabled={items.length === 0}>
             Export CSV ↓
           </GlowButton>
@@ -131,7 +133,7 @@ function AuditLogSection({ orgs }: { orgs: OrgOption[] }) {
       </div>
 
       {/* Table */}
-      <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
+      <div className="flex-1 min-h-0 overflow-auto">
         <table className="min-w-full">
           <thead className="sticky top-0 bg-slate-50">
             <tr className="border-b border-slate-200">
@@ -165,8 +167,8 @@ function AuditLogSection({ orgs }: { orgs: OrgOption[] }) {
                     ) : <span className="text-xs text-slate-400">—</span>}
                   </td>
                   <td className="px-5 py-2.5 text-xs text-slate-600">{l.organization?.name ?? '—'}</td>
-                  <td className="px-5 py-2.5">
-                    <p className="text-[11px] font-mono text-slate-400 truncate max-w-[260px]">
+                  <td className="px-5 py-2.5 w-full max-w-0">
+                    <p className="text-[11px] font-mono text-slate-400 truncate" title={l.metadata ? JSON.stringify(l.metadata) : undefined}>
                       {l.metadata ? JSON.stringify(l.metadata) : '—'}
                     </p>
                   </td>
@@ -198,14 +200,15 @@ export default function SystemLogsPage() {
     <RoleGuard allowedRoles={['ADMINISTRATOR']}>
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
-        <main className="flex-1 overflow-y-auto">
-          <div className="p-6 sm:p-8 max-w-[1200px] mx-auto space-y-6">
+        <main className="flex-1 overflow-hidden">
+          <div className="p-6 sm:p-8 max-w-[1600px] mx-auto h-full flex flex-col gap-6">
 
             <PageHeader eyebrow="Platform" title="Activity Logging" icon={icons.logs}
               subtitle="Monitor and export platform activity." />
 
             {canViewLog ? (
-              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.04 }}>
+              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.04 }}
+                className="flex-1 min-h-0">
                 <AuditLogSection orgs={orgs ?? []} />
               </motion.div>
             ) : (
