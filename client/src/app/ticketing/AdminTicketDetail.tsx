@@ -8,7 +8,7 @@ import GlowButton from '@/components/ui/GlowButton';
 import {
   Modal, StatusBadge, PriorityBadge, TypeBadge, SlaBar, Avatar, Icons,
   STATUS_OPTIONS, PRIORITY_OPTIONS, fmtDate, timeAgo, AttachmentGrid, Person, ACCEPTED_IMAGE_ACCEPT,
-  TicketActionsMenu, EditTicketModal, useDeleteTicket, MentionTextarea, CommentBody,
+  TicketActionsMenu, EditTicketModal, MentionTextarea, CommentBody,
   useMentionCandidates, useCanEditTicket, useTicketAssignees,
 } from './shared';
 import type { TicketDTO, TicketComment, TicketAttachment, TicketStatus, TicketPriority } from '@/lib/schemas';
@@ -33,8 +33,6 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
   // Ids chosen from the @ picker. Sent alongside the comment; the server re-checks
   // every one against the roster, so this is convenience, not authority.
   const [mentions, setMentions] = useState<string[]>([]);
-  // The pane is showing a ticket that no longer exists, so close it on success.
-  const { requestDelete } = useDeleteTicket(onClose);
 
   const { data: ticket } = useQuery<TicketDTO>({ queryKey: ['ticketing', 'ticket', ticketId], queryFn: () => ticketingApi.getTicket(ticketId).then((r) => r.data as TicketDTO) });
   const { data: commentsData } = useQuery<{ comments: TicketComment[] }>({ queryKey: ['ticketing', 'comments', ticketId], queryFn: () => ticketingApi.getComments(ticketId).then((r) => r.data as { comments: TicketComment[] }) });
@@ -138,7 +136,6 @@ export default function AdminTicketDetail({ ticketId, onClose }: { ticketId: str
                 label={`Actions for ${ticket.ticketNumber}`}
                 actions={[
                   { label: 'Edit', onSelect: () => setEditing(true) },
-                  { label: 'Delete', onSelect: () => void requestDelete(ticket), danger: true },
                 ]}
               />}
               <button type="button" onClick={onClose} aria-label="Close" className="text-slate-400 hover:text-slate-700 cursor-pointer">

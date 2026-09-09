@@ -51,12 +51,11 @@ export const UpdateRequestSchema = z.object({
 // Deleting an organization. `confirm` is the org's exact NAME, typed by the caller
 // — the service re-checks it server-side (deleteProject pattern) so a destructive
 // endpoint never trusts the client to have asked.
-// `keepTickets` decides whether the two ticket stores are wiped (default) or kept:
-// the org, its users, chat sessions and everything else still go, but the ticket
-// history (shared + internal admin store) is retained as a record.
+// Tickets are compliance records: the two ticket stores are ALWAYS retained, for
+// every actor. Deleting the org removes its users, chat sessions and everything
+// else, but the ticket history (shared + internal admin store) forever stays.
 export const DeleteOrgSchema = z.object({
   confirm: z.string().min(1).max(200),
-  keepTickets: z.boolean().optional(),
 });
 
 // ─── Announcements (platform broadcasts) ─────────────────────────────────────

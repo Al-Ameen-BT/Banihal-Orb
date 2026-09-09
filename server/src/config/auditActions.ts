@@ -88,16 +88,15 @@ export const AUDIT_ACTIONS = [
   //    Create/update are defaultScope:false deliberately — they are the highest
   //    volume events on the platform and would drown System Activity's unfiltered
   //    view. Deletion and escalation are not: one is irreversible, the other moves
-  //    a ticket across the org → platform boundary.
+  //    a ticket across the org → platform boundary. (Tickets themselves are never
+  //    deleted — compliance records — only a project that holds no tickets can go.)
   { key: 'TICKET_CREATED',                      group: 'Ticketing', label: 'Ticket created',       defaultScope: false, sadminFeed: false },
   { key: 'TICKET_UPDATED',                      group: 'Ticketing', label: 'Ticket edited',        defaultScope: false, sadminFeed: false },
-  { key: 'TICKET_DELETED',                      group: 'Ticketing', label: 'Ticket deleted',       defaultScope: true,  sadminFeed: true  },
   { key: 'TICKET_ESCALATED',                    group: 'Ticketing', label: 'Ticket escalated',     defaultScope: true,  sadminFeed: false },
   { key: 'TICKET_CLAIMED',                      group: 'Ticketing', label: 'Escalated ticket claimed', defaultScope: false, sadminFeed: true },
-  // Deleting a project takes every ticket under it — in the admin store that spans
-  // several client organizations at once. defaultScope + sadminFeed for the same
-  // reason TICKET_DELETED carries both: irreversible, and previously unlogged
-  // entirely, so nothing recorded that a thousand tickets had ever existed.
+  // A project can only be deleted while it holds no tickets (tickets are compliance
+  // records), so this never destroys ticket history — irreversible for the project
+  // itself, and the audit row is its only surviving record.
   { key: 'PROJECT_DELETED',                     group: 'Ticketing', label: 'Project deleted',      defaultScope: true,  sadminFeed: true  },
 
   // ── Configuration.

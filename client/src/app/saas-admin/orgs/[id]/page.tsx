@@ -216,39 +216,16 @@ function CatalogPickerModal({ orgId, onClose }: { orgId: string; onClose: () => 
 }
 
 // ─── Delete Organization (2-step confirmation) ───────────────────────────────
-type DeleteMode = 'wipe' | 'keep_tickets';
-
-function ModeCard({ selected, onSelect, title, badge, description }: {
-  selected: boolean; onSelect: () => void; title: string; badge?: string; description: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={`w-full text-left px-4 py-3.5 rounded-xl border transition-all cursor-pointer ${
-        selected ? 'border-brand bg-brand-50/50 ring-1 ring-brand' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
-      }`}
-    >
-      <div className="flex items-center gap-2 mb-1">
-        <span className={`w-3.5 h-3.5 rounded-full border-4 transition-colors ${selected ? 'border-brand bg-brand-600' : 'border-slate-300 bg-white'}`} />
-        <p className="text-sm font-semibold text-slate-900">{title}</p>
-        {badge && <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">Default</span>}
-      </div>
-      <p className="text-xs text-slate-500 leading-relaxed pl-6">{description}</p>
-    </button>
-  );
-}
 
 function DeleteOrgModal({ org, onClose, onDeleted }: { org: OrgDetail['org']; onClose: () => void; onDeleted: () => void }) {
   const [step, setStep] = useState(0);
-  const [mode, setMode] = useState<DeleteMode>('wipe');
   const [confirmText, setConfirmText] = useState('');
   const [error, setError] = useState('');
 
   const mutation = useMutation({
-    mutationFn: () => saasAdminApi.deleteOrg(org.id, { confirm: org.name, keepTickets: mode === 'keep_tickets' }),
+    mutationFn: () => saasAdminApi.deleteOrg(org.id, { confirm: org.name }),
     onSuccess: () => {
-      notify(mode === 'keep_tickets' ? 'Organization deleted — ticketing data retained' : 'Organization and all data deleted', 'success');
+      notify('Organization deleted — ticketing history retained for compliance', 'success');
       onDeleted();
     },
     // 400 codes come back with a plain `error` message; anything else (network,
@@ -297,32 +274,19 @@ function DeleteOrgModal({ org, onClose, onDeleted }: { org: OrgDetail['org']; on
 
           {step === 0 ? (
             <div className="space-y-3">
-              <p className="text-sm text-slate-600">Choose what happens to this organization&rsquo;s data:</p>
-              <ModeCard
-                selected={mode === 'wipe'}
-                onSelect={() => setMode('wipe')}
-                title="Full data wipe"
-                badge="Default"
-                description="Destroys the organization, its users, chat history, every ticket in both the shared and internal ticketing stores, and all uploaded attachments. Nothing is recoverable."
-              />
-              <ModeCard
-                selected={mode === 'keep_tickets'}
-                onSelect={() => setMode('keep_tickets')}
-                title="Keep ticketing data"
-                description="Deletes the organization, its users, chat history, services and requests — but leaves the ticketing data (tickets, comments, attachments) in both stores as a historical record."
-              />
+              <p className="text-sm text-slate-600">This cannot be undone:</p>
+              <ul className="text-sm text-slate-700 space-y-1.5 list-disc pl-4 pr-1">
+                <li>The organization, its {org._count.users} user(s), chat history, services and requests are permanently deleted.</li>
+                <li>Ticketing history is <span className="font-medium">retained</span> in both stores — tickets are compliance records and are never deleted.</li>
+              </ul>
               <p className="text-[11px] text-slate-400 pt-1">{org._count.users} user(s) · {org.plan} plan</p>
             </div>
           ) : (
             <div className="space-y-4">
               <div className="bg-slate-50 border border-slate-100 rounded-lg px-4 py-3">
-                <p className="text-sm font-medium text-slate-700">
-                  {mode === 'keep_tickets' ? 'Keeping ticketing data' : 'Full data wipe'}
-                </p>
+                <p className="text-sm font-medium text-slate-700">Deleting the organization</p>
                 <p className="text-xs text-slate-500 mt-1">
-                  {mode === 'keep_tickets'
-                    ? `${org.name} and its ${org._count.users} user(s), chat history and non-ticketing data will be deleted. Tickets stay in both stores.`
-                    : `${org.name}, all ${org._count.users} user(s), chat history and every ticket in both stores will be permanently destroyed.`}
+                  {org.name} and its {org._count.users} user(s), chat history and non-ticketing data will be deleted. Tickets stay in both stores.
                 </p>
               </div>
               <div>

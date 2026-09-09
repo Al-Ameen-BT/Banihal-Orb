@@ -1,9 +1,5 @@
-import fs from 'fs/promises';
-import path from 'path';
 import { prisma } from '../../config/database';
 import { chatPrisma } from '../../config/chatDatabase';
-import { runWithTicketDb, getTicketDb, type TicketDbScope } from '../../config/ticketDatabase';
-import { UPLOAD_DIR } from '../ticketing/uploads';
 import { audit } from '../../lib/audit';
 
 // ─── Organization deletion ───────────────────────────────────────────────────
@@ -13,39 +9,30 @@ import { audit } from '../../lib/audit';
 // take every user with it while leaving chat sessions, tickets, upload files on
 // disk and an encrypted AD credential behind as unreachable orphans.
 //
-// TWO ordering constraints drive the sequence below, and getting either wrong is
-// unrecoverable:
-//
-//  1. SNAPSHOT MEMBER EMAILS FIRST. The ticket stores link back to a B2B org only
-//     through bridged user emails and the organization NAME. Once the User rows
-//     cascade away, those tickets can never be attributed to anyone.
-//  2. UNLINK FILES BEFORE DELETING TICKETS. Attachments are random filenames in a
-//     flat directory; the only pointer is the attachment row, which the ticket
-//     delete cascades away. Delete tickets first and the bytes are unreachable
-//     forever.
-//
-// `customer.delete()` runs LAST, so a failure at any earlier phase leaves the
-// organization present and the whole operation safely re-runnable.
+// TICKETS ARE NEVER DELETED. They are compliance records — retained in both
+// ticket stores no matter what happens to the organization, for every actor
+// (platform admin and org admin alike). The stores are therefore left ENTIRELY
+// untouched by org deletion: their Users rows are store-local copies that the
+// ticket FKs (reporter, creator, assignee, comments, activities) keep pointing
+// at, so nothing in them needs detaching and the whole historical record —
+// tickets, comments, activity, attachment rows and their bytes — stays intact.
+// This is also what keeps the deletion robust: it no longer reaches into the
+// stores at all, so it cannot fail on their schema, missing mirrors, or foreign
+// keys, and no project-lead reassignment is needed.
 
 export interface OrgDeletionReport {
   orgName: string;
   users: number;
-  tickets: number;       // ticket-store rows destroyed; 0 in keep-tickets mode
-  attachments: number;   // attachment files destroyed; 0 in keep-tickets mode
+  tickets: number;       // always 0 — ticket rows are retained (compliance)
+  attachments: number;   // always 0 — attachment bytes are retained with the tickets
   chatSessions: number;
-  /** 'wipe' purged both ticket stores; 'keep_tickets' retained them. */
-  mode: 'wipe' | 'keep_tickets';
+  /** Always 'keep_tickets' — tickets are never deleted. */
+  mode: 'keep_tickets';
 }
 
 export interface DeleteOrgOptions {
   /** The org's exact name, typed by the caller. Re-checked HERE — see CONFIRM_MISMATCH. */
   confirmName: string;
-  /**
-   * true → keep both ticket stores (shared + internal admin) and their upload
-   * files; everything else (users, chat, escalations, amenities) still goes.
-   * false / omitted → purge both ticket stores (the full wipe).
-   */
-  keepTickets?: boolean;
 }
 
 /**
@@ -80,101 +67,10 @@ async function assertDeletable(orgId: string) {
 }
 
 /**
- * Tear down one ticket store. Both are swept: escalated copies live in the admin
- * store, so cleaning only the shared one leaves the org's data behind.
- */
-async function purgeTicketStore(scope: TicketDbScope, orgName: string, emails: string[]): Promise<{ tickets: number; attachments: number }> {
-  return runWithTicketDb(scope, async () => {
-    const db = getTicketDb();
-
-    // The bridge is by email — see modules/ticketing/identity.ts.
-    const users = emails.length
-      ? await db.users.findMany({ where: { email: { in: emails } }, select: { id: true } })
-      : [];
-    const userIds = users.map((u) => u.id);
-    const customer = await db.customers.findFirst({ where: { name: orgName }, select: { id: true } });
-
-    const ticketWhere = {
-      OR: [
-        ...(userIds.length ? [{ reporterId: { in: userIds } }, { createdBy: { in: userIds } }] : []),
-        ...(customer ? [{ customerId: customer.id }] : []),
-      ],
-    };
-    if (!ticketWhere.OR.length) return { tickets: 0, attachments: 0 };
-
-    const tickets = await db.tickets.findMany({ where: ticketWhere, select: { id: true } });
-    const ticketIds = tickets.map((t) => t.id);
-    // No early return on an empty sweep: an org can hold bridged Users in a store
-    // without owning a single ticket there, and returning here left those user
-    // rows behind — a "full wipe" that quietly kept the departing members. Each
-    // block below guards its own precondition instead.
-
-    // ── Files BEFORE rows. Once the attachment row is gone the filename is lost.
-    let attachments = 0;
-    if (ticketIds.length) {
-      const files = [
-        ...(await db.ticketAttachments.findMany({ where: { ticketId: { in: ticketIds } }, select: { filename: true } })),
-        ...(await db.commentAttachments.findMany({ where: { Comments: { ticketId: { in: ticketIds } } }, select: { filename: true } })),
-      ];
-      const names = files.map((f) => f.filename).filter((n): n is string => !!n);
-      attachments = names.length;
-      await Promise.all(names.map((name) =>
-        // Best-effort per file: a missing file must not abort the teardown, and
-        // basename() keeps a crafted stored name from escaping UPLOAD_DIR.
-        fs.unlink(path.join(UPLOAD_DIR, path.basename(name))).catch(() => {})));
-
-      await db.tickets.deleteMany({ where: { id: { in: ticketIds } } });
-    }
-
-    // Projects are SHARED across organizations and have no owner column, so they
-    // are never deleted — only a lead pointing at a departing user is re-pointed.
-    if (userIds.length) {
-      const orphanedProjects = await db.projects.findMany({ where: { leadId: { in: userIds } }, select: { id: true } });
-      if (orphanedProjects.length) {
-        const survivor = await db.users.findFirst({ where: { id: { notIn: userIds }, role: 'admin' }, select: { id: true } });
-        if (!survivor) throw Object.assign(new Error('Cannot reassign shared projects: no other admin exists in the ticket store.'), { status: 400, code: 'NO_PROJECT_LEAD' });
-        await db.projects.updateMany({ where: { id: { in: orphanedProjects.map((p) => p.id) } }, data: { leadId: survivor.id } });
-      }
-
-      // ── Detach from tickets that SURVIVE the sweep above.
-      //
-      // The sweep only claims tickets this org reported, created, or owns through
-      // its Customers row. Every OTHER pointer at these users is ON DELETE NO
-      // ACTION (verified in both stores), so one leftover row — a ticket in
-      // another organization assigned to a departing user, their comment on it,
-      // the activity line their escalation wrote — makes users.deleteMany fail
-      // with P2003 and dead-ends the whole deletion, permanently: the retry hits
-      // the same row. This is what "foreign key constraint" in the delete dialog
-      // was; the tickets and their files were already destroyed by then.
-      //
-      // Nullable pointers are cleared. Comments.userId and Activities.userId are
-      // NOT NULL — there is no unattributed state to leave them in — so those
-      // rows leave with their author, which is also what a full wipe means.
-      const strandedFiles = await db.commentAttachments.findMany({
-        where: { Comments: { userId: { in: userIds } } }, select: { filename: true },
-      });
-      const strandedNames = strandedFiles.map((f) => f.filename).filter((n): n is string => !!n);
-      // Same rule as above: unlink BEFORE the row that names the file is gone.
-      await Promise.all(strandedNames.map((name) =>
-        fs.unlink(path.join(UPLOAD_DIR, path.basename(name))).catch(() => {})));
-      attachments += strandedNames.length;
-
-      await db.tickets.updateMany({ where: { assigneeId: { in: userIds } }, data: { assigneeId: null } });
-      await db.ticketAttachments.updateMany({ where: { uploadedBy: { in: userIds } }, data: { uploadedBy: null } });
-      await db.commentAttachments.updateMany({ where: { uploadedBy: { in: userIds } }, data: { uploadedBy: null } });
-      await db.comments.deleteMany({ where: { userId: { in: userIds } } });
-      await db.activities.deleteMany({ where: { userId: { in: userIds } } });
-
-      await db.users.deleteMany({ where: { id: { in: userIds } } });
-    }
-    if (customer) await db.customers.deleteMany({ where: { id: customer.id } });
-
-    return { tickets: ticketIds.length, attachments };
-  });
-}
-
-/**
- * Delete an organization and everything it owns.
+ * Delete an organization and its non-ticketing data.
+ *
+ * Ticket stores are untouched — tickets, comments, activity, attachments and the
+ * store-local user rows that reference them are retained as a compliance record.
  *
  * Retained on purpose: the audit trail. AuditLog.customerId carries no foreign
  * key precisely so the record of an organization outlives the organization —
@@ -191,46 +87,13 @@ export async function deleteOrganization(orgId: string, actorId: string, opts: D
     });
   }
 
-  const keepTickets = opts.keepTickets === true;
-  const mode: OrgDeletionReport['mode'] = keepTickets ? 'keep_tickets' : 'wipe';
-
-  // Captured while it still exists — see constraint 1 above.
+  // Snapshot before the cascade: the email list below is what remains after the
+  // User rows are gone, and it is needed for the audit metadata of this deletion.
   const org = await prisma.customer.findUniqueOrThrow({
     where: { id: orgId },
     select: { name: true, slug: true, plan: true, users: { select: { email: true } } },
   });
   const snap = { ...org, emails: org.users.map((u) => u.email.toLowerCase()) };
-
-  // Both stores. Escalated tickets live in the admin one. In keep-tickets mode the
-  // stores are left whole on purpose — the org is leaving the platform, but its
-  // ticket history (and the attachment bytes it points at) stays as a record.
-  let tickets = 0;
-  let attachments = 0;
-  if (!keepTickets) {
-    for (const scope of ['default', 'admin'] as const) {
-      try {
-        const r = await purgeTicketStore(scope, snap.name, snap.emails);
-        tickets += r.tickets;
-        attachments += r.attachments;
-      } catch (err) {
-        // The stores are separate databases, so no transaction spans them: by the
-        // time the second one fails the first is already emptied and its
-        // attachment bytes unlinked from disk. The ORG_DELETED entry below never
-        // runs in that case, which left real destruction with NO record at all.
-        // Best-effort, and never masks the original failure.
-        await audit({
-          action: 'ORG_DELETE_FAILED', performedById: actorId, targetId: orgId, customerId: orgId,
-          metadata: {
-            orgName: snap.name, failedStore: scope,
-            ticketsDestroyedBefore: tickets, attachmentsDestroyedBefore: attachments,
-            reason: err instanceof Error ? err.message : String(err),
-            code: (err as { code?: string })?.code ?? null,
-          },
-        }).catch(() => {});
-        throw err;
-      }
-    }
-  }
 
   // Chat lives in its own database — no cross-database cascade reaches it.
   const chat = await chatPrisma.chatSession.deleteMany({ where: { customerId: orgId } }).catch(() => ({ count: 0 }));
@@ -247,7 +110,7 @@ export async function deleteOrganization(orgId: string, actorId: string, opts: D
   await prisma.announcement.deleteMany({ where: { customerId: orgId } }).catch(() => {});
 
   const report: OrgDeletionReport = {
-    orgName: snap.name, users: snap.emails.length, tickets, attachments, chatSessions: chat.count, mode,
+    orgName: snap.name, users: snap.emails.length, tickets: 0, attachments: 0, chatSessions: chat.count, mode: 'keep_tickets',
   };
 
   // Logged BEFORE the point of no return, so the record exists even if the final

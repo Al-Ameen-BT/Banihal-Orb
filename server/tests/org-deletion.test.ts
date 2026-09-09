@@ -5,12 +5,13 @@ import { runWithTicketDb, getTicketDb } from '../src/config/ticketDatabase';
 
 // Organization deletion is irreversible and spans four databases. These pin the
 // two things that matter: the refusals that stop it happening by accident, and
-// that the audit trail SURVIVES the organization it describes.
+// that the audit trail SURVIVES the organization it describes — plus that the
+// ticket stores are ALWAYS retained (tickets are compliance records, never
+// deleted, for platform admin and org admin alike).
 
-const del = (orgId: string, cookies: string[], data: { confirm?: string; keepTickets?: boolean } = {}) =>
+const del = (orgId: string, cookies: string[], data: { confirm?: string } = {}) =>
   request(app).delete(`/api/saas-admin/orgs/${orgId}`).set('Cookie', cookies).send({
     confirm: data.confirm ?? '',
-    keepTickets: data.keepTickets,
   });
 
 let adminCookies: string[];
@@ -153,7 +154,7 @@ describe('refusals — each blocks a different accident', () => {
 });
 
 describe('a successful deletion clears the org and keeps the record', () => {
-  it('removes the organization and its users (full wipe)', async () => {
+  it('removes the organization and its users', async () => {
     const org = await deletableOrg();
 
     const res = await del(org.id, adminCookies, { confirm: 'Doomed Ltd' });
@@ -161,7 +162,8 @@ describe('a successful deletion clears the org and keeps the record', () => {
     expect(res.status).toBe(200);
     expect(res.body.orgName).toBe('Doomed Ltd');
     expect(res.body.users).toBe(1);
-    expect(res.body.mode).toBe('wipe');
+    expect(res.body.mode).toBe('keep_tickets');
+    expect(res.body.tickets).toBe(0);
     expect(await prisma.customer.count({ where: { id: org.id } })).toBe(0);
     expect(await prisma.user.count({ where: { customerId: org.id } })).toBe(0);
   });
@@ -191,7 +193,7 @@ describe('a successful deletion clears the org and keeps the record', () => {
     const deletion = rows.find((r) => r.action === 'ORG_DELETED');
     expect(deletion, 'the deletion itself must be recorded').toBeDefined();
     expect((deletion!.metadata as { orgName?: string }).orgName).toBe('Doomed Ltd');
-    expect((deletion!.metadata as { mode?: string }).mode).toBe('wipe');
+    expect((deletion!.metadata as { mode?: string }).mode).toBe('keep_tickets');
   });
 
   it('purges the FK-less tables nothing cascades', async () => {
@@ -218,7 +220,7 @@ describe('a successful deletion clears the org and keeps the record', () => {
   });
 });
 
-describe.skipIf(!ticketTestDbReady())(`keep-ticketing mode — ticket history survives${ticketTestDbReady() ? '' : ` (SKIPPED: ${ticketDbSkipReason()})`}`, () => {
+describe.skipIf(!ticketTestDbReady())(`ticketing history — retained for compliance${ticketTestDbReady() ? '' : ` (SKIPPED: ${ticketDbSkipReason()})`}`, () => {
   it('deletes the org but leaves BOTH ticket stores intact', async () => {
     const org = await deletableOrg(`Keep Tix ${Date.now()}`);
     const name = org.name;
@@ -226,7 +228,7 @@ describe.skipIf(!ticketTestDbReady())(`keep-ticketing mode — ticket history su
     await seedStoreTicket('default', name, email, `TKT-KT-${String(Date.now()).slice(-5)}`);
     await seedStoreTicket('admin', name, email, `TKT-KA-${String(Date.now()).slice(-5)}`);
 
-    const res = await del(org.id, adminCookies, { confirm: name, keepTickets: true });
+    const res = await del(org.id, adminCookies, { confirm: name });
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(res.body.mode).toBe('keep_tickets');
@@ -236,7 +238,7 @@ describe.skipIf(!ticketTestDbReady())(`keep-ticketing mode — ticket history su
     expect(await storeTicketCount('admin', name)).toBe(1);
   });
 
-  it('full wipe (default) destroys tickets in BOTH stores', async () => {
+  it('retains tickets in BOTH stores — no mode deletes them', async () => {
     const org = await deletableOrg(`Wipe Tix ${Date.now()}`);
     const name = org.name;
     const email = `wipe-tix-${Date.now()}@example.com`;
@@ -246,17 +248,20 @@ describe.skipIf(!ticketTestDbReady())(`keep-ticketing mode — ticket history su
     const res = await del(org.id, adminCookies, { confirm: name });
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(res.body.mode).toBe('wipe');
-    expect(res.body.tickets).toBe(2);
-    expect(await storeTicketCount('default', name)).toBe(0);
-    expect(await storeTicketCount('admin', name)).toBe(0);
+    expect(res.body.mode).toBe('keep_tickets');
+    expect(res.body.tickets).toBe(0);
+    // The org is gone from the main database, but its tickets — and the store-local
+    // user/customer rows they reference — are compliance records and stay.
+    expect(await storeTicketCount('default', name)).toBe(1);
+    expect(await storeTicketCount('admin', name)).toBe(1);
   });
-  it('deletes an org whose member is assignee/commenter on ANOTHER org\'s ticket', async () => {
+
+  it('leaves an org whose member touched ANOTHER org\'s ticket completely intact', async () => {
     const stamp = String(Date.now()).slice(-6);
     const org = await deletableOrg(`FK Trap ${stamp}`);
     const member = await prisma.user.findFirstOrThrow({ where: { customerId: org.id } });
     // The production shape: the org owns tickets of its own in the store AND its
-    // member is left holding rows on someone else's ticket.
+    // member holds rows on someone else's ticket.
     await seedStoreTicket('default', org.name, member.email.toLowerCase(), `TKT-FKO-${stamp}`);
     const foreign = await seedForeignTicketTouchedBy('default', member.email.toLowerCase(), `TKT-FK-${stamp}`);
 
@@ -265,8 +270,9 @@ describe.skipIf(!ticketTestDbReady())(`keep-ticketing mode — ticket history su
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(await prisma.customer.count({ where: { id: org.id } })).toBe(0);
 
-    // The other org's ticket survives, merely unassigned — its history is not ours
-    // to delete, but the departing member's own rows on it go with them.
+    // The stores are left WHOLE: the other org's ticket, its assignee, the member's
+    // comment and activity all survive — deletion of the departing member never
+    // reaches into the stores, so there is nothing to detach or delete.
     const left = await runWithTicketDb('default', async () => {
       const db = getTicketDb();
       return {
@@ -275,9 +281,11 @@ describe.skipIf(!ticketTestDbReady())(`keep-ticketing mode — ticket history su
         activities: await db.activities.count({ where: { ticketId: foreign } }),
       };
     });
-    expect(left.ticket, 'another org\'s ticket must not be deleted').not.toBeNull();
-    expect(left.ticket!.assigneeId).toBeNull();
-    expect(left.comments).toBe(0);
-    expect(left.activities).toBe(0);
+    expect(left.ticket).not.toBeNull();
+    expect(left.ticket!.assigneeId).not.toBeNull();
+    expect(left.comments).toBe(1);
+    expect(left.activities).toBe(1);
+    // The org's OWN ticket survives too, attributed as it always was.
+    expect(await storeTicketCount('default', org.name)).toBe(1);
   });
 });

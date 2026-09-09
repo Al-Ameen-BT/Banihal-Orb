@@ -3,11 +3,12 @@ import { createTestOrg, createTestUser, loginAs, cleanDb, app, request, ticketTe
 import { prisma } from '../src/config/database';
 import { ticketPrisma, adminTicketPrisma } from '../src/config/ticketDatabase';
 
-// DELETE /ticketing/tickets/:id and the audit rows the ticketing module now writes.
+// Tickets are compliance records: they are never deletable, for any role. The
+// DELETE endpoint has been REMOVED, so no actor — org admin, platform admin,
+// tickets.write holder — can delete a ticket. These pin that.
 //
-// Skipped LOUDLY when no *_test ticket store is configured: these assertions are
-// about real cascade behaviour and a real cross-database audit write, so a green
-// tick without a database would claim guarantees nothing checked.
+// Skipped LOUDLY when no *_test ticket store is configured: they need a ticket
+// to exist before proving it cannot go away.
 const ready = ticketTestDbReady();
 
 /** Tickets.projectId is NOT NULL, so every ticket needs a project to hang off. */
@@ -28,133 +29,46 @@ async function createTicket(cookies: string[], title = 'Printer offline') {
   return res.body as { id: string; ticketNumber: string };
 }
 
-describe.skipIf(!ready)('DELETE /ticketing/tickets/:id', () => {
+describe.skipIf(!ready)('tickets are non-deletable (compliance)', () => {
   beforeEach(cleanDb);
   afterAll(async () => { await prisma.$disconnect(); });
 
-  it(`removes the ticket${ready ? '' : ` (SKIPPED: ${ticketDbSkipReason()})`}`, async () => {
-    const org = await createTestOrg('Delete Ticket Org');
-    await createTestUser(org.id, 'del-admin@example.com', 'ORG_ADMIN');
-    const cookies = await loginAs('del-admin@example.com');
+  it(`no delete endpoint exists — an ORG_ADMIN cannot delete a ticket${ready ? '' : ` (SKIPPED: ${ticketDbSkipReason()})`}`, async () => {
+    const org = await createTestOrg('Compliance Org');
+    await createTestUser(org.id, 'comp-admin@example.com', 'ORG_ADMIN');
+    const cookies = await loginAs('comp-admin@example.com');
 
     const ticket = await createTicket(cookies);
     const res = await request(app).delete(`/api/ticketing/tickets/${ticket.id}`).set('Cookie', cookies);
-    expect(res.status).toBe(204);
 
-    expect(await ticketPrisma.tickets.count({ where: { id: ticket.id } })).toBe(0);
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('NOT_FOUND');
+    expect(await ticketPrisma.tickets.count({ where: { id: ticket.id } })).toBe(1);
   });
 
-  it('cascades the ticket’s comments and activity away with it', async () => {
-    const org = await createTestOrg('Cascade Org');
-    await createTestUser(org.id, 'cascade-admin@example.com', 'ORG_ADMIN');
-    const cookies = await loginAs('cascade-admin@example.com');
+  it('a PLATFORM admin cannot delete a ticket either', async () => {
+    const org = await createTestOrg('Platform Compliance Org');
+    await createTestUser(org.id, 'pf-admin@example.com', 'ADMINISTRATOR');
+    const cookies = await loginAs('pf-admin@example.com');
 
     const ticket = await createTicket(cookies);
-    await request(app).post(`/api/ticketing/tickets/${ticket.id}/comments`)
-      .set('Cookie', cookies).field('content', 'Looking into it');
-
-    // Creation alone writes an activity row, so both counts are non-zero first —
-    // otherwise "0 after" would prove nothing.
-    expect(await ticketPrisma.comments.count({ where: { ticketId: ticket.id } })).toBeGreaterThan(0);
-    expect(await ticketPrisma.activities.count({ where: { ticketId: ticket.id } })).toBeGreaterThan(0);
-
-    await request(app).delete(`/api/ticketing/tickets/${ticket.id}`).set('Cookie', cookies).expect(204);
-
-    expect(await ticketPrisma.comments.count({ where: { ticketId: ticket.id } })).toBe(0);
-    expect(await ticketPrisma.activities.count({ where: { ticketId: ticket.id } })).toBe(0);
-    expect(await ticketPrisma.ticketWatchers.count({ where: { ticketId: ticket.id } })).toBe(0);
-  });
-
-  it('leaves a TICKET_DELETED audit row that OUTLIVES the ticket', async () => {
-    // The whole reason the audit row is written to the MAIN database: the ticket's
-    // own Activities history is ON DELETE CASCADE and dies with it.
-    const org = await createTestOrg('Audit Delete Org');
-    const admin = await createTestUser(org.id, 'audit-del@example.com', 'ORG_ADMIN');
-    const cookies = await loginAs('audit-del@example.com');
-
-    const ticket = await createTicket(cookies, 'Ticket that will be deleted');
-    await request(app).delete(`/api/ticketing/tickets/${ticket.id}`).set('Cookie', cookies).expect(204);
-
-    const row = await prisma.auditLog.findFirst({
-      where: { action: 'TICKET_DELETED', performedById: admin.id, targetId: ticket.id },
-    });
-    expect(row).not.toBeNull();
-    expect((row?.metadata as { ticketNumber?: string })?.ticketNumber).toBe(ticket.ticketNumber);
-    // ...and the thing it describes really is gone.
-    expect(await ticketPrisma.tickets.count({ where: { id: ticket.id } })).toBe(0);
-  });
-
-  it('refuses to delete an escalated ticket, and the ticket survives', async () => {
-    const org = await createTestOrg('Escalated Delete Org');
-    await createTestUser(org.id, 'esc-admin@example.com', 'ORG_ADMIN');
-    const cookies = await loginAs('esc-admin@example.com');
-
-    const ticket = await createTicket(cookies);
-    // The mirror lives in another database joined only by a label, so the guard is
-    // the label — set it directly rather than running a full escalation.
-    await ticketPrisma.tickets.update({ where: { id: ticket.id }, data: { labels: ['escalated'] } });
-
     const res = await request(app).delete(`/api/ticketing/tickets/${ticket.id}`).set('Cookie', cookies);
-    expect(res.status).toBe(409);
-    expect(res.body.code).toBe('TICKET_ESCALATED');
-    expect(await ticketPrisma.tickets.count({ where: { id: ticket.id } })).toBe(1);
-  });
 
-  it('denies a plain USER who did not create the ticket', async () => {
-    const org = await createTestOrg('User Delete Org');
-    await createTestUser(org.id, 'plain-user@example.com', 'USER');
-    await createTestUser(org.id, 'owner-admin@example.com', 'ORG_ADMIN');
-
-    const adminCookies = await loginAs('owner-admin@example.com');
-    const ticket = await createTicket(adminCookies);
-
-    // A USER's scope is "their own tickets" so this 404s BEFORE the edit lock —
-    // deliberately, without confirming the ticket exists. (A creator-USER, by
-    // contrast, may now delete their own ticket — see the edit-lock test.)
-    const userCookies = await loginAs('plain-user@example.com');
-    const res = await request(app).delete(`/api/ticketing/tickets/${ticket.id}`).set('Cookie', userCookies);
     expect(res.status).toBe(404);
-    expect(await ticketPrisma.tickets.count({ where: { id: ticket.id } })).toBe(1);
+    // Platform staff's tickets live in the ADMIN store (ticket.store.admin).
+    expect(await adminTicketPrisma.tickets.count({ where: { id: ticket.id } })).toBe(1);
   });
 
-  it('denies an INTERN but allows an EMPLOYEE — the tickets.write split', async () => {
-    // plr_intern deliberately lacks tickets.write ("read-only: no ticket edits");
-    // plr_employee has it. staffWrite is what encodes that, and this proves the new
-    // route inherited it rather than inventing its own rule.
-    const org = await createTestOrg('Platform Staff Org');
-    await createTestUser(org.id, 'intern@example.com', 'ADMINISTRATOR', 'intern');
-    await createTestUser(org.id, 'employee@example.com', 'ADMINISTRATOR', 'employee');
+  it('an EMPLOYEE — holder of tickets.write — cannot delete a ticket either', async () => {
+    const org = await createTestOrg('Employee Compliance Org');
+    await createTestUser(org.id, 'emp@example.com', 'ADMINISTRATOR', 'employee');
+    const cookies = await loginAs('emp@example.com');
 
-    const employeeCookies = await loginAs('employee@example.com');
-    const ticket = await createTicket(employeeCookies);
+    const ticket = await createTicket(cookies);
+    const res = await request(app).delete(`/api/ticketing/tickets/${ticket.id}`).set('Cookie', cookies);
 
-    // Platform staff hold ticket.store.admin, so their tickets live in the ADMIN
-    // store — counting in the default one would find nothing and prove nothing.
-    const store = adminTicketPrisma;
-
-    const internCookies = await loginAs('intern@example.com');
-    const denied = await request(app).delete(`/api/ticketing/tickets/${ticket.id}`).set('Cookie', internCookies);
-    expect(denied.status).toBe(403);
-    expect(await store.tickets.count({ where: { id: ticket.id } })).toBe(1);
-
-    await request(app).delete(`/api/ticketing/tickets/${ticket.id}`).set('Cookie', employeeCookies).expect(204);
-    expect(await store.tickets.count({ where: { id: ticket.id } })).toBe(0);
-  });
-
-  it('404s (not 403) for another org’s ticket', async () => {
-    // assertTicketAccess answers 404 on purpose — a 403 would confirm the id exists.
-    const orgA = await createTestOrg('Owner Org');
-    const orgB = await createTestOrg('Other Org');
-    await createTestUser(orgA.id, 'a-admin@example.com', 'ORG_ADMIN');
-    await createTestUser(orgB.id, 'b-admin@example.com', 'ORG_ADMIN');
-
-    const aCookies = await loginAs('a-admin@example.com');
-    const ticket = await createTicket(aCookies);
-
-    const bCookies = await loginAs('b-admin@example.com');
-    const res = await request(app).delete(`/api/ticketing/tickets/${ticket.id}`).set('Cookie', bCookies);
     expect(res.status).toBe(404);
-    expect(await ticketPrisma.tickets.count({ where: { id: ticket.id } })).toBe(1);
+    expect(await adminTicketPrisma.tickets.count({ where: { id: ticket.id } })).toBe(1);
   });
 });
 

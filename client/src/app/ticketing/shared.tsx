@@ -1216,52 +1216,6 @@ export function TicketActionsMenu({ actions, label = 'Ticket actions' }: { actio
   );
 }
 
-// ─── Delete a ticket (asks twice) ───────────────────────────────────────────────
-// Two sequential prompts, by request. useConfirm resolves its promise before it
-// clears state, so a second await re-opens cleanly.
-//
-// NEITHER prompt passes `rememberKey`: a remembered "don't ask again" resolves
-// instantly to true, which would defeat the entire point of asking twice.
-
-export function useDeleteTicket(onDeleted?: () => void) {
-  const qc = useQueryClient();
-  const confirm = useConfirm();
-  const toast = useToast();
-
-  const mut = useMutation({
-    mutationFn: (id: string) => ticketingApi.deleteTicket(id),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['ticketing'] });
-      toast('Ticket deleted', 'success');
-      onDeleted?.();
-    },
-    // The 409 for an escalated ticket explains itself — show the server's words.
-    onError: (e: unknown) => toast(apiErrorMessage(e, 'Could not delete the ticket.'), 'error'),
-  });
-
-  async function requestDelete(ticket: { id: string; ticketNumber: string; title: string }) {
-    const first = await confirm({
-      title: 'Delete ticket',
-      message: <>Are you really want to delete the ticket <strong>{ticket.ticketNumber}</strong> &ldquo;{ticket.title}&rdquo;?</>,
-      confirmText: 'Delete',
-      variant: 'danger',
-    });
-    if (!first) return;
-
-    const second = await confirm({
-      title: 'This cannot be undone',
-      message: <>All comments, attachments and the ticket&rsquo;s history will be permanently deleted along with it. Delete <strong>{ticket.ticketNumber}</strong>?</>,
-      confirmText: 'Delete permanently',
-      variant: 'danger',
-    });
-    if (!second) return;
-
-    mut.mutate(ticket.id);
-  }
-
-  return { requestDelete, deleting: mut.isPending };
-}
-
 // ─── Edit ticket (title + description) ──────────────────────────────────────────
 // PATCH /tickets/:id already accepted both fields and was already staff-gated; there
 // was simply no UI for them, so a ticket's wording was fixed forever at creation.

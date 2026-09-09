@@ -56,7 +56,6 @@ export async function deleteOrg(req: Request, res: Response, next: NextFunction)
     const input = DeleteOrgSchema.parse(req.body);
     const report = await orgDeletion.deleteOrganization(req.params['id']!, req.user.userId, {
       confirmName: input.confirm,
-      keepTickets: input.keepTickets,
     });
     res.json({ success: true, ...report });
   } catch (err) { next(err); }

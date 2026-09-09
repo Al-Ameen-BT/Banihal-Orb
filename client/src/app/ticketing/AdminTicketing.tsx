@@ -16,7 +16,7 @@ import {
   NewTicketForm, StatusBadge, PriorityBadge, TypeBadge, SlaBar, PageHeader,
   Toolbar, Segmented, SearchInput, EmptyState, Avatar, Icons,
   priorityCls, timeAgo, STATUS_OPTIONS, PRIORITY_OPTIONS, staffLabel, apiErrorMessage,
-  TicketActionsMenu, EditTicketModal, useDeleteTicket, useTicketProjects, useTicketAssignees,
+  TicketActionsMenu, EditTicketModal, useTicketProjects, useTicketAssignees,
   useCanEditTicket, type TicketMenuAction,
   Modal, ESCALATE_ADMINS_ID, fmtDate, type TicketCustomer,
 } from './shared';
@@ -245,22 +245,18 @@ const orgOf = (t: TicketDTO): string =>
 
 // Image-matched admin card: #TKT + title + status/priority/type badges, assignee,
 // "Created X ago", and the dual Response/Resolution SLA bars.
-function AdminTicketCard({ ticket, onOpen, onEdit, onDelete }: {
-  ticket: TicketDTO; onOpen: () => void; onEdit: () => void; onDelete: () => void;
+function AdminTicketCard({ ticket, onOpen, onEdit }: {
+  ticket: TicketDTO; onOpen: () => void; onEdit: () => void;
 }) {
   // Owner-based edit lock: only the ticket's reporter or assignee (with the write
-  // permission) may edit/delete — see useCanEditTicket. Edit and Delete are left OUT
-  // of the menu for everyone else; the server enforces the same rule regardless.
+  // permission) may edit — see useCanEditTicket. Edit is left OUT of the menu for
+  // everyone else; the server enforces the same rule regardless. (Tickets are never
+  // deletable — compliance records — so there is no Delete action to show.)
   const { user } = useAuth();
   const canEdit = useCanEditTicket(ticket, user);
   const actions: TicketMenuAction[] = [
     { label: 'Open', onSelect: onOpen },
-    ...(canEdit
-      ? [
-          { label: 'Edit', onSelect: onEdit },
-          { label: 'Delete', onSelect: onDelete, danger: true },
-        ]
-      : []),
+    ...(canEdit ? [{ label: 'Edit', onSelect: onEdit }] : []),
   ];
   return (
     <div onClick={onOpen}
@@ -318,7 +314,6 @@ function TicketsTab({ projectFilter, onClearProject, initialTicketId }: { projec
   const searchParams = useSearchParams();
   // Which ticket the edit modal is showing; null = closed.
   const [editing, setEditing] = useState<TicketDTO | null>(null);
-  const { requestDelete } = useDeleteTicket();
   const [category, setCategory] = useState<Category>('all');
   const [statusFilter, setStatusFilter] = useState<'ALL' | TicketStatus>('ALL');
   const [priorityFilter, setPriorityFilter] = useState<'ALL' | TicketPriority>('ALL');
@@ -446,14 +441,14 @@ function TicketsTab({ projectFilter, onClearProject, initialTicketId }: { projec
                   <span className="flex-1 h-px bg-slate-200" />
                 </div>
                 <div className={gridCls}>
-                  {list.map((t) => <AdminTicketCard key={`${t.id}-${t.updatedAt}`} ticket={t} onOpen={() => setDetailId(t.id)} onEdit={() => setEditing(t)} onDelete={() => void requestDelete(t)} />)}
+                  {list.map((t) => <AdminTicketCard key={`${t.id}-${t.updatedAt}`} ticket={t} onOpen={() => setDetailId(t.id)} onEdit={() => setEditing(t)} />)}
                 </div>
               </div>
             ))}
           </div>
         ) : (
           <div className={gridCls}>
-            {tickets.map((t) => <AdminTicketCard key={`${t.id}-${t.updatedAt}`} ticket={t} onOpen={() => setDetailId(t.id)} onEdit={() => setEditing(t)} onDelete={() => void requestDelete(t)} />)}
+            {tickets.map((t) => <AdminTicketCard key={`${t.id}-${t.updatedAt}`} ticket={t} onOpen={() => setDetailId(t.id)} onEdit={() => setEditing(t)} />)}
           </div>
         )}
       </div>
@@ -485,7 +480,7 @@ function ProjectsTab({ onViewTickets }: { onViewTickets: (projectId: string) => 
   });
   const deleteMut = useMutation({
     mutationFn: ({ id, confirm }: { id: string; confirm: string }) => ticketingApi.deleteProject(id, confirm),
-    // Carries PROJECT_HAS_ESCALATIONS and CONFIRM_MISMATCH — both are things the
+    // Carries PROJECT_HAS_TICKETS and CONFIRM_MISMATCH — both are things the
     // administrator has to read, not a generic failure.
     onError: (e: unknown) => toast((e as { response?: { data?: { error?: string } } }).response?.data?.error ?? 'Could not delete project', 'error'),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['ticketing'] }); },
@@ -540,28 +535,33 @@ function ProjectsTab({ onViewTickets }: { onViewTickets: (projectId: string) => 
             <div key={p.id} className="card p-5 border-t-2 border-t-brand/60 flex flex-col hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-200">
               <div className="flex items-start justify-between gap-2">
                 <h3 className="text-base font-semibold text-slate-900">{p.name}</h3>
-                {/* Double verification: the dialog will not enable Delete until the
-                    project's name is typed back, and the server re-checks the same
-                    value. Deleting a project now takes its tickets with it, so the
-                    message states the real count rather than "links to tickets". */}
-                <button type="button" aria-label={`Delete ${p.name}`} onClick={async () => {
-                  const ok = await confirm({
-                    title: 'Delete project',
-                    message: (
-                      <>
-                        &ldquo;{p.name}&rdquo; and its <span className="font-semibold text-slate-800">{p.ticketCount} ticket{p.ticketCount === 1 ? '' : 's'}</span> —
-                        including every comment, attachment and activity record — will be permanently deleted. This can&rsquo;t be undone.
-                      </>
-                    ),
-                    confirmText: 'Delete project',
-                    variant: 'danger',
-                    requireText: p.name,
-                  });
-                  if (ok) deleteMut.mutate({ id: p.id, confirm: p.name });
-                }}
-                  className="text-slate-300 hover:text-red-500 transition-colors cursor-pointer">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
-                </button>
+                {/* Tickets are compliance records and are never deleted, so a project
+                    that still holds any ticket cannot be deleted either. The delete
+                    affordance exists only for EMPTY projects; the server enforces the
+                    same rule. Double verification regardless: the dialog will not
+                    enable Delete until the project's name is typed back, and the
+                    server re-checks the same value. */}
+                {p.ticketCount === 0 ? (
+                  <button type="button" aria-label={`Delete ${p.name}`} onClick={async () => {
+                    const ok = await confirm({
+                      title: 'Delete project',
+                      message: (
+                        <>
+                          &ldquo;{p.name}&rdquo; is empty and will be permanently deleted. This can&rsquo;t be undone.
+                        </>
+                      ),
+                      confirmText: 'Delete project',
+                      variant: 'danger',
+                      requireText: p.name,
+                    });
+                    if (ok) deleteMut.mutate({ id: p.id, confirm: p.name });
+                  }}
+                    className="text-slate-300 hover:text-red-500 transition-colors cursor-pointer">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
+                  </button>
+                ) : (
+                  <span className="text-[11px] font-medium text-slate-400 whitespace-nowrap border border-slate-200 rounded-md px-1.5 py-0.5" title="Tickets are compliance records; a project holding any cannot be deleted.">retained</span>
+                )}
               </div>
               <p className="text-xs text-slate-500 mt-1.5 flex-1">{p.description || '—'}</p>
               <div className="flex items-center gap-1.5 mt-3 flex-wrap">

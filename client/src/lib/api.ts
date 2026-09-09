@@ -201,9 +201,6 @@ export const ticketingApi = {
   getTicket: (id: string) => api.get(`/ticketing/tickets/${id}`),
   createTicket: (data: unknown) => api.post('/ticketing/tickets', data),
   updateTicket: (id: string, data: unknown) => api.patch(`/ticketing/tickets/${id}`, data),
-  // Permanent: the server cascades the ticket's comments, attachments and history,
-  // and refuses (409 TICKET_ESCALATED) for a ticket under platform review.
-  deleteTicket: (id: string) => api.delete(`/ticketing/tickets/${id}`),
   escalate: (id: string) => api.post(`/ticketing/tickets/${id}/escalate`),
   claim: (id: string) => api.post(`/ticketing/admin/tickets/${id}/claim`),
   myUpdates: (since: string) => api.get('/ticketing/my-updates', { params: { since } }),
@@ -356,9 +353,9 @@ export const chatApi = {
 export const saasAdminApi = {
   listOrgs: (params?: Record<string, unknown>) => api.get('/saas-admin/orgs', { params }),
   updateOrg: (id: string, data: unknown) => api.patch(`/saas-admin/orgs/${id}`, data),
-  // Irreversible. `confirm` must be the org's exact name (the server re-checks it)
-  // and `keepTickets` decides whether the two ticket stores are wiped or retained.
-  deleteOrg: (id: string, data: { confirm: string; keepTickets?: boolean }) => api.delete(`/saas-admin/orgs/${id}`, { data }),
+  // Irreversible. `confirm` must be the org's exact name (the server re-checks it).
+  // The two ticket stores are ALWAYS retained — tickets are compliance records.
+  deleteOrg: (id: string, data: { confirm: string }) => api.delete(`/saas-admin/orgs/${id}`, { data }),
   listPendingOrgs: () => api.get('/saas-admin/orgs/pending'),
   reissueOrgApproval: (id: string) => api.post(`/saas-admin/orgs/${id}/reissue-approval`),
   impersonate: (userId: string) => api.post(`/saas-admin/impersonate/${userId}`),

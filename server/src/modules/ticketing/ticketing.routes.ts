@@ -86,9 +86,7 @@ router.post('/admin/tickets/:id/claim', adminStore, requirePermission('tickets.w
 // Platform staff may edit ONLY tickets they own (reporter or assignee), and still
 // need tickets.write to reach a mutation at all (router gate below).
 router.patch('/tickets/:id', requirePermissionIfPlatform('tickets.write'), ticketingController.updateTicket);
-// Permanent, and it cascades the ticket's comments, attachments and history. Same
-// owner-or-admin authorization as PATCH, enforced in assertCanEditTicket.
-router.delete('/tickets/:id', requirePermissionIfPlatform('tickets.write'), ticketingController.deleteTicket);
+// Tickets are NEVER deleted — compliance records, for platform and org admins both.
 router.post('/projects', staffWrite, ticketingController.createProject);
 router.patch('/projects/:id', staffWrite, ticketingController.updateProject);
 router.delete('/projects/:id', staffWrite, ticketingController.deleteProject);

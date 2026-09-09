@@ -37,7 +37,7 @@ describe.skipIf(!ready)('Ticket edit lock', () => {
   beforeEach(cleanDb);
   afterAll(async () => { await prisma.$disconnect(); });
 
-  it(`lets a plain USER edit and delete their OWN ticket${ready ? '' : ` (SKIPPED: ${ticketDbSkipReason()})`}`, async () => {
+  it(`lets a plain USER edit their OWN ticket${ready ? '' : ` (SKIPPED: ${ticketDbSkipReason()})`}`, async () => {
     const org = await createTestOrg('Creator Edit Org');
     await createTestUser(org.id, 'orgadmin@example.com', 'ORG_ADMIN');
     await createTestUser(org.id, 'creator@example.com', 'USER');
@@ -55,8 +55,9 @@ describe.skipIf(!ready)('Ticket edit lock', () => {
 
     await request(app).patch(`/api/ticketing/tickets/${ticket.id}`).set('Cookie', userCookies)
       .send({ title: 'Creator corrected me' }).expect(200);
-    await request(app).delete(`/api/ticketing/tickets/${ticket.id}`).set('Cookie', userCookies).expect(204);
-    expect(await ticketPrisma.tickets.count({ where: { id: ticket.id } })).toBe(0);
+    // Deletion is not part of the lock: tickets are compliance records and exist
+    // for no actor to delete, whatever they own.
+    expect(await ticketPrisma.tickets.count({ where: { id: ticket.id } })).toBe(1);
   });
 
   it('locks an assignee who is not the creator out of editing — 403 TICKET_EDIT_FORBIDDEN', async () => {
@@ -123,8 +124,8 @@ describe.skipIf(!ready)('Ticket edit lock', () => {
     expect(denied.status).toBe(403);
     expect(denied.body.code).toBe('TICKET_EDIT_FORBIDDEN');
 
-    const deniedDelete = await request(app).delete(`/api/ticketing/tickets/${ticket.id}`).set('Cookie', hrCookies);
-    expect(deniedDelete.status).toBe(403);
+    // Delete is not even a surface anymore — tickets are compliance records.
+    expect(await adminTicketPrisma.tickets.count({ where: { id: ticket.id } })).toBe(1);
 
     expect(await adminTicketPrisma.tickets.findUnique({ where: { id: ticket.id }, select: { title: true } }))
       .toMatchObject({ title: 'Owned by the employee' });

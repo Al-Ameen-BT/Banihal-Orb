@@ -3,14 +3,11 @@ import { createTestOrg, createTestUser, loginAs, cleanDb, app, request, ticketTe
 import { prisma } from '../src/config/database';
 import { ticketPrisma } from '../src/config/ticketDatabase';
 
-// DELETE /ticketing/projects/:id — the typed-name confirmation and the ticket cascade.
+// DELETE /ticketing/projects/:id — the typed-name confirmation and the compliance
+// guard. Tickets are NEVER deletable, so a project that still holds any ticket
+// cannot be deleted either; only EMPTY projects can go.
 //
-// Before this, the endpoint refused whenever the project held ANY ticket, so with
-// real data (every project in both stores holds hundreds) nothing was ever deletable.
-// It now deletes the tickets too, which makes the confirmation the only thing between
-// a stray click and a thousand destroyed tickets — so it is what these tests are about.
-//
-// Skipped LOUDLY without a *_test ticket store: the cascade and the cross-database
+// Skipped LOUDLY without a *_test ticket store: the refusal and the cross-database
 // audit write are the whole point, and a green tick with no database would claim
 // guarantees nothing checked.
 const ready = ticketTestDbReady();
@@ -57,7 +54,7 @@ describe.skipIf(!ready)('DELETE /ticketing/projects/:id', () => {
     expect(await ticketPrisma.projects.count({ where: { id: projectId } })).toBe(1);
   });
 
-  it('deletes the project and cascades its tickets when the name matches', async () => {
+  it('refuses to delete a project that still holds tickets (compliance), and everything survives', async () => {
     const org = await createTestOrg('Cascade Project Org');
     await createTestUser(org.id, 'cascade-proj@example.com', 'ORG_ADMIN');
     const cookies = await loginAs('cascade-proj@example.com');
@@ -69,18 +66,30 @@ describe.skipIf(!ready)('DELETE /ticketing/projects/:id', () => {
     await request(app).post(`/api/ticketing/tickets/${a.id}/comments`)
       .set('Cookie', cookies).field('content', 'Looking into it');
 
-    // Non-zero first, or "0 after" would prove nothing.
     expect(await ticketPrisma.tickets.count({ where: { projectId } })).toBe(2);
+
+    const res = await del(cookies, projectId, name);
+    expect(res.status, JSON.stringify(res.body)).toBe(409);
+    expect(res.body.code).toBe('PROJECT_HAS_TICKETS');
+
+    // Nothing was destroyed on the way to the refusal.
+    expect(await ticketPrisma.projects.count({ where: { id: projectId } })).toBe(1);
+    expect(await ticketPrisma.tickets.count({ where: { id: { in: [a.id, b.id] } } })).toBe(2);
+    // Comments and activity survive along with the tickets.
     expect(await ticketPrisma.comments.count({ where: { ticketId: a.id } })).toBeGreaterThan(0);
     expect(await ticketPrisma.activities.count({ where: { ticketId: a.id } })).toBeGreaterThan(0);
+  });
+
+  it('deletes an EMPTY project when the name matches', async () => {
+    const org = await createTestOrg('Empty Project Org');
+    await createTestUser(org.id, 'empty-proj@example.com', 'ORG_ADMIN');
+    const cookies = await loginAs('empty-proj@example.com');
+
+    const name = 'Scratch Project';
+    const projectId = await createProject(cookies, name);
 
     await del(cookies, projectId, name).expect(204);
-
     expect(await ticketPrisma.projects.count({ where: { id: projectId } })).toBe(0);
-    expect(await ticketPrisma.tickets.count({ where: { id: { in: [a.id, b.id] } } })).toBe(0);
-    // Comments and activity cascade in-database from the ticket delete.
-    expect(await ticketPrisma.comments.count({ where: { ticketId: a.id } })).toBe(0);
-    expect(await ticketPrisma.activities.count({ where: { ticketId: a.id } })).toBe(0);
   });
 
   it('surrounding whitespace in the typed name is forgiven, a wrong name is not', async () => {
@@ -93,10 +102,9 @@ describe.skipIf(!ready)('DELETE /ticketing/projects/:id', () => {
     expect(await ticketPrisma.projects.count({ where: { id: projectId } })).toBe(0);
   });
 
-  it('refuses when any ticket in the project has been escalated', async () => {
-    // An escalated ticket has a copy in the OTHER database joined only by a `src:`
-    // label with no foreign key. Deleting this side would orphan that copy silently
-    // — the same reason deleteTicket refuses for a single ticket.
+  it('refuses an escalated project too — "holds tickets" covers every ticket', async () => {
+    // Escalated or not, a ticket is a ticket: compliance means it cannot be deleted,
+    // so a project holding one cannot be deleted either.
     const org = await createTestOrg('Escalated Project Org');
     await createTestUser(org.id, 'esc-proj@example.com', 'ORG_ADMIN');
     const cookies = await loginAs('esc-proj@example.com');
@@ -108,7 +116,7 @@ describe.skipIf(!ready)('DELETE /ticketing/projects/:id', () => {
 
     const res = await del(cookies, projectId, name);
     expect(res.status, JSON.stringify(res.body)).toBe(409);
-    expect(res.body.code).toBe('PROJECT_HAS_ESCALATIONS');
+    expect(res.body.code).toBe('PROJECT_HAS_TICKETS');
 
     // Nothing was destroyed on the way to the refusal.
     expect(await ticketPrisma.projects.count({ where: { id: projectId } })).toBe(1);
@@ -116,15 +124,14 @@ describe.skipIf(!ready)('DELETE /ticketing/projects/:id', () => {
   });
 
   it('leaves a PROJECT_DELETED audit row that OUTLIVES the project', async () => {
-    // The project's tickets took their own Activities history with them, so this row
-    // in the MAIN database is the only surviving record of what was destroyed.
+    // Only empty projects can be deleted, so the audit row records a zero-ticket
+    // deletion; it is the only surviving record the project ever existed.
     const org = await createTestOrg('Audit Project Org');
     const admin = await createTestUser(org.id, 'audit-proj@example.com', 'ORG_ADMIN');
     const cookies = await loginAs('audit-proj@example.com');
 
     const name = 'Doomed Project';
     const projectId = await createProject(cookies, name);
-    await createTicket(cookies, projectId);
 
     await del(cookies, projectId, name).expect(204);
 
@@ -134,7 +141,7 @@ describe.skipIf(!ready)('DELETE /ticketing/projects/:id', () => {
     expect(row).not.toBeNull();
     const meta = row?.metadata as { project?: string; tickets?: number };
     expect(meta?.project).toBe(name);
-    expect(meta?.tickets).toBe(1);
+    expect(meta?.tickets).toBe(0);
   });
 
   it('404s for a project that does not exist, before checking the confirmation', async () => {

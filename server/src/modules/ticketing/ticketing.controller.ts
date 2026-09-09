@@ -231,26 +231,6 @@ export async function updateTicket(req: Request, res: Response, next: NextFuncti
   } catch (err) { next(err); }
 }
 
-export async function deleteTicket(req: Request, res: Response, next: NextFunction): Promise<void> {
-  try {
-    const id = req.params['id']!;
-    // Same guard as updateTicket: an ORG_ADMIN reaching for another org's ticket
-    // gets 404, deliberately — a 403 would confirm the id exists.
-    const scope = await service.ticketAccessScope(req.user);
-    await service.assertTicketAccess(scope, id);
-
-    const core = await db.getTicketCore(id);
-    if (!core) throw notFound('Ticket');
-    await assertCanEditTicket(req, core);
-
-    const { ticketNumber, title } = await service.deleteTicket(id);
-    // The ticket's own Activities history cascaded away with it; this row in the
-    // main database is now the only record that it ever existed.
-    await auditTicket(req, 'TICKET_DELETED', { id, ticketNumber }, { title });
-    res.status(204).end();
-  } catch (err) { next(err); }
-}
-
 export async function listProjects(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     res.json({ projects: await cached(cacheKey('projects'), TTL.reference, () => service.listProjects()) });

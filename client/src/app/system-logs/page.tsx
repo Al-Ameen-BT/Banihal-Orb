@@ -45,7 +45,6 @@ const AUDIT_ACTIONS = [
   { value: 'UPDATE_SERVICE_REQUEST', label: 'Service request updates' },
   { value: 'TICKET_CREATED', label: 'Ticket created' },
   { value: 'TICKET_UPDATED', label: 'Ticket edited' },
-  { value: 'TICKET_DELETED', label: 'Ticket deleted' },
   { value: 'TICKET_ESCALATED', label: 'Ticket escalated' },
   { value: 'TICKET_CLAIMED', label: 'Escalated ticket claimed' },
   { value: 'SERVICE_RENEWED', label: 'Service renewals' },

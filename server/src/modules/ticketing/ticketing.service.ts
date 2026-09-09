@@ -1,7 +1,4 @@
-import fs from 'fs/promises';
-import path from 'path';
 import * as db from './ticketing.client';
-import { UPLOAD_DIR } from './uploads';
 import { resolveB2bIdentity } from './identity';
 import { notify } from '../notifications/notifications.service';
 import { nextTicketNumber } from './utils/ticketNumber';
@@ -209,40 +206,6 @@ export async function updateTicket(actorId: string, id: string, input: UpdateTic
   return ticket;
 }
 
-/**
- * Permanently delete a ticket. Returns what the caller needs for the audit row,
- * because after this the ticket — and its entire Activities history, which is
- * ON DELETE CASCADE — no longer exists to be read.
- *
- * Order is deliberate and must not be rearranged:
- *   escalation check → capture identifiers → unlink files → delete row.
- */
-export async function deleteTicket(id: string): Promise<{ ticketNumber: string; title: string }> {
-  const ticket = await db.getTicketForDelete(id);
-  if (!ticket) throw notFound('Ticket');
-
-  // An escalated ticket has a COPY in the other database, joined only by a
-  // `src:<ticketNumber>` label with no foreign key. Deleting this one would leave
-  // that copy alive and permanently unresolvable, with nothing surfacing the break
-  // (mirror failures are swallowed by design). Refuse instead.
-  if (ticket.labels.includes('escalated')) {
-    throw Object.assign(
-      new Error('This ticket has been escalated to the platform team and cannot be deleted.'),
-      { status: 409, code: 'TICKET_ESCALATED' },
-    );
-  }
-
-  // Files before rows: the cascade destroys the filenames, and orphaned bytes on
-  // disk can then never be matched back to anything.
-  const filenames = await db.getTicketAttachmentFilenames(id);
-  await Promise.all(filenames.map((name) =>
-    fs.unlink(path.join(UPLOAD_DIR, path.basename(name))).catch(() => {}),
-  ));
-
-  await db.deleteTicketRow(id);
-  return { ticketNumber: ticket.ticketNumber, title: ticket.title };
-}
-
 // ─── Projects ──────────────────────────────────────────────────────────────────
 export const listProjects = () => db.listProjects();
 
@@ -278,16 +241,13 @@ export async function updateProject(id: string, input: z.infer<typeof UpdateProj
 }
 
 /**
- * Delete a project and everything under it. IRREVERSIBLE.
+ * Delete a project. Only EMPTY projects can be deleted: tickets are compliance
+ * records and are never deletable, in either store, for any role — and a project
+ * is only its tickets, so one holding any ticket cannot go either.
  *
- * This used to refuse outright whenever the project held any ticket, telling the
- * caller to "reassign or close them" — which was doubly wrong: the count ignores
- * status so closing changed nothing, and there is no reassign UI. Every project in
- * both stores holds hundreds of tickets, so in practice nothing was ever deletable.
- *
- * The guard is now a typed-name confirmation instead of an impossible precondition.
- * It is checked HERE, not only in the dialog: a destructive endpoint that trusts the
- * client to have asked is not confirmed, it is merely inconvenient to call by hand.
+ * The typed-name confirmation is checked HERE, not only in the dialog: a
+ * destructive endpoint that trusts the client to have asked is not confirmed, it
+ * is merely inconvenient to call by hand.
  */
 export async function deleteProject(id: string, confirmName: string): Promise<{ name: string; tickets: number; attachments: number }> {
   const project = await db.getProjectForDelete(id);
@@ -299,20 +259,16 @@ export async function deleteProject(id: string, confirmName: string): Promise<{ 
     });
   }
 
-  // An escalated ticket has a COPY in the other database joined only by a `src:` label
-  // with no foreign key. Taking this side out leaves that copy alive and permanently
-  // unresolvable, with nothing surfacing the break — so refuse, exactly as deleteTicket
-  // does for the single-ticket case.
-  const escalated = await db.countEscalatedInProject(id);
-  if (escalated > 0) {
+  // getProjectForDelete already carries _count.Tickets: refuse while any exist.
+  if (project.tickets > 0) {
     throw Object.assign(
-      new Error(`${escalated} ticket(s) in this project have been escalated to the platform team; the project cannot be deleted.`),
-      { status: 409, code: 'PROJECT_HAS_ESCALATIONS' },
+      new Error(`This project still holds ${project.tickets} ticket(s). Tickets are retained as compliance records and can never be deleted, so a project cannot be deleted while it holds any. Reassign or migrate every ticket to another project first.`),
+      { status: 409, code: 'PROJECT_HAS_TICKETS' },
     );
   }
 
-  const { tickets, attachments } = await db.deleteProjectCascade(id);
-  return { name: project.name, tickets, attachments };
+  const { attachments } = await db.deleteProjectCascade(id);
+  return { name: project.name, tickets: 0, attachments };
 }
 
 // ─── SLAs ──────────────────────────────────────────────────────────────────────
@@ -446,7 +402,7 @@ async function deliverMentions(args: {
 
     // GUARD 2 — SELF. Mentioning yourself notifies nobody, matching the
     // self-assignment skip in ticketNotify.ts.
-    const ticket = await db.getTicketForDelete(args.ticketId);  // id + number + title
+    const ticket = await db.getTicketBrief(args.ticketId);  // id + number + title
     const author = (await db.getUserName(args.actorId).catch(() => null)) ?? 'Someone';
 
     for (const ticketUserId of [...new Set(args.mentions)]) {

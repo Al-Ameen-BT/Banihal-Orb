@@ -149,14 +149,17 @@ describe.skipIf(!ready)('@mentions in ticket comments', () => {
     expect(await prisma.notification.count({ where: { userId: me.id } })).toBe(0);
   });
 
-  it('the notification OUTLIVES the ticket it points at', async () => {
-    // The reason the table is in the main database rather than the ticket store,
-    // where Activities rows are ON DELETE CASCADE on the ticket.
+  it('notifications live in the MAIN database, not the ticket store', async () => {
+    // The reason the table lives in the main database rather than the ticket store,
+    // where Activities rows are ON DELETE CASCADE on the ticket: the notification
+    // must survive anything happening inside the store. Tickets themselves are now
+    // compliance records no actor can delete through the API, so this rubs the
+    // store-side activity rows out directly to prove the notification is independent.
     const org = await createTestOrg('Outlive Org');
-    await createTestUser(org.id, 'deleter@example.com', 'ADMINISTRATOR', 'employee');
+    await createTestUser(org.id, 'owner@example.com', 'ADMINISTRATOR', 'employee');
     const target = await createTestUser(org.id, 'survivor@example.com', 'ADMINISTRATOR', 'employee');
 
-    const cookies = await loginAs('deleter@example.com');
+    const cookies = await loginAs('owner@example.com');
     const ticket = await createTicket(cookies);
     const targetEntry = (await roster(cookies)).find((a) => a.email === 'survivor@example.com');
 
@@ -164,11 +167,12 @@ describe.skipIf(!ready)('@mentions in ticket comments', () => {
       .set('Cookie', cookies).field('content', 'look here').field('mentions', targetEntry!.id).expect(201);
     expect(await prisma.notification.count({ where: { userId: target.id } })).toBe(1);
 
-    await request(app).delete(`/api/ticketing/tickets/${ticket.id}`).set('Cookie', cookies).expect(204);
+    await adminTicketPrisma.activities.deleteMany({ where: { ticketId: ticket.id } });
 
-    // Ticket gone, its activity history gone with it — notification still there.
+    // Store rows gone, notification still there — and the ticket itself survives.
     expect(await adminTicketPrisma.activities.count({ where: { ticketId: ticket.id } })).toBe(0);
     expect(await prisma.notification.count({ where: { userId: target.id } })).toBe(1);
+    expect(await adminTicketPrisma.tickets.count({ where: { id: ticket.id } })).toBe(1);
   });
 
   it('a comment with no mentions still posts normally', async () => {
