@@ -277,7 +277,7 @@ function DeleteOrgModal({ org, onClose, onDeleted }: { org: OrgDetail['org']; on
             </svg>
           </div>
           <div className="flex-1 min-w-0">
-            <h2 className="text-base font-semibold text-slate-900">Delete organization</h2>
+            <h2 className="text-base font-semibold text-slate-900">Delete Org</h2>
             <p className="text-xs text-slate-400 mt-0.5">Step {step + 1} of 2 · {org.name} · irreversible</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors cursor-pointer" aria-label="Close">

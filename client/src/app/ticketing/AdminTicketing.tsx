@@ -1195,8 +1195,8 @@ export default function AdminTicketing() {
   return (
     <div className="p-6 sm:p-8 max-w-[1300px] mx-auto space-y-6">
       {user?.role === 'ADMINISTRATOR' ? (
-        <PageHeader eyebrow="Platform · Administrators store" title="Platform Ticketing"
-          subtitle="The platform administrators' isolated ticket store (b2b_ticketing_admin) — escalations from client organizations plus tickets you create here. Separate from every client's tickets." icon={Icons.board({ className: 'w-6 h-6' })} />
+        <PageHeader eyebrow="Ticketing · Banihal Orb" title="Ticketing of Banihaltechnologies"
+          subtitle="Manage escalations from client organizations plus tickets." icon={Icons.board({ className: 'w-6 h-6' })} />
       ) : (
         <PageHeader eyebrow="Ticketing · Control System" title="Ticketing Dashboard"
           subtitle="Manage tickets, projects, and SLA policies — with ticket numbering, SLA timers, round-robin assignment, and an activity trail." icon={Icons.board({ className: 'w-6 h-6' })} />
