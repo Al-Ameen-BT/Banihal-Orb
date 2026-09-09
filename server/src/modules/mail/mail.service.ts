@@ -17,14 +17,27 @@ const transporter = nodemailer.createTransport({
 });
 
 // ─── Brand palette for transactional security emails ─────────────────────────
+// Contrast targets (both light and dark mode):
+//   INK   on white   ≈ 16:1   (titles, signatures)
+//   MUTED on white   ≈  6.6:1 (14px body copy)
+//   FAINT on white   ≈  4.2:1 (11–12px secondary hints)
+//   FOOT  on #EEF2F7 ≈  4.2:1 (footer small print)
+// The dark-mode rules in emailShell() raise every one of these onto the dark
+// surface so phone + desktop mail clients that auto-darken get the SAME readable
+// palette instead of two different, half-inverted designs.
 const BRAND_NAME = 'Banihal Technologies';
 const BRAND_COLOR = '#2563EB';   // primary
-const BRAND_DARK = '#1D4ED8';    // header gradient end / code text
-const BRAND_TINT = '#EFF6FF';    // code box background
-const BRAND_BORDER = '#BFDBFE';  // code box border
+const BRAND_DARK = '#1D4ED8';    // header gradient end / code text (light mode)
+const BRAND_LIGHT = '#7CB4F3';   // code text / accents on dark surfaces
+const BRAND_TINT = '#EFF6FF';    // code box background (light mode)
+const BRAND_BORDER = '#BFDBFE';  // code box border (light mode)
 const INK = '#0F172A';
 const MUTED = '#475569';
-const FAINT = '#94A3B8';
+const FAINT = '#64748B';         // raised from #94A3B8 so small text stays legible
+const FOOT = '#64748B';          // footer small print on the #EEF2F7 page
+const FOOT_DEAD = '#94A3B8';     // © line / decorative separators
+const PAGE_BG = '#EEF2F7';
+const CARD_BG = '#FFFFFF';
 const COMPANY_ADDR = 'Banihal Technologies LLP · SDF Building, KITP, Kakkanchery, Kerala – 673635, India';
 const FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 const MONO = "'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace";
@@ -35,52 +48,97 @@ const appUrl = () => env.FRONTEND_URL.replace(/\/$/, '');
 // host is reachable — sendMail failures are reported per-email below.
 const isSmtpConfigured = (): boolean => Boolean(env.SMTP_HOST && env.SMTP_USER);
 
-// Shared shell: gradient brand header, white card, signature, and a footer with
-// Privacy Policy + Terms links. `bodyHtml` is the email-specific card content.
+// Shared shell: gradient brand header, card, signature, and a footer. Wrapped in
+// a full HTML document with a dark-mode <style> block, because the phone/desktop
+// "different colour" reporting is mail clients auto-darkening the message:
+//
+//   - The `color-scheme` meta tags + :root rule tell Apple Mail / Outlook.com /
+//     modern Gmail this message is designed for BOTH palettes.
+//   - The @media (prefers-color-scheme: dark) rules flip the light surfaces to
+//     dark and brighten every text colour. `!important` is what lets them beat the
+//     inline light-mode styles — inline styles otherwise win every specificity war.
+//   - Every surface has an explicit background-color (no transparency), and text
+//     colours are chosen so the same rule survives both palettes.
+//
+// `bodyHtml` is the email-specific card content.
 function emailShell(opts: { bodyHtml: string; to: string }): string {
   const year = new Date().getFullYear();
   const base = appUrl();
-  return `
-  <div style="margin:0;padding:0;background:#eef2f7;">
+  return `<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
+<meta name="supported-color-schemes" content="light dark">
+<title>${BRAND_NAME} security notification</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; padding: 0; }
+  @media (prefers-color-scheme: dark) {
+    body, .page { background-color: #0B1220 !important; }
+    .card { background-color: #1B2636 !important; border-color: #2C3A52 !important; }
+    h1 { color: #F8FAFC !important; }
+    .card p { color: #CBD5E1 !important; }
+    .card span { color: #CBD5E1 !important; }
+    .card td { color: #CBD5E1 !important; }
+    .card a { color: #A5C4F8 !important; }
+    .card li { color: #CBD5E1 !important; }
+    .code-box { background-color: #0B1220 !important; border-color: #2C3A52 !important; }
+    .code-digit { color: ${BRAND_LIGHT} !important; }
+    .card .accent-label { color: ${BRAND_LIGHT} !important; }
+    .notice { background-color: #3A2500 !important; border-color: #6B3D00 !important; }
+    .notice .notice-title { color: #FDBA74 !important; }
+    .notice li { color: #FDE68A !important; }
+    .foot { color: #94A3B8 !important; }
+    .foot a { color: #A5C4F8 !important; }
+    .headline { color: #DBEAFE !important; }
+  }
+</style>
+</head>
+<body style="margin:0;padding:0;background-color:${PAGE_BG};">
+  <div class="page" style="margin:0;padding:0;background-color:${PAGE_BG};">
     <div style="max-width:600px;margin:0 auto;padding:24px 14px;font-family:${FONT};color:${INK};">
 
       <div style="background:linear-gradient(135deg,${BRAND_COLOR},${BRAND_DARK});border-radius:16px 16px 0 0;padding:22px 28px;text-align:center;">
         <div style="font-size:19px;font-weight:700;letter-spacing:0.4px;color:#ffffff;">${BRAND_NAME}</div>
-        <div style="margin-top:3px;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#dbeafe;">Security</div>
+        <div class="headline" style="margin-top:3px;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#DBEAFE;">Security</div>
       </div>
 
-      <div style="background:#ffffff;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 16px 16px;padding:32px 28px;">
+      <div class="card" style="background-color:${CARD_BG};border:1px solid #E2E8F0;border-top:none;border-radius:0 0 16px 16px;padding:32px 28px;">
         ${opts.bodyHtml}
-        <div style="margin-top:28px;padding-top:18px;border-top:1px solid #f1f5f9;">
+        <div style="margin-top:28px;padding-top:18px;border-top:1px solid #F1F5F9;">
           <p style="margin:0 0 2px;font-size:14px;color:#334155;">Stay secure,</p>
           <p style="margin:0;font-size:14px;font-weight:700;color:${INK};">The ${BRAND_NAME} Security Team</p>
         </div>
       </div>
 
-      <div style="padding:20px 8px 8px;text-align:center;">
+      <div class="foot" style="padding:20px 8px 8px;text-align:center;">
         <p style="margin:0 0 12px;font-size:12px;">
           <a href="${base}/privacy" style="color:${BRAND_COLOR};text-decoration:none;font-weight:600;">Privacy Policy</a>
-          <span style="color:#cbd5e1;margin:0 8px;">&bull;</span>
+          <span style="color:${FOOT_DEAD};margin:0 8px;">&bull;</span>
           <a href="${base}/terms" style="color:${BRAND_COLOR};text-decoration:none;font-weight:600;">Terms &amp; Conditions</a>
         </p>
-        <p style="margin:0 0 6px;font-size:11px;line-height:1.6;color:${FAINT};">
+        <p style="margin:0 0 6px;font-size:11px;line-height:1.6;color:${FOOT};">
           Automated security notification sent to ${opts.to}. Please do not reply to this message.
         </p>
-        <p style="margin:0 0 6px;font-size:11px;line-height:1.6;color:${FAINT};">
+        <p style="margin:0 0 6px;font-size:11px;line-height:1.6;color:${FOOT};">
           This message is confidential and intended solely for the named recipient. If you received it in error, delete it and notify the sender.
         </p>
-        <p style="margin:0;font-size:11px;line-height:1.6;color:#cbd5e1;">&copy; ${year} ${COMPANY_ADDR}</p>
+        <p style="margin:0;font-size:11px;line-height:1.6;color:${FOOT_DEAD};">&copy; ${year} ${COMPANY_ADDR}</p>
       </div>
     </div>
-  </div>`;
+  </div>
+</body>
+</html>`;
 }
 
 // Amber "security notice" box shared by both emails.
 function noticeBox(items: string[]): string {
   return `
-    <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:16px 18px;">
-      <p style="margin:0 0 8px;font-size:13px;font-weight:700;color:#9a3412;">Security notice</p>
-      <ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.7;color:#7c2d12;">
+    <div class="notice" style="background:#FFF7ED;border:1px solid #FED7AA;border-radius:12px;padding:16px 18px;">
+      <p class="notice-title" style="margin:0 0 8px;font-size:13px;font-weight:700;color:#9A3412;">Security notice</p>
+      <ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.7;color:#7C2D12;">
         ${items.map((i) => `<li>${i}</li>`).join('')}
       </ul>
     </div>`;
@@ -117,7 +175,7 @@ export function buildPasswordResetEmail(to: string, resetLink: string): { subjec
         <a href="${resetLink}" style="display:inline-block;padding:13px 30px;background:${BRAND_COLOR};color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;border-radius:10px;">Reset password</a>
       </td></tr>
     </table>
-    <p style="margin:0 0 24px;font-size:12px;line-height:1.6;color:${FAINT};word-break:break-all;">
+    <p style="margin:0 0 24px;font-size:12px;line-height:1.6;color:${MUTED};word-break:break-all;">
       Or paste this link into your browser:<br /><span style="color:${MUTED};">${resetLink}</span>
     </p>
 
@@ -180,15 +238,15 @@ export function buildMfaCodeEmail(to: string, code: string, ttlMinutes: number):
       Use the verification code below to finish signing in. It is valid for <strong>${ttlMinutes} minutes</strong> and can be used once.
     </p>
 
-    <p style="margin:0 0 8px;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:${BRAND_COLOR};">Your verification code</p>
+    <p class="accent-label" style="margin:0 0 8px;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:${BRAND_COLOR};">Your verification code</p>
     <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 10px;">
       <tr>
-        <td align="center" style="background:${BRAND_TINT};border:1px solid ${BRAND_BORDER};border-radius:12px;padding:22px 12px;">
-          <div style="font-family:${MONO};font-size:42px;font-weight:700;letter-spacing:12px;color:${BRAND_DARK};line-height:1;-webkit-user-select:all;-moz-user-select:all;user-select:all;">${code}</div>
+        <td align="center" class="code-box" style="background:${BRAND_TINT};border:1px solid ${BRAND_BORDER};border-radius:12px;padding:22px 12px;">
+          <div class="code-digit" style="font-family:${MONO};font-size:42px;font-weight:700;letter-spacing:12px;color:${BRAND_DARK};line-height:1;-webkit-user-select:all;-moz-user-select:all;user-select:all;">${code}</div>
         </td>
       </tr>
     </table>
-    <p style="margin:0 0 24px;text-align:center;font-size:12px;color:${FAINT};">Tap or click the code to select it, then copy.</p>
+    <p style="margin:0 0 24px;text-align:center;font-size:12px;color:${MUTED};">Tap or click the code to select it, then copy.</p>
 
     ${noticeBox([
       `<strong>${BRAND_NAME} will never ask you for this code</strong> by phone, email, text, or chat. Anyone who does is trying to steal your account &mdash; do not give it to them.`,
@@ -256,15 +314,15 @@ export function buildInviteEmail(
       Hi ${opts.name}, an administrator created an account for you in <strong>${opts.orgName}</strong> as <strong>${opts.roleLabel}</strong>. Sign in with the temporary password below, then change it from My Profile straight away.
     </p>
 
-    <p style="margin:0 0 8px;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:${BRAND_COLOR};">Temporary password</p>
+    <p class="accent-label" style="margin:0 0 8px;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:${BRAND_COLOR};">Temporary password</p>
     <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 10px;">
       <tr>
-        <td align="center" style="background:${BRAND_TINT};border:1px solid ${BRAND_BORDER};border-radius:12px;padding:20px 12px;">
-          <div style="font-family:${MONO};font-size:22px;font-weight:700;letter-spacing:2px;color:${BRAND_DARK};line-height:1.3;word-break:break-all;-webkit-user-select:all;-moz-user-select:all;user-select:all;">${opts.tempPassword}</div>
+        <td align="center" class="code-box" style="background:${BRAND_TINT};border:1px solid ${BRAND_BORDER};border-radius:12px;padding:20px 12px;">
+          <div class="code-digit" style="font-family:${MONO};font-size:22px;font-weight:700;letter-spacing:2px;color:${BRAND_DARK};line-height:1.3;word-break:break-all;-webkit-user-select:all;-moz-user-select:all;user-select:all;">${opts.tempPassword}</div>
         </td>
       </tr>
     </table>
-    <p style="margin:0 0 20px;text-align:center;font-size:12px;color:${FAINT};">Tap or click the password to select it, then copy.</p>
+    <p style="margin:0 0 20px;text-align:center;font-size:12px;color:${MUTED};">Tap or click the password to select it, then copy.</p>
 
     <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 24px;">
       <tr><td align="center">
@@ -349,7 +407,7 @@ export function buildVerificationEmail(
         <a href="${verifyLink}" style="display:inline-block;padding:13px 30px;background:${BRAND_COLOR};color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;border-radius:10px;">Confirm email address</a>
       </td></tr>
     </table>
-    <p style="margin:0 0 24px;font-size:12px;line-height:1.6;color:${FAINT};word-break:break-all;">
+    <p style="margin:0 0 24px;font-size:12px;line-height:1.6;color:${MUTED};word-break:break-all;">
       Or paste this link into your browser:<br /><span style="color:${MUTED};">${verifyLink}</span>
     </p>
 
@@ -445,15 +503,15 @@ export function buildOrgApprovalEmail(
       ${row('Domain', org.domain ?? '&mdash;')}
     </table>
 
-    <p style="margin:0 0 8px;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:${BRAND_COLOR};">Approval code</p>
+    <p class="accent-label" style="margin:0 0 8px;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:${BRAND_COLOR};">Approval code</p>
     <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 10px;">
       <tr>
-        <td align="center" style="background:${BRAND_TINT};border:1px solid ${BRAND_BORDER};border-radius:12px;padding:22px 12px;">
-          <div style="font-family:${MONO};font-size:42px;font-weight:700;letter-spacing:12px;color:${BRAND_DARK};line-height:1;-webkit-user-select:all;-moz-user-select:all;user-select:all;">${code}</div>
+        <td align="center" class="code-box" style="background:${BRAND_TINT};border:1px solid ${BRAND_BORDER};border-radius:12px;padding:22px 12px;">
+          <div class="code-digit" style="font-family:${MONO};font-size:42px;font-weight:700;letter-spacing:12px;color:${BRAND_DARK};line-height:1;-webkit-user-select:all;-moz-user-select:all;user-select:all;">${code}</div>
         </td>
       </tr>
     </table>
-    <p style="margin:0 0 24px;text-align:center;font-size:12px;color:${FAINT};">Valid for ${ttlMinutes} minutes. The administrator can request a new one if it expires.</p>
+    <p style="margin:0 0 24px;text-align:center;font-size:12px;color:${MUTED};">Valid for ${ttlMinutes} minutes. The administrator can request a new one if it expires.</p>
 
     ${noticeBox([
       `<strong>Verify who you are speaking to before sharing this code.</strong> It is the only thing standing between a stranger and an account on this platform.`,

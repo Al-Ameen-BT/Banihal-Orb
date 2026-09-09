@@ -1,9 +1,6 @@
-import fs from 'fs/promises';
-import path from 'path';
 import type { enum_Activities_type } from '@prisma/ticket-client';
 import { prisma } from '../../config/database';
 import { runWithTicketDb, ticketPrisma, getTicketDb } from '../../config/ticketDatabase';
-import { UPLOAD_DIR } from './uploads';
 import { evaluateSla, evaluateResponseSla, convertToSeconds, type TimeUnit } from './services/slaService';
 import type {
   TicketDTO, ProjectDTO, SlaDTO, TicketFilters, PersonRef,
@@ -289,7 +286,11 @@ function toProjectDTO(row: ProjectRow, lead: PersonRef | null): ProjectDTO {
 }
 
 export async function listProjects(): Promise<ProjectDTO[]> {
-  const rows = await getTicketDb().projects.findMany({ include: projectInclude, orderBy: { createdAt: 'desc' } });
+  const rows = await getTicketDb().projects.findMany({
+    where: { deletedAt: null },
+    include: projectInclude,
+    orderBy: { createdAt: 'desc' },
+  });
   const leadRows = await getTicketDb().users.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.leadId))] } }, ...userSel });
   const leads = new Map(leadRows.map((u) => [u.id, u]));
   return rows.map((r) => toProjectDTO(r, person(leads.get(r.leadId) ?? null)));
@@ -328,51 +329,76 @@ export function countProjectTickets(id: string) {
   return getTicketDb().tickets.count({ where: { projectId: id } });
 }
 
-/** Name + ticket count, read BEFORE the delete — both are gone afterwards and both
- *  are needed: the name to check the typed confirmation against, the count to refuse
- *  deletion of a project that still holds any ticket (tickets are compliance records). */
+/** Name of the hidden bucket where a deleted project's tickets are kept. */
+export const RETAINED_PROJECT_NAME = 'Retained tickets';
+
+/** Name + ticket count + lead, read BEFORE the delete — the name to check the typed
+ *  confirmation against, the count to know whether tickets must be relocated, and the
+ *  lead to reuse for the retained bucket (a Projects row always needs a User). */
 export async function getProjectForDelete(id: string) {
   const row = await getTicketDb().projects.findUnique({
     where: { id },
-    select: { id: true, name: true, _count: { select: { Tickets: true } } },
+    select: { id: true, name: true, leadId: true, _count: { select: { Tickets: true } } },
   });
-  return row ? { id: row.id, name: row.name, tickets: row._count.Tickets } : null;
+  return row ? { id: row.id, name: row.name, leadId: row.leadId, tickets: row._count.Tickets } : null;
 }
 
 /**
- * Delete a project. The guard in deleteProject ensures this only ever runs on a
- * project with ZERO tickets — tickets are compliance records, never deletable —
- * so the ticket-related machinery below is effectively dead for empty projects,
- * and comments/attachments/activities/watchers therefore never cascade away.
- *
- * FILES BEFORE ROWS, for the same reason as orgDeletion.service.ts: attachments are
- * random filenames in a flat directory whose only pointer is the row about to be
- * deleted. Delete the rows first and the bytes on disk are unreachable forever.
+ * Find (or lazily create) the "Retained tickets" bucket in the CURRENT store. The
+ * bucket is invisible everywhere: `deletedAt` is set at creation, and every project
+ * list / dashboard feed filters it out, so deleting an arbitrary project never leaks
+ * a user-visible "Retained tickets" card. It exists so tickets survive the deletion
+ * of the project they were grouped under — tickets are compliance records and can
+ * never be deleted, and summary counts keep seeing them because they are still rows.
  */
-export async function deleteProjectCascade(id: string): Promise<{ tickets: number; attachments: number }> {
+export async function getOrCreateRetainedProject(leadId: string): Promise<string> {
+  const existing = await getTicketDb().projects.findFirst({
+    where: { name: RETAINED_PROJECT_NAME },
+    select: { id: true },
+  });
+  if (existing) return existing.id;
+  const created = await getTicketDb().projects.create({
+    data: {
+      name: RETAINED_PROJECT_NAME,
+      description: 'Tickets kept when their project was deleted — compliance records that are never deleted.',
+      status: 'archived',
+      category: 'retained',
+      type: 'other',
+      priority: 'medium',
+      leadId,
+      deletedAt: new Date(),
+    },
+    select: { id: true },
+  });
+  return created.id;
+}
+
+/** Re-point every ticket of `fromProjectId` at `toProjectId`. Returns the moved count. */
+export function moveProjectTickets(fromProjectId: string, toProjectId: string) {
+  return getTicketDb().tickets.updateMany({
+    where: { projectId: fromProjectId },
+    data: { projectId: toProjectId },
+  });
+}
+
+/** Attachment rows whose owning ticket lives in `projectId` (files were NOT deleted;
+ *  relocation preserves them — this count is only for the audit record). */
+export async function countProjectAttachments(projectId: string): Promise<number> {
   const db = getTicketDb();
-  const tickets = await db.tickets.findMany({ where: { projectId: id }, select: { id: true } });
-  const ticketIds = tickets.map((t) => t.id);
+  const ticketIds = (await db.tickets.findMany({ where: { projectId }, select: { id: true } })).map((t) => t.id);
+  if (!ticketIds.length) return 0;
+  const [t, c] = await Promise.all([
+    db.ticketAttachments.count({ where: { ticketId: { in: ticketIds } } }),
+    db.commentAttachments.count({ where: { Comments: { ticketId: { in: ticketIds } } } }),
+  ]);
+  return t + c;
+}
 
-  let attachments = 0;
-  if (ticketIds.length) {
-    const files = [
-      ...(await db.ticketAttachments.findMany({ where: { ticketId: { in: ticketIds } }, select: { filename: true } })),
-      ...(await db.commentAttachments.findMany({ where: { Comments: { ticketId: { in: ticketIds } } }, select: { filename: true } })),
-    ];
-    // filename is nullable on both tables — a row without one has no file to unlink.
-    const names = files.map((f) => f.filename).filter((n): n is string => !!n);
-    attachments = names.length;
-    await Promise.all(names.map((name) =>
-      // Best-effort per file: a missing file must not abort the teardown, and
-      // basename() keeps a crafted stored name from escaping UPLOAD_DIR.
-      fs.unlink(path.join(UPLOAD_DIR, path.basename(name))).catch(() => {})));
-
-    await db.tickets.deleteMany({ where: { id: { in: ticketIds } } });
-  }
-
-  await db.projects.delete({ where: { id } });
-  return { tickets: ticketIds.length, attachments };
+/** Delete a (now GUARANTEED empty) project row. The caller has already relocated any
+ *  tickets — Tickets.projectId is a NO-ACTION reference, so a project with tickets
+ *  cannot be deleted at the database level either. */
+export function deleteProjectRow(id: string) {
+  return getTicketDb().projects.delete({ where: { id } });
 }
 
 // ─── SLAs ──────────────────────────────────────────────────────────────────────
@@ -962,7 +988,7 @@ export async function dashboardFeed(scope: string[] | null): Promise<{ tickets: 
       // part of this contract, not a convenience.
       orderBy: { createdAt: 'desc' },
     }),
-    db.projects.findMany({ select: { id: true, status: true, endDate: true } }),
+    db.projects.findMany({ where: { deletedAt: null }, select: { id: true, status: true, endDate: true } }),
   ]);
 
   // Reporters are a required relation the admin store can orphan (see ticketInclude),

@@ -73,3 +73,17 @@ export const requirePermissionIfPlatform = (key: PermissionKey): PermissionGuard
     if (!can(req, key)) { deny(res); return; }
     next();
   });
+
+/**
+ * OR-variant: platform staff pass if they hold ANY of `keys`. Used where a
+ * surface may be reached through two different capabilities (e.g. PATCH /tickets
+ * accepts `tickets.write` on the shared, owner-locked path and `tickets.manage`
+ * on the edit-anything path). Tagged with the first key so the router walk in
+ * tests/route-permissions.test.ts still sees an enforceable permission.
+ */
+export const requirePermissionAny = (...keys: PermissionKey[]): PermissionGuard =>
+  tag(keys[0], (req, res, next) => {
+    if (req.user?.role !== 'ADMINISTRATOR') { next(); return; }
+    if (keys.some((k) => can(req, k))) { next(); return; }
+    deny(res);
+  });

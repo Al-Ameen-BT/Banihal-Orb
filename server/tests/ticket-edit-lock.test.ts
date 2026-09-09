@@ -3,11 +3,13 @@ import { createTestOrg, createTestUser, loginAs, cleanDb, app, request, ticketTe
 import { prisma } from '../src/config/database';
 import { ticketPrisma, adminTicketPrisma } from '../src/config/ticketDatabase';
 
-// Edit lock on TICKET mutations — OWNER-BASED:
+// Edit lock on TICKET mutations — OWNER-BASED by default:
 //   - plain USER      → may edit only a ticket they opened (reporter)
 //   - ORG_ADMIN       → may edit any ticket inside their org scope
-//   - platform staff  → may edit ONLY a ticket they OWN (reporter OR assignee)
-//                       and only while holding the `tickets.write` permission.
+//   - platform staff  → may edit ANY ticket only while holding the `tickets.manage`
+//                       permission (the ADMINISTRATION privilege); with plain
+//                       `tickets.write` they may edit ONLY a ticket they OWN
+//                       (reporter OR assignee).
 // Locked out: everyone else — including an employee/HR admin who merely sees a
 // colleague's ticket in the shared queue.
 //
@@ -107,6 +109,25 @@ describe.skipIf(!ready)('Ticket edit lock', () => {
     expect(allowed.status).toBe(200);
     expect(await adminTicketPrisma.tickets.findUnique({ where: { id: ticket.id }, select: { title: true } }))
       .toMatchObject({ title: 'Employee (ADMINISTRATOR) may' });
+  });
+
+  it('lets the ADMINISTRATION role (tickets.manage) edit ANY ticket — the edit-all privilege', async () => {
+    const org = await createTestOrg('Admin EditAll Org');
+    // An employee' ticket, deliberately NOT owned by the privileged administrator.
+    await createTestUser(org.id, 'builder@example.com', 'ADMINISTRATOR', 'employee');
+    await createTestUser(org.id, 'privileged@example.com', 'ADMINISTRATOR', 'administration');
+
+    const builderCookies = await loginAs('builder@example.com');
+    const ticket = await createTicket(builderCookies, "Not the privileged admin's ticket");
+
+    // Privileged ADMINISTRATOR holds tickets.manage (computed: every key) → the
+    // owner-based lock no longer applies, so editing succeeds despite no ownership.
+    const adminCookies = await loginAs('privileged@example.com');
+    const allowed = await request(app).patch(`/api/ticketing/tickets/${ticket.id}`).set('Cookie', adminCookies)
+      .send({ title: 'Privileged administrator may reword' });
+    expect(allowed.status).toBe(200);
+    expect(await adminTicketPrisma.tickets.findUnique({ where: { id: ticket.id }, select: { title: true } }))
+      .toMatchObject({ title: 'Privileged administrator may reword' });
   });
 
   it('locks a platform staff member out of a ticket they do not own — 403 TICKET_EDIT_FORBIDDEN', async () => {

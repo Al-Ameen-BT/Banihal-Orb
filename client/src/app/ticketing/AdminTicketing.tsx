@@ -480,8 +480,10 @@ function ProjectsTab({ onViewTickets }: { onViewTickets: (projectId: string) => 
   });
   const deleteMut = useMutation({
     mutationFn: ({ id, confirm }: { id: string; confirm: string }) => ticketingApi.deleteProject(id, confirm),
-    // Carries PROJECT_HAS_TICKETS and CONFIRM_MISMATCH — both are things the
-    // administrator has to read, not a generic failure.
+    // Carries CONFIRM_MISMATCH when the typed name does not match — the dialog
+    // already guards for it, but the server re-checks so the guard survives a
+    // hand-crafted call. Server no longer refuses PROJECT_HAS_TICKETS: tickets are
+    // relocated to the hidden retained bucket instead.
     onError: (e: unknown) => toast((e as { response?: { data?: { error?: string } } }).response?.data?.error ?? 'Could not delete project', 'error'),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['ticketing'] }); },
   });
@@ -535,33 +537,38 @@ function ProjectsTab({ onViewTickets }: { onViewTickets: (projectId: string) => 
             <div key={p.id} className="card p-5 border-t-2 border-t-brand/60 flex flex-col hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-200">
               <div className="flex items-start justify-between gap-2">
                 <h3 className="text-base font-semibold text-slate-900">{p.name}</h3>
-                {/* Tickets are compliance records and are never deleted, so a project
-                    that still holds any ticket cannot be deleted either. The delete
-                    affordance exists only for EMPTY projects; the server enforces the
-                    same rule. Double verification regardless: the dialog will not
-                    enable Delete until the project's name is typed back, and the
-                    server re-checks the same value. */}
-                {p.ticketCount === 0 ? (
-                  <button type="button" aria-label={`Delete ${p.name}`} onClick={async () => {
-                    const ok = await confirm({
-                      title: 'Delete project',
-                      message: (
-                        <>
-                          &ldquo;{p.name}&rdquo; is empty and will be permanently deleted. This can&rsquo;t be undone.
-                        </>
-                      ),
-                      confirmText: 'Delete project',
-                      variant: 'danger',
-                      requireText: p.name,
-                    });
-                    if (ok) deleteMut.mutate({ id: p.id, confirm: p.name });
-                  }}
-                    className="text-slate-300 hover:text-red-500 transition-colors cursor-pointer">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
-                  </button>
-                ) : (
-                  <span className="text-[11px] font-medium text-slate-400 whitespace-nowrap border border-slate-200 rounded-md px-1.5 py-0.5" title="Tickets are compliance records; a project holding any cannot be deleted.">retained</span>
-                )}
+                {/* Tickets are compliance records and are never deleted, so deleting a
+                    project that holds any moves those tickets into a hidden "Retained
+                    tickets" project — the project card disappears, the tickets and
+                    every overall count survive. The server enforces the same rule.
+                    Double verification regardless: the dialog will not enable Delete
+                    until the project's name is typed back, and the server re-checks
+                    the same value. */}
+                <button type="button" aria-label={`Delete ${p.name}`} onClick={async () => {
+                  const ok = await confirm({
+                    title: 'Delete project',
+                    message: (
+                      <>
+                        <p>&ldquo;{p.name}&rdquo; will be deleted.</p>
+                        {p.ticketCount > 0 && (
+                          <p className="mt-2">
+                            Tickets are compliance records and can&rsquo;t be deleted, so its {p.ticketCount}{' '}
+                            ticket{p.ticketCount === 1 ? '' : 's'} will be moved to a hidden &ldquo;Retained
+                            tickets&rdquo; project. All overall counts stay accurate.
+                          </p>
+                        )}
+                        {p.ticketCount === 0 && <p className="mt-2">&ldquo;{p.name}&rdquo; is empty and will be permanently deleted. This can&rsquo;t be undone.</p>}
+                      </>
+                    ),
+                    confirmText: 'Delete project',
+                    variant: 'danger',
+                    requireText: p.name,
+                  });
+                  if (ok) deleteMut.mutate({ id: p.id, confirm: p.name });
+                }}
+                  className="text-slate-300 hover:text-red-500 transition-colors cursor-pointer">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
+                </button>
               </div>
               <p className="text-xs text-slate-500 mt-1.5 flex-1">{p.description || '—'}</p>
               <div className="flex items-center gap-1.5 mt-3 flex-wrap">

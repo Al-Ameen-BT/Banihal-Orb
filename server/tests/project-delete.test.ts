@@ -4,10 +4,12 @@ import { prisma } from '../src/config/database';
 import { ticketPrisma } from '../src/config/ticketDatabase';
 
 // DELETE /ticketing/projects/:id — the typed-name confirmation and the compliance
-// guard. Tickets are NEVER deletable, so a project that still holds any ticket
-// cannot be deleted either; only EMPTY projects can go.
+// relocation. Tickets are NEVER deletable, so deleting a project that still holds
+// any RELOCATES them into a hidden "Retained tickets" bucket instead of refusing:
+// the project row disappears, the tickets (and every overall count) survive. Only
+// an empty project is destroyed outright.
 //
-// Skipped LOUDLY without a *_test ticket store: the refusal and the cross-database
+// Skipped LOUDLY without a *_test ticket store: the relocation and the cross-database
 // audit write are the whole point, and a green tick with no database would claim
 // guarantees nothing checked.
 const ready = ticketTestDbReady();
@@ -54,7 +56,7 @@ describe.skipIf(!ready)('DELETE /ticketing/projects/:id', () => {
     expect(await ticketPrisma.projects.count({ where: { id: projectId } })).toBe(1);
   });
 
-  it('refuses to delete a project that still holds tickets (compliance), and everything survives', async () => {
+  it('deletes a project holding tickets by MOVING them to a hidden retained bucket — nothing is destroyed', async () => {
     const org = await createTestOrg('Cascade Project Org');
     await createTestUser(org.id, 'cascade-proj@example.com', 'ORG_ADMIN');
     const cookies = await loginAs('cascade-proj@example.com');
@@ -69,15 +71,31 @@ describe.skipIf(!ready)('DELETE /ticketing/projects/:id', () => {
     expect(await ticketPrisma.tickets.count({ where: { projectId } })).toBe(2);
 
     const res = await del(cookies, projectId, name);
-    expect(res.status, JSON.stringify(res.body)).toBe(409);
-    expect(res.body.code).toBe('PROJECT_HAS_TICKETS');
+    expect(res.status, JSON.stringify(res.body)).toBe(204);
 
-    // Nothing was destroyed on the way to the refusal.
-    expect(await ticketPrisma.projects.count({ where: { id: projectId } })).toBe(1);
+    // The project row itself is gone…
+    expect(await ticketPrisma.projects.count({ where: { id: projectId } })).toBe(0);
+    // …but its tickets are NOT: they were relocated wholesale.
     expect(await ticketPrisma.tickets.count({ where: { id: { in: [a.id, b.id] } } })).toBe(2);
-    // Comments and activity survive along with the tickets.
+
+    const bucket = await ticketPrisma.projects.findFirst({
+      where: { name: 'Retained tickets' }, select: { id: true, deletedAt: true },
+    });
+    expect(bucket, 'a hidden retained bucket must exist').not.toBeNull();
+    expect(bucket!.deletedAt, 'the bucket is invisible: deletedAt marks it hidden').not.toBeNull();
+    expect(await ticketPrisma.tickets.count({ where: { projectId: bucket!.id, id: { in: [a.id, b.id] } } })).toBe(2);
+
+    // Comments and activity belong to the tickets, so they survive the move.
     expect(await ticketPrisma.comments.count({ where: { ticketId: a.id } })).toBeGreaterThan(0);
     expect(await ticketPrisma.activities.count({ where: { ticketId: a.id } })).toBeGreaterThan(0);
+
+    // The frontend project list hides the bucket AND the deleted project (asserted
+    // by id — earlier sessions leave same-named rows behind in the shared store).
+    const list = await request(app).get('/api/ticketing/projects').set('Cookie', cookies);
+    expect(list.status).toBe(200);
+    const ids = (list.body as { projects: Array<{ id: string; name: string }> }).projects.map((p) => p.id);
+    expect(ids).not.toContain(projectId);
+    expect((list.body as { projects: Array<{ id: string; name: string }> }).projects.map((p) => p.name)).not.toContain('Retained tickets');
   });
 
   it('deletes an EMPTY project when the name matches', async () => {
@@ -102,9 +120,9 @@ describe.skipIf(!ready)('DELETE /ticketing/projects/:id', () => {
     expect(await ticketPrisma.projects.count({ where: { id: projectId } })).toBe(0);
   });
 
-  it('refuses an escalated project too — "holds tickets" covers every ticket', async () => {
+  it('relocates an escalated project too — "holds tickets" covers every ticket', async () => {
     // Escalated or not, a ticket is a ticket: compliance means it cannot be deleted,
-    // so a project holding one cannot be deleted either.
+    // so when its project goes, the escalated ticket is retained too.
     const org = await createTestOrg('Escalated Project Org');
     await createTestUser(org.id, 'esc-proj@example.com', 'ORG_ADMIN');
     const cookies = await loginAs('esc-proj@example.com');
@@ -115,17 +133,19 @@ describe.skipIf(!ready)('DELETE /ticketing/projects/:id', () => {
     await ticketPrisma.tickets.update({ where: { id: ticket.id }, data: { labels: ['escalated'] } });
 
     const res = await del(cookies, projectId, name);
-    expect(res.status, JSON.stringify(res.body)).toBe(409);
-    expect(res.body.code).toBe('PROJECT_HAS_TICKETS');
+    expect(res.status, JSON.stringify(res.body)).toBe(204);
 
-    // Nothing was destroyed on the way to the refusal.
-    expect(await ticketPrisma.projects.count({ where: { id: projectId } })).toBe(1);
+    const bucket = await ticketPrisma.projects.findFirst({
+      where: { name: 'Retained tickets' }, select: { id: true },
+    });
+    expect(bucket).not.toBeNull();
     expect(await ticketPrisma.tickets.count({ where: { id: ticket.id } })).toBe(1);
+    expect(await ticketPrisma.tickets.count({ where: { id: ticket.id, projectId: bucket!.id } })).toBe(1);
   });
 
   it('leaves a PROJECT_DELETED audit row that OUTLIVES the project', async () => {
-    // Only empty projects can be deleted, so the audit row records a zero-ticket
-    // deletion; it is the only surviving record the project ever existed.
+    // Empty deletion: the audit row records a zero-ticket deletion; it is the only
+    // surviving record the project ever existed.
     const org = await createTestOrg('Audit Project Org');
     const admin = await createTestUser(org.id, 'audit-proj@example.com', 'ORG_ADMIN');
     const cookies = await loginAs('audit-proj@example.com');
@@ -139,9 +159,33 @@ describe.skipIf(!ready)('DELETE /ticketing/projects/:id', () => {
       where: { action: 'PROJECT_DELETED', performedById: admin.id, targetId: projectId },
     });
     expect(row).not.toBeNull();
-    const meta = row?.metadata as { project?: string; tickets?: number };
+    const meta = row?.metadata as { project?: string; tickets?: number; retained?: boolean };
     expect(meta?.project).toBe(name);
     expect(meta?.tickets).toBe(0);
+    expect(meta?.retained).toBe(false);
+  });
+
+  it('records the retained tickets in the PROJECT_DELETED audit row when tickets were moved', async () => {
+    const org = await createTestOrg('Audit Retained Org');
+    const admin = await createTestUser(org.id, 'audit-retained@example.com', 'ORG_ADMIN');
+    const cookies = await loginAs('audit-retained@example.com');
+
+    const name = 'Doomed With Tickets';
+    const projectId = await createProject(cookies, name);
+    await createTicket(cookies, projectId, 'One');
+    await createTicket(cookies, projectId, 'Two');
+    await createTicket(cookies, projectId, 'Three');
+
+    await del(cookies, projectId, name).expect(204);
+
+    const row = await prisma.auditLog.findFirst({
+      where: { action: 'PROJECT_DELETED', performedById: admin.id, targetId: projectId },
+    });
+    expect(row).not.toBeNull();
+    const meta = row?.metadata as { project?: string; tickets?: number; retained?: boolean };
+    expect(meta?.project).toBe(name);
+    expect(meta?.tickets).toBe(3);
+    expect(meta?.retained).toBe(true);
   });
 
   it('404s for a project that does not exist, before checking the confirmation', async () => {
@@ -170,5 +214,19 @@ describe.skipIf(!ready)('DELETE /ticketing/projects/:id', () => {
     expect(denied.body.code).toBe('PERMISSION_DENIED');
 
     await del(employeeCookies, projectId, name).expect(204);
+  });
+
+  it('the ADMINISTRATION role may delete an empty project — the tickets.manage path', async () => {
+    // Administration computes to every key, so tickets.manage is held and the delete
+    // gate (tickets.write OR tickets.manage) passes even though the key is what the
+    // delete is now explicitly attached to.
+    const org = await createTestOrg('Admin Project Org');
+    await createTestUser(org.id, 'proj-admin@example.com', 'ADMINISTRATOR', 'administration');
+
+    const adminCookies = await loginAs('proj-admin@example.com');
+    const name = 'Administration Project';
+    const projectId = await createProject(adminCookies, name);
+
+    await del(adminCookies, projectId, name).expect(204);
   });
 });

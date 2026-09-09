@@ -147,7 +147,8 @@ CREATE TABLE IF NOT EXISTS "Projects" (
   "leadId"      UUID NOT NULL REFERENCES "Users" ("id"),
   "settings"    JSONB,
   "createdAt"   TIMESTAMPTZ NOT NULL DEFAULT now(),
-  "updatedAt"   TIMESTAMPTZ NOT NULL DEFAULT now()
+  "updatedAt"   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  "deletedAt"   TIMESTAMPTZ
 );
 
 -- ─── Tickets ────────────────────────────────────────────────────────────────

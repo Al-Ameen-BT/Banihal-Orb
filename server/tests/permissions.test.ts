@@ -131,6 +131,18 @@ describe('can() — seeded platform roles', () => {
     }
   });
 
+  it('keeps tickets.manage as the Administration-only edit-all / delete-project key', () => {
+    // The edit-all privilege lives OUTSIDE the seeded role sets on purpose: the
+    // Administrator role holds it purely via the computed administration set (all
+    // keys), and Employee / HR Admin keep the owner-based edit lock. Granting it
+    // to a seeded role would silently hand edit-ALL to a role the lock exists to
+    // restrict — so that must only ever happen explicitly from the roles matrix.
+    expect(can(reqAs('ADMINISTRATOR', [...ALL_PERMISSION_KEYS]), 'tickets.manage')).toBe(true);
+    for (const role of ['hr_admin', 'employee', 'intern'] as const) {
+      expect(can(reqAs('ADMINISTRATOR', SEEDED[role]!), 'tickets.manage'), role).toBe(false);
+    }
+  });
+
   it('gives organization DELETION to Administration and HR Admin only', () => {
     // Split from orgs.manage on purpose: renaming an org and destroying every
     // user, ticket and attachment it owns are different decisions. If this ever

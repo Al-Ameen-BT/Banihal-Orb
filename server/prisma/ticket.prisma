@@ -134,6 +134,7 @@ model Projects {
   settings       Json?
   createdAt      DateTime               @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime               @default(now()) @db.Timestamptz(6)
+  deletedAt      DateTime?              @db.Timestamptz(6)
   ProjectMembers ProjectMembers[]
   Users          Users                  @relation(fields: [leadId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   Tickets        Tickets[]

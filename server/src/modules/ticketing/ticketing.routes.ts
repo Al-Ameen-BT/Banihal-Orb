@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import * as ticketingController from './ticketing.controller';
-import { can, requireRole, requirePermission, requirePermissionIfPlatform } from '../../middleware/rbac.middleware';
+import { can, requireRole, requirePermission, requirePermissionIfPlatform, requirePermissionAny } from '../../middleware/rbac.middleware';
 import { runWithTicketDb } from '../../config/ticketDatabase';
 import { upload } from './uploads';
 
@@ -83,13 +83,16 @@ router.post('/admin/tickets/:id/claim', adminStore, requirePermission('tickets.w
 // (ORG_ADMIN-any + owner-based for platform staff) enforced in assertCanEditTicket.
 // A ticket's CREATOR may edit it whatever their role — including a plain USER — so
 // the old staffWrite gate (ORG_ADMIN/ADMINISTRATOR) would lock the creator out.
-// Platform staff may edit ONLY tickets they own (reporter or assignee), and still
-// need tickets.write to reach a mutation at all (router gate below).
-router.patch('/tickets/:id', requirePermissionIfPlatform('tickets.write'), ticketingController.updateTicket);
+// Platform staff may reach the mutation with `tickets.write` (owner-only inside
+// the lock) or `tickets.manage` (edit ANY ticket — the Administration privilege).
+router.patch('/tickets/:id', requirePermissionAny('tickets.write', 'tickets.manage'), ticketingController.updateTicket);
 // Tickets are NEVER deleted — compliance records, for platform and org admins both.
 router.post('/projects', staffWrite, ticketingController.createProject);
 router.patch('/projects/:id', staffWrite, ticketingController.updateProject);
-router.delete('/projects/:id', staffWrite, ticketingController.deleteProject);
+// Delete an EMPTY project. staffWrite's core (`tickets.write`) already covers it;
+// `tickets.manage` is added as an alternative so the Administration privilege is
+// self-sufficient — but note a project holding ANY ticket still refuses (compliance).
+router.delete('/projects/:id', requireRole('ORG_ADMIN', 'ADMINISTRATOR'), requirePermissionAny('tickets.write', 'tickets.manage'), ticketingController.deleteProject);
 // Cross-ticket activity feed (the Activity Log tab). staffRead, and scoped to the
 // caller's own store + organization inside the handler — see activityFeed.
 router.get('/activity', staffRead, ticketingController.activityFeed);

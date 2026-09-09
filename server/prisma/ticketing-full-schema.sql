@@ -96,7 +96,8 @@ CREATE TABLE "Projects" (
   "leadId"       UUID NOT NULL REFERENCES "Users"("id"),
   "settings"     JSONB,                         -- roles / roundRobin / assignees config
   "createdAt"    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  "updatedAt"    TIMESTAMPTZ NOT NULL DEFAULT now()
+  "updatedAt"    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  "deletedAt"    TIMESTAMPTZ                    -- set on the built-in "Retained tickets" bucket only
 );
 
 -- ─── Tickets ────────────────────────────────────────────────────────────────

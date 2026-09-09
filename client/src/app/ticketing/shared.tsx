@@ -979,13 +979,13 @@ export function useTicketAssignees(enabled = true) {
 /**
  * EDIT LOCK — may this caller edit/delete the ticket?
  *
- * Mirrors the server's owner-based assertCanEditTicket (UI courtesy, not a
- * boundary):
+ * Mirrors the server's assertCanEditTicket (UI courtesy, not a boundary):
  *   - ORG_ADMIN may edit any ticket their scope reaches.
  *   - A plain USER may edit only a ticket they reported.
- *   - Platform staff (ADMINISTRATOR) may edit ONLY a ticket they own — reported by
- *     them or assigned to them — AND at least one platform permission granting the
- *     write (tickets.write). Anyone else (employee/HR admin seeing a colleague's
+ *   - Platform staff (ADMINISTRATOR) may edit ANY ticket when they hold
+ *     `tickets.manage` (the Administrator privilege); otherwise, with only
+ *     `tickets.write`, they may edit a ticket they own — reported by them or
+ *     assigned to them. Anyone else (employee/HR admin seeing a colleague's
  *     ticket, an intern with no write permission) gets no edit controls. Comments
  *     are NOT gated here and stay open for every viewer.
  */
@@ -995,7 +995,7 @@ export function useCanEditTicket(ticket: Pick<TicketDTO, 'reporter' | 'assignee'
   const owns = (person: PersonRef | null): boolean =>
     !!person?.email && !!user.email && person.email.toLowerCase() === user.email.toLowerCase();
   const owned = owns(ticket.reporter) || owns(ticket.assignee);
-  if (user.role === 'ADMINISTRATOR') return owned && !!user.permissions?.includes('tickets.write');
+  if (user.role === 'ADMINISTRATOR') return !!user.permissions?.includes('tickets.manage') || (owned && !!user.permissions?.includes('tickets.write'));
   // USER (customer): only the creator can edit their own ticket.
   return owns(ticket.reporter);
 }

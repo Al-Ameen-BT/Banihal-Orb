@@ -241,15 +241,17 @@ export async function updateProject(id: string, input: z.infer<typeof UpdateProj
 }
 
 /**
- * Delete a project. Only EMPTY projects can be deleted: tickets are compliance
- * records and are never deletable, in either store, for any role — and a project
- * is only its tickets, so one holding any ticket cannot go either.
+ * Delete a project. Tickets are compliance records and are never deletable, in either
+ * store, for any role. So a project that still holds tickets is deleted by RELOCATING
+ * them into the hidden "Retained tickets" bucket first: the project row disappears
+ * from the frontend, its tickets survive (grouped under the invisible bucket), and
+ * every overall count keeps including them. An empty project is simply deleted.
  *
- * The typed-name confirmation is checked HERE, not only in the dialog: a
- * destructive endpoint that trusts the client to have asked is not confirmed, it
- * is merely inconvenient to call by hand.
+ * The typed-name confirmation is checked HERE, not only in the dialog: a destructive
+ * endpoint that trusts the client to have asked is not confirmed, it is merely
+ * inconvenient to call by hand.
  */
-export async function deleteProject(id: string, confirmName: string): Promise<{ name: string; tickets: number; attachments: number }> {
+export async function deleteProject(id: string, confirmName: string): Promise<{ name: string; tickets: number; attachments: number; retained: boolean }> {
   const project = await db.getProjectForDelete(id);
   if (!project) throw notFound('Project');
 
@@ -259,16 +261,20 @@ export async function deleteProject(id: string, confirmName: string): Promise<{ 
     });
   }
 
-  // getProjectForDelete already carries _count.Tickets: refuse while any exist.
-  if (project.tickets > 0) {
-    throw Object.assign(
-      new Error(`This project still holds ${project.tickets} ticket(s). Tickets are retained as compliance records and can never be deleted, so a project cannot be deleted while it holds any. Reassign or migrate every ticket to another project first.`),
-      { status: 409, code: 'PROJECT_HAS_TICKETS' },
-    );
+  if (project.tickets === 0) {
+    await db.deleteProjectRow(id);
+    return { name: project.name, tickets: 0, attachments: 0, retained: false };
   }
 
-  const { attachments } = await db.deleteProjectCascade(id);
-  return { name: project.name, tickets: 0, attachments };
+  // Tickets cannot be deleted, so the project they belong to cannot be deleted while
+  // it still holds them. Relocate every one to the hidden retained bucket, THEN drop
+  // the (now empty) project row — Tickets.projectId is a NO-ACTION reference, so the
+  // database itself would reject the opposite order.
+  const attachments = await db.countProjectAttachments(id);
+  const bucketId = await db.getOrCreateRetainedProject(project.leadId);
+  await db.moveProjectTickets(id, bucketId);
+  await db.deleteProjectRow(id);
+  return { name: project.name, tickets: project.tickets, attachments, retained: true };
 }
 
 // ─── SLAs ──────────────────────────────────────────────────────────────────────

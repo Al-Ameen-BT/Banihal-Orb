@@ -60,6 +60,14 @@ export const PERMISSIONS = [
   // Ticketing. The view/write split is what makes an Intern read-only.
   { key: 'tickets.view',             group: 'Ticketing',   label: 'View, create and comment on tickets' },
   { key: 'tickets.write',            group: 'Ticketing',   label: 'Change status / assignee, manage projects & SLAs' },
+  // Administration-level ticketing override. `tickets.write` alone keeps the
+  // OWNER-BASED edit lock (staff may only edit tickets they created or are
+  // assigned); holding `tickets.manage` additionally allows editing ANY ticket
+  // the caller's store scope reaches, and deletes empty projects. Seeded roles
+  // do NOT list it — `administration` is computed as every key, so the
+  // Administrator role holds it automatically, and any custom platform role can
+  // be granted it from the roles matrix without a deploy.
+  { key: 'tickets.manage',           group: 'Ticketing',   label: 'Edit all tickets; delete empty projects' },
   // ⚠ SECURITY BOUNDARY, not a feature toggle. This decides which DATABASE a
   // ticketing request reads (b2b_ticketing_admin vs the shared b2b_ticket), and
   // therefore whether access.ts applies a per-row owner filter. It is consulted

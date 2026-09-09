@@ -24,17 +24,18 @@ const notFound = (what: string) => Object.assign(new Error(`${what} not found`),
 
 // EDIT LOCK — who may modify / delete a ticket.
 //
-// The lock is OWNER-BASED now, not "anyone privileged":
+// The lock is OWNER-BASED by default:
 //   - ORG_ADMIN (customer side) may edit any ticket their scope reaches (unchanged).
 //   - A plain USER may edit a ticket they OPENED (the reporter/creator), and nothing
 //     else (unchanged).
-//   - Platform staff (ADMINISTRATOR) may edit ONLY a ticket they OWN — created by
-//     them (reporter) or assigned to them (assignee) — and only while they hold the
-//     `tickets.write` IAM permission. The old blanket "every ADMINISTRATOR edits
-//     every ticket" is gone: an employee who merely sees the ticket in the shared
-//     queue cannot touch it, and an intern (no tickets.write) cannot edit even their
-//     own. Commenting is deliberately NOT gated here — that route stays open to
-//     everyone the scope lets in.
+//   - Platform staff (ADMINISTRATOR) holding ONLY `tickets.write` may edit a ticket
+//     they OWN — created by them (reporter) or assigned to them (assignee). An
+//     employee who merely sees the ticket in the shared queue cannot touch it, and
+//     an intern (no tickets.write) cannot edit even their own. Holding `tickets.manage`
+//     instead removes the ownership requirement entirely — that is the Administrator
+//     privilege, and it can edit ANY ticket the scope already let them see.
+//     Commenting is deliberately NOT gated here — that route stays open to everyone
+//     the scope lets in.
 //
 // Scope was already asserted above, so this narrows the *who* on top of the
 // tenant/org *what*. Ownership is decided by comparing the ticket's reporter /
@@ -55,11 +56,12 @@ async function assertCanEditTicket(req: Request, core: { reporterId: string | nu
     });
   }
 
-  // Platform staff: the ticket must be THEIRS — created by them (reporter) or
-  // assigned to them (assignee) — and they need the `tickets.write` permission
-  // (the IAM gate; an intern has none). The router re-checks tickets.write before
-  // this runs; keeping it here too makes the lock self-contained. Commenting is
-  // deliberately NOT gated here.
+  // Platform staff. `tickets.manage` bypasses the ownership lock — the
+  // Administrator privilege for editing any ticket in scope. Everyone else keeps
+  // the owner-based rule and still needs the `tickets.write` IAM permission (the
+  // router re-checks it before this runs; keeping it here too makes the lock
+  // self-contained).
+  if (req.user.permissions.has('tickets.manage')) return;
   const owned = core.reporterId === me.id || core.assigneeId === me.id;
   if (owned && req.user.permissions.has('tickets.write')) return;
   throw Object.assign(new Error('You do not have permission to edit this ticket.'), {
@@ -257,7 +259,9 @@ export async function updateProject(req: Request, res: Response, next: NextFunct
 }
 
 /**
- * Delete a project and every ticket under it. Irreversible.
+ * Delete a project. If it holds tickets those are NOT destroyed — they are moved to
+ * the hidden "Retained tickets" project (compliance records are never deletable) —
+ * and the report below records how many were retained.
  *
  * The confirmation travels as `?confirm=<exact project name>` rather than a body:
  * DELETE bodies are unevenly supported by proxies and clients, and a query param is
@@ -269,14 +273,15 @@ export async function deleteProject(req: Request, res: Response, next: NextFunct
     const confirm = typeof req.query['confirm'] === 'string' ? req.query['confirm'] : '';
     const id = req.params['id']!;
     const report = await service.deleteProject(id, confirm);
-    // The project's tickets took their own Activities history with them; this row in
-    // the main database is now the only record that any of it existed.
+    // Tickets keep their own Activities history when they are relocated to the
+    // retained bucket; this row in the main database is the only record that their
+    // original project ever existed. `retained` tells the story on the line below.
     await audit({
       action: 'PROJECT_DELETED',
       performedById: req.user.userId,
       customerId: req.user.customerId,
       targetId: id,
-      metadata: { project: report.name, tickets: report.tickets, attachments: report.attachments },
+      metadata: { project: report.name, tickets: report.tickets, attachments: report.attachments, retained: report.retained },
     });
     // Without this the deleted project keeps coming back from the 60s reference cache
     // and stays selectable in the New Ticket form — where picking it 404s the submit.
