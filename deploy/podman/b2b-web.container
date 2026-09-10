@@ -22,7 +22,7 @@ Environment=HOSTNAME=0.0.0.0
 
 # Here rather than in the Containerfile — Podman's default OCI format discards a
 # HEALTHCHECK directive.
-HealthCmd=curl -fsS http://127.0.0.1:3000/
+HealthCmd=curl -fsS http://b2b-app:3000/
 HealthInterval=30s
 HealthRetries=3
 HealthStartPeriod=20s

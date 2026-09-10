@@ -31,10 +31,6 @@ Environment=PORT=3001
 
 Volume=b2b-uploads.volume:/app/uploads:Z
 
-# The Analytics Agent stays on the host. (Ollama used to as well; nothing has
-# called it since the agent began managing its own model, and it is now removed.)
-AddHost=host.containers.internal:host-gateway
-
 # Trust the Analytics Agent's self-signed TLS certificate. Node reads this at
 # process START — setting it in server.env via EnvironmentFile is too late for
 # the initial TLS context, so it must be here too. The PEM is copied into the

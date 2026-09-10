@@ -5,6 +5,7 @@ Description=B2B-Site application pod (API + web)
 PodName=b2b-app
 Network=b2b.network
 IP=10.89.10.4
+AddHost=host.containers.internal:host-gateway
 
 # The API and the Next server share this pod, and therefore a network namespace.
 # That is deliberate: Next's server-side rewrite (client/next.config.js) and the
