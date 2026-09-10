@@ -137,8 +137,8 @@ jobs:
   # on the LAN and needs rights to run the Quadlet units:
   #
   #   sudo tee /etc/sudoers.d/b2b-deploy <<'EOF'
-  #   github-runner ALL=(root) NOPASSWD: /usr/bin/systemctl restart b2b-api b2b-web, \
-  #                                      /usr/bin/systemctl is-active b2b-api b2b-web
+  #   github-runner ALL=(root) NOPASSWD: /usr/bin/systemctl restart b2b-api b2b-web b2b-nginx, \
+  #                                      /usr/bin/systemctl is-active b2b-api b2b-web b2b-nginx
   #   EOF
   #
   # Scoped to exactly those commands: a runner that can run any systemctl is a
@@ -172,8 +172,11 @@ jobs:
       - name: Build images
         run: ./deploy/podman/build.sh "${GITHUB_SHA::7}"
 
+      # b2b-nginx is included so it re-resolves the b2b-api / b2b-web upstreams
+      # after the app pod is recreated; a stale cached IP here was a ticketing
+      # outage cause.
       - name: Restart services
-        run: sudo systemctl restart b2b-api b2b-web
+        run: sudo systemctl restart b2b-api b2b-web b2b-nginx
 
       # The real gate. `systemctl restart` returning 0 only means the container
       # started, not that the app inside it works — a bad DATABASE_URL exits
@@ -196,5 +199,5 @@ jobs:
           echo "↩️  Rolling back both images to $prev"
           podman tag "localhost/b2b-api:$prev" localhost/b2b-api:latest
           podman tag "localhost/b2b-web:$prev" localhost/b2b-web:latest
-          sudo systemctl restart b2b-api b2b-web
+          sudo systemctl restart b2b-api b2b-web b2b-nginx
           echo "⚠️  Rolled back. The bad images are still tagged :${GITHUB_SHA::7} for inspection."
