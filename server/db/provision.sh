@@ -81,6 +81,7 @@ apply "$TICKET_DATABASE_URL"    "$DB_DIR/b2b_ticket.sql"
 # were first deployed. Safe to re-run (ADD COLUMN IF NOT EXISTS).
 echo "🔧 Applying post-schema migrations…"
 apply "$TICKET_DATABASE_URL"    "$DB_DIR/2026-09-09-tickets-resolved-at.sql"
+apply "$TICKET_DATABASE_URL"    "$DB_DIR/2026-09-10-projects-deleted-at.sql"
 # The Administrators' isolated store is the SAME 14-table schema in its own
 # database. Upstream loads it from the `ticketingDB` pg dump, which is not in this
 # repo — b2b_ticket.sql is idempotent and non-destructive, so applying it here
@@ -98,5 +99,8 @@ PGCONNECT_TIMEOUT=5 apply "$ADMIN_TICKETING_DATABASE_URL" "$DB_DIR/b2b_ticket.sq
 # schema, so both need the column. Idempotent, non-fatal like the apply above.
 PGCONNECT_TIMEOUT=5 apply "$ADMIN_TICKETING_DATABASE_URL" "$DB_DIR/2026-09-09-tickets-resolved-at.sql" \
   || echo "⚠️  resolvedAt migration not applied to admin ticket store ($ADMIN_TICKETING_DATABASE_URL)."
+# Same for Projects.deletedAt — the admin store shares the 14-table schema too.
+PGCONNECT_TIMEOUT=5 apply "$ADMIN_TICKETING_DATABASE_URL" "$DB_DIR/2026-09-10-projects-deleted-at.sql" \
+  || echo "⚠️  deletedAt migration not applied to admin ticket store ($ADMIN_TICKETING_DATABASE_URL)."
 
 echo "✅ Provisioning complete."
