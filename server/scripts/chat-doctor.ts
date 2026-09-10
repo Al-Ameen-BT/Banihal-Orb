@@ -56,7 +56,7 @@ const tcpProbe = (host: string, p: number, ms: number): Promise<string | null> =
     const msg = (err as Error).cause instanceof Error ? (err as Error & { cause: Error }).cause.message : (err as Error).message;
     return bad(`health check failed: ${msg}`,
       /self-signed|SELF_SIGNED|certificate/i.test(msg)
-        ? 'The agent serves a self-signed certificate. Set NODE_EXTRA_CA_CERTS=/opt/B2B-Site/server/certs/agent.pem in the environment that runs the API (systemd unit / server/.env), not just in your shell.'
+        ? 'The agent serves a self-signed certificate. Set NODE_EXTRA_CA_CERTS=/opt/B2B-Site/server/cert/agent.pem in the environment that runs the API (systemd unit / server/.env), not just in your shell.'
         : 'The port answered TCP but not HTTPS. Check what is bound to it on the agent host.');
   }
 

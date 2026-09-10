@@ -75,6 +75,12 @@ apply "$DATABASE_URL"           "$DB_DIR/b2b.sql"
 apply "$CHAT_DATABASE_URL"      "$DB_DIR/b2b_chat.sql"
 apply "$TICKETING_DATABASE_URL" "$DB_DIR/b2b_ticketing.sql"
 apply "$TICKET_DATABASE_URL"    "$DB_DIR/b2b_ticket.sql"
+
+# ─── Post-schema migrations ────────────────────────────────────────────────
+# Idempotent ALTER TABLE statements for columns added after the base schemas
+# were first deployed. Safe to re-run (ADD COLUMN IF NOT EXISTS).
+echo "🔧 Applying post-schema migrations…"
+apply "$TICKET_DATABASE_URL"    "$DB_DIR/2026-09-09-tickets-resolved-at.sql"
 # The Administrators' isolated store is the SAME 14-table schema in its own
 # database. Upstream loads it from the `ticketingDB` pg dump, which is not in this
 # repo — b2b_ticket.sql is idempotent and non-destructive, so applying it here
@@ -88,5 +94,9 @@ apply "$TICKET_DATABASE_URL"    "$DB_DIR/b2b_ticket.sql"
 # database. A remote store being down must not mask four local successes.
 PGCONNECT_TIMEOUT=5 apply "$ADMIN_TICKETING_DATABASE_URL" "$DB_DIR/b2b_ticket.sql" \
   || echo "⚠️  admin ticket store ($ADMIN_TICKETING_DATABASE_URL) unreachable — skipped. The four local databases above were applied."
+# Same resolvedAt migration on the admin store — both stores share the 14-table
+# schema, so both need the column. Idempotent, non-fatal like the apply above.
+PGCONNECT_TIMEOUT=5 apply "$ADMIN_TICKETING_DATABASE_URL" "$DB_DIR/2026-09-09-tickets-resolved-at.sql" \
+  || echo "⚠️  resolvedAt migration not applied to admin ticket store ($ADMIN_TICKETING_DATABASE_URL)."
 
 echo "✅ Provisioning complete."

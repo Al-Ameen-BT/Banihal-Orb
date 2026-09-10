@@ -11,5 +11,7 @@ Thumbs.db
 # Ticket/comment attachments — user-uploaded runtime data, never source.
 # Point UPLOAD_DIR at a persistent path OUTSIDE the deploy tree in production.
 server/uploads/
+# Database backups — runtime data dumps, never source.
+backup/
 .claude
 .agents

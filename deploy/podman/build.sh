@@ -241,7 +241,11 @@ env_set "$SERVER_ENV" DATABASE_URL                 "$PGBASE/b2b?schema=public"
 env_set "$SERVER_ENV" CHAT_DATABASE_URL            "$PGBASE/b2b_chat"
 env_set "$SERVER_ENV" TICKETING_DATABASE_URL       "$PGBASE/b2b_ticketing"
 env_set "$SERVER_ENV" TICKET_DATABASE_URL          "$PGBASE/b2b_ticket"
-env_set "$SERVER_ENV" ADMIN_TICKETING_DATABASE_URL "$PGBASE/b2b_ticketing_admin"
+# The Administrators' isolated store is deployment-specific. This site points it
+# at its own `ticketing` database, NOT the script's generated b2b_ticketing_admin —
+# derive it only when unset, so a re-run never silently repoints admin ticketing
+# at a different database and "loses" its data.
+set_if_missing "$SERVER_ENV" ADMIN_TICKETING_DATABASE_URL "$PGBASE/b2b_ticketing_admin"
 env_set "$SERVER_ENV" REDIS_URL "redis://b2b-redis:6379"
 env_set "$SERVER_ENV" UPLOAD_DIR /app/uploads
 

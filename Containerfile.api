@@ -61,6 +61,9 @@ COPY server/package.json ./
 COPY server/prisma ./prisma
 # provision.sh / verify.ts, so the image can also run the DB preflight.
 COPY server/db ./db
+# Analytics Agent self-signed TLS certificate. Node needs this at process start
+# (NODE_EXTRA_CA_CERTS) to trust the agent's HTTPS endpoint.
+COPY server/cert ./cert
 
 # Attachment storage. Declared so the directory exists and is owned by `node`
 # before the volume mounts over it; UPLOAD_DIR must point here.
