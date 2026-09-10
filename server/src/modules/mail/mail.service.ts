@@ -17,31 +17,24 @@ const transporter = nodemailer.createTransport({
 });
 
 // ─── Brand palette for transactional security emails ─────────────────────────
-// Enterprise Light Theme — maximises readability, passes WCAG AAA contrast.
-// Contrast targets (light mode):
-//   INK on white     ≈ 18:1  (titles, signatures)
-//   MUTED on white   ≈  7:1  (14px body copy, WCAG AAA)
-//   FAINT on white   ≈  4.6:1 (11–12px secondary hints)
-//   FOOT on #F1F5F9  ≈  4.6:1 (footer small print)
-// The dark-mode rules in emailShell() raise every one of these onto the dark
-// surface so phone + desktop mail clients that auto-darken get the SAME readable
-// palette instead of two different, half-inverted designs.
+// Unified White Theme — forces light mode only so mobile + desktop render
+// identical. Uses black, navy, and blue text on solid white for maximum
+// readability and WCAG AAA compliance across all email clients.
 const BRAND_NAME = 'Banihal Technologies';
-const BRAND_COLOR = '#2563EB';   // accent / section tags — vibrant blue
-const BRAND_DARK = '#1D4ED8';    // header gradient end
-const BRAND_LIGHT = '#7CB4F3';   // accents on dark surfaces (dark mode)
-const INK = '#0F172A';           // headings / key values — deep navy
-const MUTED = '#64748B';         // body / label text — neutral slate
-const FAINT = '#64748B';         // secondary hints, info table labels
-const FOOT = '#64748B';          // footer small print
-const FOOT_DEAD = '#94A3B8';     // © line / decorative separators
-const PAGE_BG = '#F1F5F9';       // outer canvas — soft cool gray
-const CARD_BG = '#FFFFFF';       // card container — clean white
-const CODE_BG = '#F8FAFC';       // code display box background
+const BRAND_COLOR = '#2563EB';   // accent / section tags / links — vibrant blue
+const INK = '#000000';           // headings — solid black
+const NAVY = '#0F172A';          // body / key values / labels — deep navy
+const MUTED = '#0F172A';         // body text — deep navy
+const FAINT = '#0F172A';         // secondary hints, info table labels
+const FOOT = '#0F172A';          // footer small print
+const FOOT_DEAD = '#0F172A';     // © line / decorative separators — deep navy
+const PAGE_BG = '#FFFFFF';       // outer canvas — solid white
+const CARD_BG = '#FFFFFF';       // card container — solid white
+const CODE_BG = '#FFFFFF';       // code display box background — solid white
 const CODE_BORDER = '#CBD5E1';   // code display box border
 const NOTICE_BG = '#FFFBEB';     // security notice background
 const NOTICE_BORDER = '#F59E0B'; // security notice left border
-const NOTICE_TEXT = '#92400E';   // security notice body text
+const NOTICE_TEXT = '#0F172A';   // security notice body text — deep navy
 const COMPANY_ADDR = 'Banihal Technologies LLP · SDF Building, KITP, Kakkanchery, Kerala – 673635, India';
 const FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 const MONO = "'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace";
@@ -53,16 +46,10 @@ const appUrl = () => env.FRONTEND_URL.replace(/\/$/, '');
 const isSmtpConfigured = (): boolean => Boolean(env.SMTP_HOST && env.SMTP_USER);
 
 // Shared shell: gradient brand header, card, signature, and a footer. Wrapped in
-// a full HTML document with a dark-mode <style> block, because the phone/desktop
-// "different colour" reporting is mail clients auto-darkening the message:
-//
-//   - The `color-scheme` meta tags + :root rule tell Apple Mail / Outlook.com /
-//     modern Gmail this message is designed for BOTH palettes.
-//   - The @media (prefers-color-scheme: dark) rules flip the light surfaces to
-//     dark and brighten every text colour. `!important` is what lets them beat the
-//     inline light-mode styles — inline styles otherwise win every specificity war.
-//   - Every surface has an explicit background-color (no transparency), and text
-//     colours are chosen so the same rule survives both palettes.
+// a full HTML document that FORCES light mode only — no dark-mode media queries.
+// This ensures mobile and desktop clients render identical colors. Every surface
+// has an explicit background-color and every text colour is inline, so no client
+// can override them with auto-darkening.
 //
 // `bodyHtml` is the email-specific card content.
 function emailShell(opts: { bodyHtml: string; to: string }): string {
@@ -73,51 +60,36 @@ function emailShell(opts: { bodyHtml: string; to: string }): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="color-scheme" content="light dark">
-<meta name="supported-color-schemes" content="light dark">
+<meta name="color-scheme" content="light only">
+<meta name="supported-color-schemes" content="light only">
 <title>${BRAND_NAME} security notification</title>
 <style>
-  :root { color-scheme: light dark; }
-  body { margin: 0; padding: 0; }
-  @media (prefers-color-scheme: dark) {
-    body, .page { background-color: #0B1220 !important; }
-    .card { background-color: #1B2636 !important; border-color: #2C3A52 !important; }
-    h1 { color: #F8FAFC !important; }
-    .card p { color: #CBD5E1 !important; }
-    .card span { color: #CBD5E1 !important; }
-    .card td { color: #CBD5E1 !important; }
-    .card a { color: #A5C4F8 !important; }
-    .card li { color: #CBD5E1 !important; }
-    .code-box { background-color: #0B1220 !important; border-color: #2C3A52 !important; }
-    .code-digit { color: ${BRAND_LIGHT} !important; }
-    .card .accent-label { color: ${BRAND_LIGHT} !important; }
-    .notice { background-color: #3A2500 !important; border-left-color: #6B3D00 !important; }
-    .notice .notice-title { color: #FDBA74 !important; }
-    .notice li { color: #FDE68A !important; }
-    .foot { color: #94A3B8 !important; }
-    .foot a { color: #A5C4F8 !important; }
-    .headline { color: #DBEAFE !important; }
-  }
+  :root { color-scheme: light only; }
+  body, .page { margin: 0; padding: 0; background-color: ${PAGE_BG} !important; }
+  body { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+  table { border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+  img { -ms-interpolation-mode: bicubic; border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; }
+  p { display: block; margin: 0 0 13px 0; }
 </style>
 </head>
 <body style="margin:0;padding:0;background-color:${PAGE_BG};">
   <div class="page" style="margin:0;padding:0;background-color:${PAGE_BG};">
     <div style="max-width:600px;margin:0 auto;padding:24px 14px;font-family:${FONT};color:${INK};">
 
-      <div style="background:linear-gradient(135deg,${BRAND_COLOR},${BRAND_DARK});border-radius:16px 16px 0 0;padding:22px 28px;text-align:center;">
+      <div style="background:${NAVY};border-radius:16px 16px 0 0;padding:22px 28px;text-align:center;">
         <div style="font-size:19px;font-weight:700;letter-spacing:0.4px;color:#ffffff;">${BRAND_NAME}</div>
-        <div class="headline" style="margin-top:3px;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#DBEAFE;">Security</div>
+        <div style="margin-top:3px;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#7CB4F3;">Security</div>
       </div>
 
       <div class="card" style="background-color:${CARD_BG};border:1px solid #E2E8F0;border-top:none;border-radius:0 0 16px 16px;padding:32px 28px;">
         ${opts.bodyHtml}
-        <div style="margin-top:28px;padding-top:18px;border-top:1px solid #F1F5F9;">
-          <p style="margin:0 0 2px;font-size:14px;color:#334155;">Stay secure,</p>
+        <div style="margin-top:28px;padding-top:18px;border-top:1px solid #E2E8F0;">
+          <p style="margin:0 0 2px;font-size:14px;color:${NAVY};">Stay secure,</p>
           <p style="margin:0;font-size:14px;font-weight:700;color:${INK};">The ${BRAND_NAME} Security Team</p>
         </div>
       </div>
 
-      <div class="foot" style="padding:20px 8px 8px;text-align:center;">
+      <div style="padding:20px 8px 8px;text-align:center;">
         <p style="margin:0 0 12px;font-size:12px;">
           <a href="${base}/privacy" style="color:${BRAND_COLOR};text-decoration:none;font-weight:600;">Privacy Policy</a>
           <span style="color:${FOOT_DEAD};margin:0 8px;">&bull;</span>
@@ -245,8 +217,8 @@ export function buildMfaCodeEmail(to: string, code: string, ttlMinutes: number):
     <p class="accent-label" style="margin:0 0 8px;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:${BRAND_COLOR};">Your verification code</p>
     <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 10px;">
       <tr>
-        <td align="center" class="code-box" style="background:${CODE_BG};border:1px solid ${CODE_BORDER};border-radius:12px;padding:22px 12px;">
-          <div class="code-digit" style="font-family:${MONO};font-size:42px;font-weight:700;letter-spacing:12px;color:${BRAND_COLOR};line-height:1;-webkit-user-select:all;-moz-user-select:all;user-select:all;">${code}</div>
+        <td align="center" style="background:${CODE_BG};border:1px solid ${CODE_BORDER};border-radius:12px;padding:22px 12px;">
+          <div style="font-family:${MONO};font-size:42px;font-weight:700;letter-spacing:12px;color:${BRAND_COLOR};line-height:1;-webkit-user-select:all;-moz-user-select:all;user-select:all;">${code}</div>
         </td>
       </tr>
     </table>
@@ -321,8 +293,8 @@ export function buildInviteEmail(
     <p class="accent-label" style="margin:0 0 8px;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:${BRAND_COLOR};">Temporary password</p>
     <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 10px;">
       <tr>
-        <td align="center" class="code-box" style="background:${CODE_BG};border:1px solid ${CODE_BORDER};border-radius:12px;padding:20px 12px;">
-          <div class="code-digit" style="font-family:${MONO};font-size:22px;font-weight:700;letter-spacing:2px;color:${BRAND_COLOR};line-height:1.3;word-break:break-all;-webkit-user-select:all;-moz-user-select:all;user-select:all;">${opts.tempPassword}</div>
+        <td align="center" style="background:${CODE_BG};border:1px solid ${CODE_BORDER};border-radius:12px;padding:20px 12px;">
+          <div style="font-family:${MONO};font-size:22px;font-weight:700;letter-spacing:2px;color:${BRAND_COLOR};line-height:1.3;word-break:break-all;-webkit-user-select:all;-moz-user-select:all;user-select:all;">${opts.tempPassword}</div>
         </td>
       </tr>
     </table>
@@ -510,8 +482,8 @@ export function buildOrgApprovalEmail(
     <p class="accent-label" style="margin:0 0 8px;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:${BRAND_COLOR};">Approval code</p>
     <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 10px;">
       <tr>
-        <td align="center" class="code-box" style="background:${CODE_BG};border:1px solid ${CODE_BORDER};border-radius:12px;padding:22px 12px;">
-          <div class="code-digit" style="font-family:${MONO};font-size:42px;font-weight:700;letter-spacing:12px;color:${BRAND_COLOR};line-height:1;-webkit-user-select:all;-moz-user-select:all;user-select:all;">${code}</div>
+        <td align="center" style="background:${CODE_BG};border:1px solid ${CODE_BORDER};border-radius:12px;padding:22px 12px;">
+          <div style="font-family:${MONO};font-size:42px;font-weight:700;letter-spacing:12px;color:${BRAND_COLOR};line-height:1;-webkit-user-select:all;-moz-user-select:all;user-select:all;">${code}</div>
         </td>
       </tr>
     </table>
