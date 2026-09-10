@@ -216,7 +216,7 @@ export async function verifyApprovalCode(
   const admin = await prisma.user.findFirst({
     where: { customerId: challenge.customer.id, role: 'ORG_ADMIN' },
     orderBy: { createdAt: 'asc' },
-    select: { id: true, emailVerifiedAt: true },
+    select: { id: true, email: true, name: true, emailVerifiedAt: true },
   });
   if (!admin) throw challengeInvalid();
 
@@ -239,6 +239,9 @@ export async function verifyApprovalCode(
     customerId: challenge.customer.id,
     metadata: { orgName: challenge.customer.name },
   }).catch(() => {});
+
+  // Send a welcome email to the organization's founding admin.
+  await mailService.sendWelcomeEmail(admin.email, { name: admin.name, orgName: challenge.customer.name });
 
   return { userId: admin.id, customerId: challenge.customer.id, orgName: challenge.customer.name };
 }

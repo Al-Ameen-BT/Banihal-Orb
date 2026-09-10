@@ -109,11 +109,11 @@ function emailShell(opts: { bodyHtml: string; to: string }): string {
 </html>`;
 }
 
-// Amber "security notice" box shared by both emails.
-function noticeBox(items: string[]): string {
+// Amber notice box shared by emails — topic title is customizable.
+function noticeBox(items: string[], title = 'Security notice'): string {
   return `
     <div class="notice" style="background:${NOTICE_BG};border:none;border-left:3px solid ${NOTICE_BORDER};border-radius:8px;padding:16px 18px;">
-      <p class="notice-title" style="margin:0 0 8px;font-size:13px;font-weight:700;color:${NOTICE_TEXT};">Security notice</p>
+      <p class="notice-title" style="margin:0 0 8px;font-size:13px;font-weight:700;color:${NOTICE_TEXT};">${title}</p>
       <ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.7;color:${NOTICE_TEXT};">
         ${items.map((i) => `<li>${i}</li>`).join('')}
       </ul>
@@ -558,5 +558,161 @@ export async function sendOrgApprovalEmail(
   } catch (error) {
     console.error('Error sending org approval email:', error);
     return false;
+  }
+}
+
+// ─── Welcome email ──────────────────────────────────────────────────────────
+// Sent when a user's account becomes fully usable (email confirmed, org approved).
+export function buildWelcomeEmail(to: string, opts: { name: string; orgName: string }): { subject: string; html: string; text: string } {
+  const signIn = `${appUrl()}/login`;
+  const bodyHtml = `
+    <h1 style="margin:0 0 8px;font-size:20px;font-weight:700;color:${INK};">Welcome to ${BRAND_NAME}</h1>
+    <p style="margin:0 0 22px;font-size:14px;line-height:1.6;color:${MUTED};">
+      Hi ${opts.name}, your account in <strong>${opts.orgName}</strong> is ready. Sign in below to explore your workspace.
+    </p>
+
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 24px;">
+      <tr><td align="center">
+        <a href="${signIn}" style="display:inline-block;padding:13px 30px;background:${BRAND_COLOR};color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;border-radius:10px;">Sign in</a>
+      </td></tr>
+    </table>
+
+    ${noticeBox([
+      `<strong>Get started:</strong> sign in with your email and password.`,
+      `Explore your organization's workspace, manage settings, and collaborate with your team.`,
+      `If you have questions, reach out to your organization's administrator.`,
+    ], 'What\'s next')}`;
+
+  const text = [
+    `${BRAND_NAME} — welcome to your account`,
+    ``,
+    `Hi ${opts.name}, your account in ${opts.orgName} is ready.`,
+    ``,
+    `Sign in at: ${signIn}`,
+    `Email:     ${to}`,
+    ``,
+    `Get started by signing in with your email and password. Explore your workspace and connect with your team.`,
+    `If you have questions, reach out to your organization's administrator.`,
+    textFooter(to),
+  ].join('\n');
+
+  return { subject: `Welcome to ${BRAND_NAME}`, html: emailShell({ bodyHtml, to }), text };
+}
+
+export async function sendWelcomeEmail(to: string, opts: { name: string; orgName: string }): Promise<void> {
+  const isConfigured = isSmtpConfigured();
+  const { subject, html, text } = buildWelcomeEmail(to, opts);
+
+  if (!isConfigured) {
+    console.log(`\n=============================================`);
+    console.log(`[Email Mock - SMTP Not Configured] Welcome email for ${to}:`);
+    console.log(`   account ready in ${opts.orgName}`);
+    console.log(`=============================================\n`);
+    return;
+  }
+
+  try {
+    await transporter.sendMail({ from: `"${BRAND_NAME}" <${env.MAIL_FROM}>`, to, subject, html, text });
+    console.log(`Welcome email sent to ${to}`);
+  } catch (error) {
+    console.error('Error sending welcome email:', error);
+  }
+}
+
+// ─── Organization suspended ──────────────────────────────────────────────────
+// Sent to ORG_ADMINs when their organization is suspended.
+export function buildOrgSuspendedEmail(to: string, opts: { name: string; orgName: string }): { subject: string; html: string; text: string } {
+  const bodyHtml = `
+    <h1 style="margin:0 0 8px;font-size:20px;font-weight:700;color:${INK};">Organization suspended</h1>
+    <p style="margin:0 0 22px;font-size:14px;line-height:1.6;color:${MUTED};">
+      Hi ${opts.name}, <strong>${opts.orgName}</strong>'s access has been suspended by the ${BRAND_NAME} team. Members cannot sign in until the organization is restored.
+    </p>
+
+    ${noticeBox([
+      `Active sessions have been revoked. All data is retained and untouched.`,
+      `Members see an "access suspended" message when they try to sign in.`,
+      `If you believe this was unexpected, contact the support team immediately.`,
+    ], 'What this means')}`;
+
+  const text = [
+    `${BRAND_NAME} — organization suspended`,
+    ``,
+    `Hi ${opts.name}, ${opts.orgName}'s access has been suspended.`,
+    ``,
+    `Members cannot sign in until the organization is restored. All data is retained.`,
+    ``,
+    `If this was unexpected, contact support immediately.`,
+    textFooter(to),
+  ].join('\n');
+
+  return { subject: `Your ${BRAND_NAME} organization has been suspended`, html: emailShell({ bodyHtml, to }), text };
+}
+
+export async function sendOrgSuspendedEmail(to: string, opts: { name: string; orgName: string }): Promise<void> {
+  const isConfigured = isSmtpConfigured();
+  const { subject, html, text } = buildOrgSuspendedEmail(to, opts);
+
+  if (!isConfigured) {
+    console.log(`\n=============================================`);
+    console.log(`[Email Mock - SMTP Not Configured] Suspension notice for ${to}:`);
+    console.log(`   ${opts.orgName} has been suspended`);
+    console.log(`=============================================\n`);
+    return;
+  }
+
+  try {
+    await transporter.sendMail({ from: `"${BRAND_NAME} Security" <${env.MAIL_FROM}>`, to, subject, html, text });
+    console.log(`Org suspension email sent to ${to}`);
+  } catch (error) {
+    console.error('Error sending org suspension email:', error);
+  }
+}
+
+// ─── Organization deleted ────────────────────────────────────────────────────
+// Sent to all members when their organization is permanently deleted.
+export function buildOrgDeletedEmail(to: string, opts: { name: string; orgName: string }): { subject: string; html: string; text: string } {
+  const bodyHtml = `
+    <h1 style="margin:0 0 8px;font-size:20px;font-weight:700;color:${INK};">Account removed</h1>
+    <p style="margin:0 0 22px;font-size:14px;line-height:1.6;color:${MUTED};">
+      Hi ${opts.name}, <strong>${opts.orgName}</strong>'s account on ${BRAND_NAME} has been permanently closed. All access is immediately revoked.
+    </p>
+
+    ${noticeBox([
+      `Sign-in is disabled immediately — authentication will fail.`,
+      `All member accounts and data are retained for compliance, but no longer accessible.`,
+      `Billing has stopped and no further charges will be applied.`,
+    ], 'What this means')}`;
+
+  const text = [
+    `${BRAND_NAME} — account removed`,
+    ``,
+    `Hi ${opts.name}, ${opts.orgName}'s account has been permanently closed.`,
+    ``,
+    `All member access is revoked immediately. Billing has stopped.`,
+    ``,
+    `If you have questions, contact support.`,
+    textFooter(to),
+  ].join('\n');
+
+  return { subject: `Your ${BRAND_NAME} account has been removed`, html: emailShell({ bodyHtml, to }), text };
+}
+
+export async function sendOrgDeletedEmail(to: string, opts: { name: string; orgName: string }): Promise<void> {
+  const isConfigured = isSmtpConfigured();
+  const { subject, html, text } = buildOrgDeletedEmail(to, opts);
+
+  if (!isConfigured) {
+    console.log(`\n=============================================`);
+    console.log(`[Email Mock - SMTP Not Configured] Deletion notice for ${to}:`);
+    console.log(`   ${opts.orgName} has been permanently removed`);
+    console.log(`=============================================\n`);
+    return;
+  }
+
+  try {
+    await transporter.sendMail({ from: `"${BRAND_NAME} Security" <${env.MAIL_FROM}>`, to, subject, html, text });
+    console.log(`Org deletion email sent to ${to}`);
+  } catch (error) {
+    console.error('Error sending org deletion email:', error);
   }
 }

@@ -494,7 +494,7 @@ export async function verifyEmail(rawToken: string): Promise<{
 }> {
   const row = await prisma.emailVerificationToken.findUnique({
     where: { tokenHash: sha256(rawToken) },
-    include: { user: { select: { id: true, email: true, customerId: true, emailVerifiedAt: true } } },
+    include: { user: { select: { id: true, email: true, name: true, customerId: true, emailVerifiedAt: true } } },
   });
 
   if (!row || row.expiresAt < new Date()) {
@@ -504,7 +504,8 @@ export async function verifyEmail(rawToken: string): Promise<{
     );
   }
 
-  if (!row.user.emailVerifiedAt) {
+  const firstVerification = !row.user.emailVerifiedAt;
+  if (firstVerification) {
     await prisma.user.update({ where: { id: row.user.id }, data: { emailVerifiedAt: new Date() } });
     await prisma.auditLog.create({
       data: { action: 'EMAIL_VERIFIED', performedById: row.user.id, customerId: row.user.customerId, metadata: { email: row.user.email } },
@@ -526,6 +527,11 @@ export async function verifyEmail(rawToken: string): Promise<{
     const { approved: _approved, ...details } = org;
     const { challengeId, expiresAt } = await orgApproval.issueApprovalChallenge(details);
     return { email: row.user.email, approval: { challengeId, expiresAt, organizationName: org.name } };
+  }
+
+  // User is now active — if this is their first verification and the org is approved, send a welcome email.
+  if (firstVerification && org?.approved) {
+    await mailService.sendWelcomeEmail(row.user.email, { name: row.user.name, orgName: org.name });
   }
 
   return { email: row.user.email };

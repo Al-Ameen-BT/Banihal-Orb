@@ -1,6 +1,7 @@
 import { prisma } from '../../config/database';
 import { chatPrisma } from '../../config/chatDatabase';
 import { audit } from '../../lib/audit';
+import { sendOrgDeletedEmail } from '../mail/mail.service';
 
 // ─── Organization deletion ───────────────────────────────────────────────────
 // Irreversible, and it spans FOUR live databases (main, chat, and BOTH ticket
@@ -91,7 +92,7 @@ export async function deleteOrganization(orgId: string, actorId: string, opts: D
   // User rows are gone, and it is needed for the audit metadata of this deletion.
   const org = await prisma.customer.findUniqueOrThrow({
     where: { id: orgId },
-    select: { name: true, slug: true, plan: true, users: { select: { email: true } } },
+    select: { name: true, slug: true, plan: true, users: { select: { email: true, name: true } } },
   });
   const snap = { ...org, emails: org.users.map((u) => u.email.toLowerCase()) };
 
@@ -124,6 +125,11 @@ export async function deleteOrganization(orgId: string, actorId: string, opts: D
   // LAST. Cascades users, feature flags, service requests, escalations and
   // customer services. Any failure above left the org intact and retryable.
   await prisma.customer.delete({ where: { id: orgId } });
+
+  // Send farewell emails to all members using the pre-delete snapshot.
+  for (const u of org.users) {
+    await sendOrgDeletedEmail(u.email, { name: u.name, orgName: snap.name });
+  }
 
   return report;
 }

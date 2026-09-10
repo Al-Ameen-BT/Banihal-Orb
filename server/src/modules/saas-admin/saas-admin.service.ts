@@ -6,7 +6,7 @@ import { signImpersonationToken, isProviderAdminEmail } from '../auth/auth.servi
 import { DEFAULT_SCOPE_ACTIONS, SADMIN_FEED_ACTIONS } from '../../config/auditActions';
 import { audit } from '../../lib/audit';
 import { assertRoleAssignable } from '../platform-roles/platformRoles.service';
-import { sendInviteEmail } from '../mail/mail.service';
+import { sendInviteEmail, sendOrgSuspendedEmail } from '../mail/mail.service';
 import type { PermissionKey } from '../../config/permissions';
 import { passwordFingerprint } from '../auth/passwordReuse';
 import { syncTicketUpdated } from '../requests/ticketing.provider';
@@ -90,6 +90,19 @@ export async function updateOrg(orgId: string, input: UpdateOrgInput, actorId: s
       action: 'ORG_UPDATED', performedById: actorId, targetId: orgId, customerId: orgId,
       metadata: { orgName: updated.name, changes: input, previous: before ?? {} },
     });
+
+    // Notify ORG_ADMINs if the org was just suspended (false→true transition).
+    const justSuspended = input.suspended === true && before?.suspended === false;
+    if (justSuspended) {
+      const admins = await prisma.user.findMany({
+        where: { customerId: orgId, role: 'ORG_ADMIN' },
+        select: { email: true, name: true },
+      });
+      for (const a of admins) {
+        await sendOrgSuspendedEmail(a.email, { name: a.name, orgName: updated.name });
+      }
+    }
+
     return updated;
   } catch (err) {
     // orgCode is @unique — surface a clean conflict instead of a 500.
