@@ -9,6 +9,7 @@ import { notifyTicketAssignedInBackground } from './services/ticketNotify';
 import { mirrorComment, mirrorFields, mirrorInBackground } from './services/escalationMirror';
 import { isBreached } from './services/dashboardAggregate';
 import { prisma } from '../../config/database';
+import { getTicketDbScope } from '../../config/ticketDatabase';
 import type { Role } from '@prisma/client';
 import type { z } from 'zod';
 import type { CreateTicketSchema, UpdateTicketSchema, CreateProjectSchema, UpdateProjectSchema, CreateSlaSchema } from './ticketing.schema';
@@ -32,8 +33,18 @@ export async function createTicket(actorId: string, input: CreateTicketInput, b2
 
   // Ticket-number format (admin-configurable) + the creating org's code, resolved
   // once and reused across the unique-violation retry loop below.
+  //
+  // The ADMIN store has exactly ONE clock, shared with the escalated copies that
+  // nextGlobalTicketNumber allocates — so the creator's own organization must never
+  // segment it. Do NOT relax this to "b2bCustomerId is null for administrators":
+  // User.customerId is NOT NULL and deriveOrgCode never returns empty, so
+  // resolveOrgCode ALWAYS yields a code for an authenticated creator. Without the
+  // scope guard every administrator mints a private TKT-<theirOrg>-001 series that
+  // forks away from the store's master TKT-NNN sequence.
   const numberFormat = await getTicketNumberFormat();
-  const orgCode = numberFormat.includeOrgCode ? await resolveOrgCode(b2bCustomerId) : null;
+  const orgCode = numberFormat.includeOrgCode && getTicketDbScope() !== 'admin'
+    ? await resolveOrgCode(b2bCustomerId)
+    : null;
 
   // SLA: first active SLA matching the ticket priority.
   const slaId = await db.findActiveSlaIdByPriority(input.priority);

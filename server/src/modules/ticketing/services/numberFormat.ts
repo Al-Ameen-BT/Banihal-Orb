@@ -15,8 +15,13 @@ export interface NumberFormat {
 
 // Per-org codes are the intended multi-tenant behaviour and the DEFAULT: without a
 // TicketNumberSetting row the fallback MUST NOT collapse every organization onto one
-// global TKT-NNN counter. Admin-created tickets (b2bCustomerId null) simply omit the
-// org segment, so the admin store keeps its own plain TKT-NNN sequence.
+// global TKT-NNN counter.
+//
+// What drops the org segment is the STORE SCOPE, not a null customer — see the guard
+// in ticketing.service.createTicket. resolveOrgCode below can never return null for a
+// logged-in creator (User.customerId is NOT NULL and deriveOrgCode always yields a
+// code, worst case 'ORG'), so the admin store keeps its plain TKT-NNN sequence only
+// because the create path skips resolution entirely when scoped to 'admin'.
 export const DEFAULT_FORMAT: NumberFormat = { prefix: 'TKT', includeOrgCode: true, separator: '-', padWidth: 3 };
 
 export async function getTicketNumberFormat(): Promise<NumberFormat> {
