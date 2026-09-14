@@ -1,4 +1,4 @@
-import { getTicketDb } from '../../../config/ticketDatabase';
+import { getTicketDb, ticketPrisma } from '../../../config/ticketDatabase';
 import type { NumberFormat } from '../services/numberFormat';
 
 // Ticket number generation: build a base from the configured format
@@ -25,7 +25,15 @@ export async function nextTicketNumber(fmt: NumberFormat, orgCode: string | null
 // is lower): without it the retry would recompute the same candidate forever.
 export async function nextGlobalTicketNumber(fmt: NumberFormat, orgCode: string | null, minSeq?: number): Promise<string> {
   const base = fmt.prefix + fmt.separator; // e.g. "TKT-" — every ticket in the store
-  const next = Math.max((await maxSeqForBase(base)) + 1, minSeq ?? 0);
+  let max = await maxSeqForBase(base);
+  // Fallback: when the admin store has no TKT- tickets yet, continue the
+  // sequence from the shared store so numbering stays synchronised (the shared
+  // store holds the platform's historical TKT-NNN sequence).
+  if (max === 0) {
+    const sharedMax = await maxSeqForBaseShared(base);
+    if (sharedMax > max) max = sharedMax;
+  }
+  const next = Math.max(max + 1, minSeq ?? 0);
   const segs = [fmt.prefix];
   if (fmt.includeOrgCode && orgCode) segs.push(orgCode);
   const name = segs.join(fmt.separator) + fmt.separator;
@@ -42,6 +50,21 @@ async function maxSeqForBase(base: string): Promise<number> {
   // escapes), and NOT left(col, n) (Prisma binds the JS length as bigint and
   // Postgres has no left(varchar, bigint)). Parse the trailing digits in JS.
   const rows = await getTicketDb().$queryRaw<{ ticketNumber: string }[]>`
+    SELECT "ticketNumber" FROM "Tickets" WHERE starts_with("ticketNumber", ${base})`;
+
+  let max = 0;
+  for (const r of rows) {
+    const m = /(\d+)\s*$/.exec(r.ticketNumber);
+    if (m) { const n = parseInt(m[1]!, 10); if (Number.isFinite(n) && n > max) max = n; }
+  }
+  return max;
+}
+
+// Same as maxSeqForBase but always queries the SHARED store (b2b_ticket), used
+// as a fallback when the admin store is empty so numbering continues from the
+// platform's historical sequence.
+async function maxSeqForBaseShared(base: string): Promise<number> {
+  const rows = await ticketPrisma.$queryRaw<{ ticketNumber: string }[]>`
     SELECT "ticketNumber" FROM "Tickets" WHERE starts_with("ticketNumber", ${base})`;
 
   let max = 0;
