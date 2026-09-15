@@ -1,0 +1,18 @@
+[Unit]
+Description=Mark clean shutdown for b2b IPAM repair
+# Runs at every clean shutdown to leave the marker the boot-time repair
+# service consumes. DefaultDependencies=no + Before= so ExecStop completes
+# before machine poweroff, while the filesystem is still mounted.
+DefaultDependencies=no
+Before=shutdown.target reboot.target halt.target poweroff.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# ExecStart must NOT write the marker: it runs at boot and would mask an
+# unclean previous shutdown. Only ExecStop (shutdown) touches the file.
+ExecStart=/bin/true
+ExecStop=/bin/touch /var/lib/b2b-ipam-repair/clean-shutdown.marker
+
+[Install]
+WantedBy=multi-user.target

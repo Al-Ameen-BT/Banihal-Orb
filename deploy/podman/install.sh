@@ -41,6 +41,17 @@ echo "📦 Installing container nginx config to $CONF_DIR/nginx"
 mkdir -p "$CONF_DIR/nginx"
 install -m 0644 "$ROOT/deploy/nginx/b2b-site.container.conf" "$CONF_DIR/nginx/b2b-site.conf"
 
+# ── Boot-time b2b network IPAM repair (hand-written units, NOT Quadlet) ──────
+# After an unclean shutdown netavark's sqlite IPAM can hold stale leases for the
+# pods' pinned addresses, so the pods then fail to start with an IPAM collision.
+# b2b-ipam-repair.service drops the b2b network at boot and lets the Quadlet
+# network unit recreate it fresh — but only when the last shutdown was unclean
+# (detected by an absent marker that b2b-clean-shutdown-marker.service touches on
+# every clean shutdown). These live in /etc/systemd/system, not the Quadlet dir.
+install -m 0755 "$ROOT/deploy/podman/b2b-ipam-repair.sh" /usr/local/sbin/b2b-ipam-repair.sh
+install -m 0644 "$ROOT/deploy/podman/b2b-clean-shutdown-marker.service" /etc/systemd/system/b2b-clean-shutdown-marker.service
+install -m 0644 "$ROOT/deploy/podman/b2b-ipam-repair.service" /etc/systemd/system/b2b-ipam-repair.service
+
 # ── Env files are NOT written here ───────────────────────────────────────────
 # build.sh owns /etc/b2b/{server,client,postgres}.env. This script used to seed
 # them by copying the repo's server/.env, and that is precisely how the
@@ -54,6 +65,9 @@ install -m 0644 "$ROOT/deploy/nginx/b2b-site.container.conf" "$CONF_DIR/nginx/b2
 
 echo "🔄 Reloading systemd (regenerates units from the Quadlet files)"
 systemctl daemon-reload
+
+# The IPAM repair + clean-shutdown marker units must be present at every boot.
+systemctl enable b2b-ipam-repair.service b2b-clean-shutdown-marker.service >/dev/null 2>&1 || true
 
 cat <<'EOF'
 

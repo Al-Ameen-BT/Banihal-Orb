@@ -7,7 +7,7 @@ import * as c from './adSecrets.controller';
 // Authenticated by a per-bot API key (Authorization: Bearer adk_…), not a session.
 const router = Router();
 
-const ingestLimiter = rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false });
+const ingestLimiter = rateLimit({ windowMs: 60_000, max: 240, standardHeaders: true, legacyHeaders: false });
 
 router.post('/deliver', ingestLimiter, adKeyAuth, c.deliver);
 

@@ -22,14 +22,14 @@ export const corsOptions: CorsOptions = {
 
 export const rateLimitConfig = {
   // Global cap across ALL routes, keyed by client IP. This app is a dashboard SPA: a single
-  // page load fires ~10–15 API calls, so a 100-request budget was exhausted after roughly
-  // seven page views and threw 429s during normal navigation. 1000/15min keeps a real bound
+  // page load fires ~10–15 API calls, so a low budget was exhausted after roughly
+  // seven page views and threw 429s during normal navigation. 4000/15min keeps a real bound
   // while leaving room for an active session. Brute-force protection is NOT weakened by this:
   // /auth has its own stricter authRateLimiter mounted separately (see auth.routes.ts).
-  global: { windowMs: 15 * 60 * 1000, max: 1000 },
-  auth: { windowMs: 15 * 60 * 1000, max: 100 },
+  global: { windowMs: 15 * 60 * 1000, max: 4000 },
+  auth: { windowMs: 15 * 60 * 1000, max: 400 },
   // Per authenticated user (see chatRateLimiter keyGenerator). Generous headroom
   // so an interactive assistant session is never throttled in normal use; the cap
   // only guards the LLM backend against a single runaway/abusive user.
-  chat: { windowMs: 60 * 1000, max: 60 },
+  chat: { windowMs: 60 * 1000, max: 240 },
 };

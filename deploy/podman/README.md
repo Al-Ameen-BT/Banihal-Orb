@@ -65,7 +65,9 @@ server-side rewrite and the nginx SSE bypass both find the API on
 | `b2b-nginx.pod` / `.container` | TLS + reverse proxy |
 | `b2b-pgdata.volume` | **The stateful volume.** Everything else is reconstructible. |
 | `b2b-uploads.volume` | Ticket attachments |
-| `install.sh` | Installs the Quadlet units + nginx conf. Starts nothing. |
+| `b2b-ipam-repair.service` / `.sh` | Boot-time repair: after an unclean shutdown, drops the `b2b` network so its Quadlet unit recreates it (purging stale IPAM leases that block pods' pinned IPs). Installed to `/etc/systemd/system` + `/usr/local/sbin`, not the Quadlet dir. |
+| `b2b-clean-shutdown-marker.service` | Touches `/var/lib/b2b-ipam-repair/clean-shutdown.marker` on every clean shutdown so the repair service can skip the drop. |
+| `install.sh` | Installs the Quadlet units + nginx conf + IPAM repair units. Starts nothing. |
 | `build.sh` | Writes `/etc/b2b/*.env`, builds both images, provisions + verifies the databases. Idempotent. |
 | `drop.sh` | Tears the stack down. `--all-gone` also destroys volumes and images. |
 | `migrate-db.sh` | Copies five databases off an existing host cluster. |
@@ -113,8 +115,10 @@ sudo ./deploy/podman/install.sh
 ```
 
 Idempotent. It copies the Quadlet units to `/etc/containers/systemd`, installs
-the container nginx config to `/etc/b2b/nginx/b2b-site.conf`, and runs
-`systemctl daemon-reload`.
+the container nginx config to `/etc/b2b/nginx/b2b-site.conf`, installs and
+enables the boot-time network IPAM-repair units
+([`b2b-ipam-repair.service`](#files) + [`b2b-clean-shutdown-marker.service`](#files)),
+and runs `systemctl daemon-reload`.
 
 **It writes no env files.** `build.sh` owns `/etc/b2b/{server,client,postgres}.env`
 — see §4 for why that matters.
@@ -386,6 +390,22 @@ survive and point at files that are gone. Check `Volume=b2b-uploads.volume` in
 Postgres, rate limiting falls back to in-process counters, the agent lock goes
 per-process. If the API is *down* because Redis is, that is a bug — `b2b-api`
 declares `Wants=`, not `Requires=`, for exactly this reason.
+
+**Nothing starts after a reboot and `b2b-network.service` shows
+`start-limit-hit`.** The network unit failed at boot. Do not fight the limit —
+reset and start it, then the stack (ordered `Before` it) comes up:
+
+```bash
+sudo systemctl reset-failed b2b-network.service
+sudo systemctl start b2b-network.service
+sudo systemctl start b2b-postgres b2b-redis b2b-api b2b-web b2b-nginx
+```
+
+A *stuck* limit with no trend of recoveries usually means the marked previous
+shutdown was unclean and `b2b-ipam-repair.service` hit its own issues getting the
+network dropped first; check `journalctl -b -u b2b-ipam-repair -u b2b-network`.
+The repair runs before the network unit and removes the network only when nothing
+is attached, so pods re-pin their static `IP=` addresses on a fresh network.
 
 ---
 

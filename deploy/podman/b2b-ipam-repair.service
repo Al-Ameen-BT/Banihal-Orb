@@ -1,0 +1,26 @@
+[Unit]
+Description=Clear Podman b2b network IPAM stale leases after unclean shutdown
+# The quadlet network unit (b2b.network -> b2b-network.service, podman network
+# create --ignore) recreates the network AFTER us, so we can drop and purge it
+# while nothing is attached. NEVER reference b2b-network.service with
+# Requires/After: an earlier version did, and the script's own `systemctl
+# restart/stop/start b2b-network.service` from inside the boot transaction
+# cancelled the repair job (SIGTERM) and bounced the network into systemd's
+# start-limit rule, taking the whole stack down.
+After=network-online.target
+# Must run before the marker service leaves any fresh marker inconsistent, and
+# crucially BEFORE anything attaches to / asks an IP from the b2b network, or a
+# stale lease would already block the pod. All b2b members are listed.
+Before=b2b-network.service \
+    b2b-clean-shutdown-marker.service \
+    b2b-app-pod.service b2b-postgres-pod.service b2b-redis-pod.service b2b-nginx-pod.service \
+    b2b-postgres.service b2b-redis.service b2b-api.service b2b-web.service b2b-nginx.service \
+    b2b-prometheus.service b2b-postgres-exporter.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/b2b-ipam-repair.sh
+TimeoutStartSec=120
+
+[Install]
+WantedBy=default.target
