@@ -72,7 +72,7 @@ export const ResendOrgApprovalSchema = z.object({
 export const VerifyEmailSchema = z.object({
   token: z.string().min(1, 'Token is required'),
 });
-export type VerifyEmailInput = z.infer<typeof VerifyEmailSchema>;
+
 
 export const ResendVerificationSchema = z.object({
   email: z.string().email('Invalid email address'),

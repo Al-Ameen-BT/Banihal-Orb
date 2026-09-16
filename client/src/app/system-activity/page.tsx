@@ -10,6 +10,7 @@ import Sidebar, { icons } from '@/components/ui/Sidebar';
 import { PageHeader } from '@/components/ui/PageHeader';
 import GlowButton from '@/components/ui/GlowButton';
 import { ShimmerRow } from '@/components/ui/Shimmer';
+import { roleBadgeFor } from '@/lib/display';
 
 // The cross-tenant audit trail, lifted out of the Users page into its own
 // workspace. It is gated on `system_activity.view` — held today only by
@@ -26,7 +27,7 @@ interface SystemLogEntry {
   // NULL once the performer's account has been deleted (AuditLog.performedById is
   // ON DELETE SET NULL) — the name then comes back from the metadata snapshot that
   // lib/audit.ts writes at insert time, so deleted users stay identifiable.
-  performedBy: { id: string; name: string; email: string; role: string } | null;
+  performedBy: { id: string; name: string; email: string; role: string; platformRole: { id: string; key: string; name: string } | null } | null;
   organization: { id: string; name: string; slug: string } | null;
 }
 interface SystemActivityResp { items: SystemLogEntry[]; total: number; page: number; limit: number }
@@ -46,11 +47,9 @@ const ACTION_LABEL: Record<string, { label: string; cls: string; icon: string }>
   ADMIN_USER_REMOVE:                   { label: 'User removed',     cls: 'text-red-700 bg-red-50',         icon: '🗑' },
   USER_REMOVED:                        { label: 'User removed',     cls: 'text-red-700 bg-red-50',         icon: '🗑' },
 };
-const roleBadgeCls: Record<string, string> = {
-  USER:          'text-slate-600 bg-slate-100',
-  ORG_ADMIN:     'text-violet-700 bg-violet-50',
-  ADMINISTRATOR: 'text-rose-700 bg-rose-50',
-};
+// Role badge is resolved through display.roleBadgeFor, keyed on the platform
+// role (administration / hr_admin / employee / intern), not the legacy User.role
+// enum which is ADMINISTRATOR for every staff member.
 const LOG_ACTION_OPTIONS = [
   { value: '', label: 'All events' },
   { value: 'CUSTOMER_CREATED', label: 'Org created' },
@@ -262,7 +261,10 @@ export default function SystemActivityPage() {
                                 <div className="text-xs text-slate-400">{e.performedBy?.email ?? (e.metadata?.performedByEmail as string | undefined) ?? ''}</div>
                               </td>
                               <td className="px-4 py-3">
-                                <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${roleBadgeCls[((e.performedBy?.role ?? e.metadata?.performedByRole) as string) ?? ''] ?? 'text-slate-600 bg-slate-100'}`}>{e.performedBy?.role ?? (e.metadata?.performedByRole as string | undefined) ?? '—'}</span>
+                                {(() => {
+                                  const badge = roleBadgeFor(e.performedBy?.platformRole ?? null);
+                                  return <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${badge.cls}`}>{badge.label}</span>;
+                                })()}
                               </td>
                               <td className="px-4 py-3">
                                 <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-semibold ${cfg.cls}`}>{cfg.icon} {cfg.label}</span>

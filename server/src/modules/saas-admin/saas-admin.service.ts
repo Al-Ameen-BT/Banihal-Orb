@@ -9,8 +9,6 @@ import { assertRoleAssignable } from '../platform-roles/platformRoles.service';
 import { sendInviteEmail, sendOrgSuspendedEmail } from '../mail/mail.service';
 import type { PermissionKey } from '../../config/permissions';
 import { passwordFingerprint } from '../auth/passwordReuse';
-import { syncTicketUpdated } from '../requests/ticketing.provider';
-import { getTicketNumberFormat as readTicketNumberFormat } from '../ticketing/services/numberFormat';
 import { deactivateUserInTicketStores } from '../ticketing/ticketing.client';
 import type {
   ListOrgsInput, UpdateOrgInput, ToggleFlagInput,
@@ -114,8 +112,6 @@ export async function updateOrg(orgId: string, input: UpdateOrgInput, actorId: s
 }
 
 // ─── Ticket-number format (platform-wide, ADMINISTRATOR-only) ────────────────
-export const getTicketNumberFormat = () => readTicketNumberFormat();
-
 export async function updateTicketNumberFormat(input: TicketNumberFormatInput, adminUserId: string) {
   return prisma.ticketNumberSetting.upsert({
     where: { id: 'default' },
@@ -333,9 +329,6 @@ export async function updateServiceRequest(requestId: string, adminUserId: strin
   });
 
   const updated = await prisma.serviceRequest.update({ where: { id: requestId }, data, include: { customer: { select: { id: true, name: true } } } });
-  // Mirror workflow changes (status/priority/assignee) to the external ticketing
-  // system — no-op until configured; never blocks the admin flow.
-  syncTicketUpdated(updated);
   return updated;
 }
 
@@ -673,7 +666,7 @@ export async function getSystemActivity(input: SystemActivityInput) {
   const [logs, total] = await Promise.all([
     prisma.auditLog.findMany({
       where,
-      include: { performedBy: { select: { id: true, name: true, email: true, role: true } } },
+      include: { performedBy: { select: { id: true, name: true, email: true, role: true, platformRoleId: true, platformRole: { select: { id: true, key: true, name: true } } } } },
       orderBy: { createdAt: 'desc' },
       skip: (input.page - 1) * input.limit,
       take: input.limit,

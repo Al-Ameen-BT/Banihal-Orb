@@ -1,5 +1,4 @@
 import { prisma } from '../../config/database';
-import { syncTicketCreated, syncTicketUpdated } from './ticketing.provider';
 import type { CreateRequestInput, ListMyRequestsInput, ListOrgRequestsInput } from './requests.schema';
 
 // customerId is passed explicitly because `create` is not auto-scoped by the
@@ -27,8 +26,6 @@ export async function createRequest(customerId: string, userId: string, input: C
       description: input.description ?? null,
     },
   });
-  // Mirror to the external ticketing system (no-op until configured; never blocks).
-  syncTicketCreated(created);
   return stripInternal(created);
 }
 
@@ -95,6 +92,5 @@ export async function closeMyRequest(id: string, userId: string) {
     where: { id },
     data: { status: 'CLOSED', resolvedAt: existing.resolvedAt ?? new Date() },
   });
-  syncTicketUpdated(updated);
   return stripInternal(updated);
 }

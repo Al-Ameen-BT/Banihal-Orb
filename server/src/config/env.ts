@@ -35,10 +35,6 @@ const EnvSchema = z.object({
   // Single-session enforcement: a session idle longer than this no longer blocks
   // a new login (prevents 7-day lockout when a browser closes without logout).
   SESSION_INACTIVITY_MINUTES: z.coerce.number().min(1).default(30),
-  // External ticketing API (mirror + sync). The integration is fully disabled
-  // while TICKETING_API_URL is unset — local tickets keep working standalone.
-  TICKETING_API_URL: z.string().url().optional(),
-  TICKETING_API_KEY: z.string().optional(),
   COOKIE_SECURE: z.preprocess((val) => {
     if (val === 'true') return true;
     if (val === 'false') return false;

@@ -21,10 +21,11 @@ import * as saasAdminService from './saas-admin.service';
 import * as orgDeletion from './orgDeletion.service';
 import * as orgApproval from '../auth/orgApproval.service';
 import { cached, cacheKey, TTL } from '../../lib/cache';
+import { getTicketNumberFormat as readTicketNumberFormat } from '../ticketing/services/numberFormat';
 
 export async function getTicketNumberFormat(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    res.json(await saasAdminService.getTicketNumberFormat());
+    res.json(await readTicketNumberFormat());
   } catch (err) { next(err); }
 }
 

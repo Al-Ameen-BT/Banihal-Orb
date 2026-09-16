@@ -19,65 +19,65 @@
 export const AUDIT_ACTIONS = [
   // ── Accounts & identity. Every one is defaultScope: answering "what happened
   //    to this account" must never require knowing which filter to pick.
-  { key: 'CUSTOMER_CREATED',                    group: 'Accounts', label: 'Org created',           defaultScope: true,  sadminFeed: false },
-  { key: 'ORG_DELETED',                         group: 'Accounts', label: 'Org deleted',           defaultScope: true,  sadminFeed: true  },
-  { key: 'ORG_DELETE_FAILED',                   group: 'Accounts', label: 'Org deletion failed',   defaultScope: true,  sadminFeed: true  },
-  { key: 'ORG_UPDATED',                         group: 'Accounts', label: 'Org updated',           defaultScope: true,  sadminFeed: true  },
+  { key: 'CUSTOMER_CREATED',                                                            defaultScope: true,  sadminFeed: false },
+  { key: 'ORG_DELETED',                                                                 defaultScope: true,  sadminFeed: true  },
+  { key: 'ORG_DELETE_FAILED',                                                           defaultScope: true,  sadminFeed: true  },
+  { key: 'ORG_UPDATED',                                                                 defaultScope: true,  sadminFeed: true  },
   // ── Platform admission. sadminFeed on all four: admitting an organization is a
   //    staff decision made off-platform, so the audit trail is the only record
   //    that it happened and who was in a position to make it.
-  { key: 'ORG_APPROVAL_REQUESTED',              group: 'Accounts', label: 'Approval code issued',  defaultScope: true,  sadminFeed: true  },
-  { key: 'ORG_APPROVED',                        group: 'Accounts', label: 'Org approved',          defaultScope: true,  sadminFeed: true  },
-  { key: 'ORG_APPROVAL_FAILED',                 group: 'Accounts', label: 'Approval code rejected', defaultScope: true, sadminFeed: true  },
+  { key: 'ORG_APPROVAL_REQUESTED',                                                      defaultScope: true,  sadminFeed: true  },
+  { key: 'ORG_APPROVED',                                                                defaultScope: true,  sadminFeed: true  },
+  { key: 'ORG_APPROVAL_FAILED',                                                         defaultScope: true,  sadminFeed: true  },
   // Fires when NO staff member holds `orgs.approve`, which means no one can admit
   // the org and the signup is stranded. Surfaced in the feed rather than only in
   // logs, because nothing else would reveal it until a customer complained.
-  { key: 'ORG_APPROVAL_NO_RECIPIENTS',          group: 'Accounts', label: 'No approvers available', defaultScope: true, sadminFeed: true  },
-  { key: 'USER_REGISTERED',                     group: 'Accounts', label: 'User registered',       defaultScope: true,  sadminFeed: false },
-  { key: 'USER_INVITED',                        group: 'Accounts', label: 'User invited',          defaultScope: true,  sadminFeed: false },
-  { key: 'USER_REMOVED',                        group: 'Accounts', label: 'User removed',          defaultScope: true,  sadminFeed: false },
-  { key: 'USER_ROLE_CHANGED',                   group: 'Accounts', label: 'Role changed',          defaultScope: true,  sadminFeed: false },
-  { key: 'USER_PROFILE_UPDATED',                group: 'Accounts', label: 'Profile updated',       defaultScope: false, sadminFeed: false },
-  { key: 'ADMIN_USER_UPDATE',                   group: 'Accounts', label: 'User updated',          defaultScope: true,  sadminFeed: true  },
-  { key: 'ADMIN_USER_REMOVE',                   group: 'Accounts', label: 'User removed',          defaultScope: true,  sadminFeed: true  },
-  { key: 'ADMINISTRATOR_STAFF_INVITED',         group: 'Accounts', label: 'Staff invited',         defaultScope: true,  sadminFeed: true  },
-  { key: 'ADMINISTRATOR_SADMIN_UPDATE',         group: 'Accounts', label: 'Staff updated',         defaultScope: true,  sadminFeed: true  },
-  { key: 'ADMINISTRATOR_SADMIN_REMOVE',         group: 'Accounts', label: 'Staff removed',         defaultScope: true,  sadminFeed: true  },
+  { key: 'ORG_APPROVAL_NO_RECIPIENTS',                                                  defaultScope: true,  sadminFeed: true  },
+  { key: 'USER_REGISTERED',                                                             defaultScope: true,  sadminFeed: false },
+  { key: 'USER_INVITED',                                                                defaultScope: true,  sadminFeed: false },
+  { key: 'USER_REMOVED',                                                                defaultScope: true,  sadminFeed: false },
+  { key: 'USER_ROLE_CHANGED',                                                           defaultScope: true,  sadminFeed: false },
+  { key: 'USER_PROFILE_UPDATED',                                                        defaultScope: false, sadminFeed: false },
+  { key: 'ADMIN_USER_UPDATE',                                                           defaultScope: true,  sadminFeed: true  },
+  { key: 'ADMIN_USER_REMOVE',                                                           defaultScope: true,  sadminFeed: true  },
+  { key: 'ADMINISTRATOR_STAFF_INVITED',                                                 defaultScope: true,  sadminFeed: true  },
+  { key: 'ADMINISTRATOR_SADMIN_UPDATE',                                                 defaultScope: true,  sadminFeed: true  },
+  { key: 'ADMINISTRATOR_SADMIN_REMOVE',                                                 defaultScope: true,  sadminFeed: true  },
 
   // ── Session & credentials.
-  { key: 'LOGIN',                               group: 'Session',  label: 'Logged in',             defaultScope: true,  sadminFeed: true  },
-  { key: 'LOGOUT',                              group: 'Session',  label: 'Signed out',            defaultScope: true,  sadminFeed: true  },
-  { key: 'LOGIN_TRUSTED_DEVICE',                group: 'Session',  label: 'Logged in (trusted)',   defaultScope: true,  sadminFeed: true  },
-  { key: 'LOGIN_BLOCKED_ACTIVE_SESSION',        group: 'Session',  label: 'Login blocked',         defaultScope: true,  sadminFeed: true  },
-  { key: 'MFA_CHALLENGE_SENT',                  group: 'Session',  label: 'MFA code sent',         defaultScope: false, sadminFeed: false },
-  { key: 'EMAIL_VERIFIED',                      group: 'Session',  label: 'Email confirmed',       defaultScope: true,  sadminFeed: false },
-  { key: 'PASSWORD_RESET',                      group: 'Session',  label: 'Password reset',        defaultScope: true,  sadminFeed: false },
-  { key: 'PASSWORD_CHANGED',                    group: 'Session',  label: 'Password changed',      defaultScope: true,  sadminFeed: false },
-  { key: 'ADMIN_PASSWORD_RESET',                group: 'Session',  label: 'Password reset (admin)', defaultScope: true, sadminFeed: true  },
-  { key: 'ADMINISTRATOR_SADMIN_PASSWORD_RESET', group: 'Session',  label: 'Staff password reset',  defaultScope: true,  sadminFeed: true  },
+  { key: 'LOGIN',                                                                       defaultScope: true,  sadminFeed: true  },
+  { key: 'LOGOUT',                                                                      defaultScope: true,  sadminFeed: true  },
+  { key: 'LOGIN_TRUSTED_DEVICE',                                                        defaultScope: true,  sadminFeed: true  },
+  { key: 'LOGIN_BLOCKED_ACTIVE_SESSION',                                                defaultScope: true,  sadminFeed: true  },
+  { key: 'MFA_CHALLENGE_SENT',                                                          defaultScope: false, sadminFeed: false },
+  { key: 'EMAIL_VERIFIED',                                                              defaultScope: true,  sadminFeed: false },
+  { key: 'PASSWORD_RESET',                                                              defaultScope: true,  sadminFeed: false },
+  { key: 'PASSWORD_CHANGED',                                                            defaultScope: true,  sadminFeed: false },
+  { key: 'ADMIN_PASSWORD_RESET',                                                        defaultScope: true,  sadminFeed: true  },
+  { key: 'ADMINISTRATOR_SADMIN_PASSWORD_RESET',                                         defaultScope: true,  sadminFeed: true  },
   // The single most sensitive thing staff can do — it was missing from the feed
   // that exists to show what staff do.
-  { key: 'IMPERSONATE',                         group: 'Session',  label: 'Impersonated a user',   defaultScope: true,  sadminFeed: true  },
-  { key: 'IMPERSONATE_REDEEM',                  group: 'Session',  label: 'Started an impersonated session', defaultScope: true, sadminFeed: true },
+  { key: 'IMPERSONATE',                                                                 defaultScope: true,  sadminFeed: true  },
+  { key: 'IMPERSONATE_REDEEM',                                                          defaultScope: true,  sadminFeed: true  },
 
   // ── Permissions. Mutating the IAM matrix decides who holds users.manage and
   //    credentials.reveal; it was entirely unlogged before.
-  { key: 'ROLE_CREATED',                        group: 'Permissions', label: 'Platform role created', defaultScope: true, sadminFeed: true },
-  { key: 'ROLE_UPDATED',                        group: 'Permissions', label: 'Permissions changed',   defaultScope: true, sadminFeed: true },
-  { key: 'ROLE_DELETED',                        group: 'Permissions', label: 'Platform role deleted', defaultScope: true, sadminFeed: true },
+  { key: 'ROLE_CREATED',                                                                defaultScope: true,  sadminFeed: true  },
+  { key: 'ROLE_UPDATED',                                                                defaultScope: true,  sadminFeed: true  },
+  { key: 'ROLE_DELETED',                                                                defaultScope: true,  sadminFeed: true  },
 
   // ── Credentials.
-  { key: 'AD_SECRET_DELIVERED',                 group: 'Credentials', label: 'Credential delivered', defaultScope: false, sadminFeed: false },
-  { key: 'AD_SECRET_VIEWED',                    group: 'Credentials', label: 'Credential revealed',  defaultScope: true,  sadminFeed: true  },
-  { key: 'BOT_API_KEY_GENERATED',               group: 'Credentials', label: 'Bot API key issued',   defaultScope: true,  sadminFeed: true  },
+  { key: 'AD_SECRET_DELIVERED',                                                         defaultScope: false, sadminFeed: false },
+  { key: 'AD_SECRET_VIEWED',                                                            defaultScope: true,  sadminFeed: true  },
+  { key: 'BOT_API_KEY_GENERATED',                                                       defaultScope: true,  sadminFeed: true  },
 
   // ── Services & catalog.
-  { key: 'SERVICE_ASSIGNED',                    group: 'Services', label: 'Service assigned',      defaultScope: false, sadminFeed: false },
-  { key: 'SERVICE_RENEWED',                     group: 'Services', label: 'Service renewed',       defaultScope: false, sadminFeed: false },
-  { key: 'SERVICE_REMOVED',                     group: 'Services', label: 'Service removed',       defaultScope: false, sadminFeed: false },
-  { key: 'CUSTOMER_SERVICE_UPDATED',            group: 'Services', label: 'Service updated',       defaultScope: false, sadminFeed: false },
-  { key: 'UPDATE_SERVICE_REQUEST',              group: 'Services', label: 'Request updated',       defaultScope: false, sadminFeed: false },
-  { key: 'ESCALATION_UPDATED',                  group: 'Services', label: 'Escalation updated',    defaultScope: false, sadminFeed: false },
+  { key: 'SERVICE_ASSIGNED',                                                            defaultScope: false, sadminFeed: false },
+  { key: 'SERVICE_RENEWED',                                                             defaultScope: false, sadminFeed: false },
+  { key: 'SERVICE_REMOVED',                                                             defaultScope: false, sadminFeed: false },
+  { key: 'CUSTOMER_SERVICE_UPDATED',                                                    defaultScope: false, sadminFeed: false },
+  { key: 'UPDATE_SERVICE_REQUEST',                                                      defaultScope: false, sadminFeed: false },
+  { key: 'ESCALATION_UPDATED',                                                          defaultScope: false, sadminFeed: false },
 
   // ── Ticketing. The module wrote NO audit rows at all before this: the only
   //    record of a ticket's history was the per-ticket Activities table in the
@@ -90,18 +90,18 @@ export const AUDIT_ACTIONS = [
   //    view. Deletion and escalation are not: one is irreversible, the other moves
   //    a ticket across the org → platform boundary. (Tickets themselves are never
   //    deleted — compliance records — only a project that holds no tickets can go.)
-  { key: 'TICKET_CREATED',                      group: 'Ticketing', label: 'Ticket created',       defaultScope: false, sadminFeed: false },
-  { key: 'TICKET_UPDATED',                      group: 'Ticketing', label: 'Ticket edited',        defaultScope: false, sadminFeed: false },
-  { key: 'TICKET_ESCALATED',                    group: 'Ticketing', label: 'Ticket escalated',     defaultScope: true,  sadminFeed: false },
-  { key: 'TICKET_CLAIMED',                      group: 'Ticketing', label: 'Escalated ticket claimed', defaultScope: false, sadminFeed: true },
+  { key: 'TICKET_CREATED',                                                              defaultScope: false, sadminFeed: false },
+  { key: 'TICKET_UPDATED',                                                              defaultScope: false, sadminFeed: false },
+  { key: 'TICKET_ESCALATED',                                                            defaultScope: true,  sadminFeed: false },
+  { key: 'TICKET_CLAIMED',                                                              defaultScope: false, sadminFeed: true  },
   // A project can only be deleted while it holds no tickets (tickets are compliance
   // records), so this never destroys ticket history — irreversible for the project
   // itself, and the audit row is its only surviving record.
-  { key: 'PROJECT_DELETED',                     group: 'Ticketing', label: 'Project deleted',      defaultScope: true,  sadminFeed: true  },
+  { key: 'PROJECT_DELETED',                                                             defaultScope: true,  sadminFeed: true  },
 
   // ── Configuration.
-  { key: 'ANNOUNCEMENT_CREATED',                group: 'Config',   label: 'Announcement created',  defaultScope: false, sadminFeed: false },
-  { key: 'ANNOUNCEMENT_DELETED',                group: 'Config',   label: 'Announcement deleted',  defaultScope: false, sadminFeed: false },
+  { key: 'ANNOUNCEMENT_CREATED',                                                        defaultScope: false, sadminFeed: false },
+  { key: 'ANNOUNCEMENT_DELETED',                                                        defaultScope: false, sadminFeed: false },
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number]['key'];

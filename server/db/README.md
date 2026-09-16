@@ -66,7 +66,7 @@ tables/indexes use `IF NOT EXISTS`, and enum types are wrapped in a
 
 - **`id`** columns on the cuid databases (`b2b`, `b2b_chat`, `b2b_ticketing`)
   are `TEXT` with **no default** — cuids are generated in the app layer
-  (Prisma `@default(cuid())` and `db.ts`'s `newId()` are both client-side).
+  (Prisma `@default(cuid())` is client-side).
   `b2b_ticket` uses `UUID DEFAULT gen_random_uuid()` (Sequelize convention).
 - **Datetime** columns are `TIMESTAMPTZ` so JS `Date` comparisons via
   node-postgres are timezone-correct regardless of the DB session `TimeZone`.

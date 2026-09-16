@@ -10,7 +10,7 @@
 -- Apply with:  psql -d b2b -f server/db/b2b.sql
 --
 -- `id` columns are TEXT with NO default — cuids are generated in the app
--- (Prisma @default(cuid()) and db.ts newId() are both client-side).
+-- (Prisma @default(cuid()) is client-side).
 -- ============================================================================
 
 -- ─── ENUM types ─────────────────────────────────────────────────────────────

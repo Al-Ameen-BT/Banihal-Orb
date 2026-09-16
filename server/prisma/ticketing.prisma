@@ -2,8 +2,7 @@
 // The Ticketing Tool's tickets and projects live in their own PostgreSQL
 // database (TICKETING_DATABASE_URL → b2b_ticketing). This replaces the old
 // in-memory fallback store, so tickets now SURVIVE server restarts. It remains
-// the "fallback" backend behind ticketing.client.ts until the customer's
-// external ticketing API is connected (TICKETING_API_URL).
+// the "fallback" backend behind ticketing.client.ts.
 //
 // Connects to the main platform DB via shared customerId (tenant) — and to the
 // main DB's TicketEscalation table via ticketId — enforced in the service layer

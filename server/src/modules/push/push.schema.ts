@@ -19,6 +19,3 @@ export const UnsubscribeSchema = z.object({
     message: 'endpoint must be an https:// URL',
   }),
 });
-
-export type SubscribeInput = z.infer<typeof SubscribeSchema>;
-export type UnsubscribeInput = z.infer<typeof UnsubscribeSchema>;

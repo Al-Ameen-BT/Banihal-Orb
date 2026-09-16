@@ -45,11 +45,11 @@ export const agentRoleFor = (platformRole: string): AgentRole => ROLE_MAP[platfo
 const baseUrl = (): string => (env.AGENT_BASE_URL ?? env.AGENT_URL).replace(/\/+$/, '');
 
 /** The `/v1/chat` integration is inert until both chat credentials are set. */
-export const agentChatEnabled = (): boolean =>
+const agentChatEnabled = (): boolean =>
   Boolean(env.AGENT_CHAT_CLIENT_ID && env.AGENT_CHAT_SECRET);
 
 /** `/v1/top-complaints` uses a SEPARATE credential set from chat (dc-* vs ext-*). */
-export const agentComplaintsEnabled = (): boolean =>
+const agentComplaintsEnabled = (): boolean =>
   Boolean(env.AGENT_COMPLAINTS_CLIENT_ID && env.AGENT_COMPLAINTS_SECRET);
 
 // The deadline for one reply. The agent's guide asks for >= 180s because that is
@@ -119,15 +119,13 @@ const OUR_FAULT = new Set([
  * not copied from the agent. The agent's own code always travels alongside in
  * `code`, so nothing is lost for diagnosis.
  */
-function statusFor(code: string, transportStatus: number): number {
+function statusFor(code: string): number {
   if (OUR_FAULT.has(code)) return 502;
   // Genuinely transient: the interceptor surfaces 429 as a "try again" toast.
   if (code === 'rate_limited' || code === 'server_busy') return 429;
   // We build the body ourselves and zod-validate the role first, so these mean a
   // contract drift on our side rather than bad user input — still not the user's 400.
-  if (code === 'bad_request' || code === 'bad_role') return 502;
-  if (code === 'upstream_error') return 502;
-  return transportStatus >= 500 ? 502 : 502;
+  return 502;
 }
 
 function describe(code: string): string {
@@ -195,7 +193,7 @@ async function signedFetch(
     // own status + code is the whole diagnosis (403 role_not_allowed vs 429
     // server_busy vs 401 bad_signature) and it is unrecoverable after the fact.
     console.error(`[agentApi] ${path} failed: HTTP ${res.status} ${code}`);
-    throw agentError(describe(code), statusFor(code, res.status), code, retryAfter);
+    throw agentError(describe(code), statusFor(code), code, retryAfter);
   }
   return parsed;
 }

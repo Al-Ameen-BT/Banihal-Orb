@@ -5,4 +5,3 @@ export const ListNotificationsSchema = z.object({
   // Cursor: return notifications older than this ISO timestamp.
   before: z.string().datetime().optional(),
 });
-export type ListNotificationsInput = z.infer<typeof ListNotificationsSchema>;
