@@ -427,6 +427,72 @@ export interface SlackBot {
   orgIds?: string[];
 }
 
+// ─── External ticketing API keys + webhooks ──────────────────────────────────
+// Mirrors the KeyDTO / WebhookDTO surfaces on the admin panel. Keys are
+// machine credentials; webhooks are per-key delivery endpoints.
+
+export type ExternalScope = 'tickets.view' | 'tickets.write' | 'api_keys.manage';
+export type ExternalStore  = 'default' | 'admin';
+
+export interface ExternalApiKey {
+  id: string;
+  name: string;
+  clientId: string;
+  secretHint: string;
+  scopes: ExternalScope[];
+  ticketStore: ExternalStore;
+  customerIds: string[];
+  enabled: boolean;
+  expiresAt: string | null;
+  lastUsedAt: string | null;
+  createdAt: string;
+  webhookCount: number;
+}
+
+export interface ExternalWebhook {
+  id: string;
+  keyId: string;
+  clientId: string;
+  url: string;
+  secretHint: string;
+  events: string[];
+  enabled: boolean;
+  lastTriggeredAt: string | null;
+  lastDeliveryOk: boolean | null;
+  failureCount: number;
+  createdAt: string;
+}
+
+export interface ExternalKeyCustomer {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+/** Returned by GET /api/external-admin on open. */
+export interface ExternalAdminBundle {
+  keys: ExternalApiKey[];
+  customers: ExternalKeyCustomer[];
+}
+
+/** Returned by POST /api/external-admin (secret shown once, then gone). */
+export interface ExternalIssuedKey {
+  id: string;
+  clientId: string;
+  secret: string;
+  secretHint: string;
+  scopes: ExternalScope[];
+  ticketStore: ExternalStore;
+  customerIds: string[];
+}
+
+/** Returned by POST /api/external-admin/:id/webhooks (secret shown once). */
+export interface ExternalIssuedWebhook {
+  id: string;
+  secret: string;
+  secretHint: string;
+}
+
 // A delivered temporary AD credential — status/flags only, never the secret.
 export interface AdCredentialDelivery {
   id: string;

@@ -83,6 +83,15 @@ export const PERMISSIONS = [
 
   { key: 'bots.view',                group: 'Slack Bots',  label: 'View Slack bots' },
   { key: 'bots.manage',              group: 'Slack Bots',  label: 'Connect, disconnect & generate keys' },
+
+  // External ticketing API — machine credentials consumers use to reach the
+  // /api/external surface. Issuing a key prints a raw secret exactly once, and
+  // revoking one cuts off every integration holding it, so write access is a
+  // separate decision from merely seeing the registry. Seeded roles do NOT list
+  // it — `administration` is computed as every key, and any custom platform role
+  // can be granted it from the roles matrix without a deploy.
+  { key: 'external_api.view',        group: 'External API', label: 'View API keys & webhooks' },
+  { key: 'external_api.manage',      group: 'External API', label: 'Create, revoke keys & manage webhooks' },
 ] as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[number]['key'];

@@ -185,6 +185,24 @@ export const adSecretsApi = {
   reveal: (id: string) => api.post(`/ad-secrets/${id}/reveal`),
 };
 
+// External ticketing API — ADMINISTRATOR registry: machine keys + delivery webhooks.
+// Key secrets and webhook secrets come back EXACTLY ONCE on creation (no read path).
+export const externalApiKeysApi = {
+  list: () => api.get('/external-admin'),
+  create: (data: {
+    name: string;
+    scopes: string[];
+    ticketStore: 'default' | 'admin';
+    customerIds: string[];
+    expiresAt?: string | null;
+  }) => api.post('/external-admin', data),
+  revoke: (clientId: string) => api.post(`/external-admin/${clientId}/revoke`),
+  listWebhooks: (clientId: string) => api.get(`/external-admin/${clientId}/webhooks`),
+  createWebhook: (clientId: string, data: { url: string; events: string[] }) =>
+    api.post(`/external-admin/${clientId}/webhooks`, data),
+  removeWebhook: (id: string) => api.delete(`/external-admin/webhooks/${id}`),
+};
+
 // In-app Ticketing Tool — proxied through our server to the external ticketing
 // system (fallback data served until the external API is configured).
 // Durable notifications with server-side read state — unlike the ticketing

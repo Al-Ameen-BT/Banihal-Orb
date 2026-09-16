@@ -78,6 +78,7 @@ export default function Sidebar() {
     customerServices: can('customer_services.manage'),
     catalog: can('catalog.manage'),
     bots: can('bots.view'),
+    externalApi: can('external_api.view'),
     systemActivity: can('system_activity.view'),
     systemLogs: can('system_activity.view'),
   };
@@ -125,6 +126,7 @@ export default function Sidebar() {
             {platform.customerServices && <NavItem href="/saas-admin/services" label="Customer Services" icon={icons.services} active={path === '/saas-admin/services'} />}
             {platform.catalog && <NavItem href="/saas-admin/catalog" label="Service Catalog" icon={icons.catalog} active={path === '/saas-admin/catalog'} />}
             {platform.bots && <NavItem href="/saas-admin/bots" label="Slack Bots" icon={icons.bots} active={path === '/saas-admin/bots'} />}
+            {platform.externalApi && <NavItem href="/saas-admin/api-keys" label="External API" icon={icons.key} active={path === '/saas-admin/api-keys'} />}
             {platform.systemActivity && <NavItem href="/system-activity" label="System Activity" icon={icons.activity} active={path === '/system-activity'} />}
             {platform.systemLogs && <NavItem href="/system-logs" label="System Logs" icon={icons.logs} active={path === '/system-logs'} />}
           </>

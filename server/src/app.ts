@@ -27,6 +27,7 @@ import botsRoutes from './modules/bots/bots.routes';
 import adIngestRoutes from './modules/ad-secrets/adIngest.routes';
 import adSecretsRoutes from './modules/ad-secrets/adSecrets.routes';
 import externalRoutes from './modules/external-api/external.routes';
+import externalAdminRoutes from './modules/external-api/external-admin.routes';
 import pushRoutes from './modules/push/push.routes';
 import notificationsRoutes from './modules/notifications/notifications.routes';
 import agentRoutes from './modules/agent/agent.routes';
@@ -122,6 +123,9 @@ app.use('/api/notifications', withTenant, notificationsRoutes);
 app.use('/api/saas-admin', requireRole('ADMINISTRATOR'), saasAdminRoutes);
 // Slack bot registry — administrators manage bots cross-tenant (no tenant scope).
 app.use('/api/slack-bots', requireRole('ADMINISTRATOR'), slackBotsRoutes);
+// External ticketing API key/webhook registry — administrators manage machine
+// credentials cross-tenant (no tenant scope; same mount pattern as slack-bots).
+app.use('/api/external-admin', requireRole('ADMINISTRATOR'), externalAdminRoutes);
 
 // ─── 404 handler ─────────────────────────────────────────────────────────────
 app.use((_req, res) => {

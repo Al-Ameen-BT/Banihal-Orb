@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import saasAdminRoutes from '../src/modules/saas-admin/saas-admin.routes';
 import ticketingRoutes from '../src/modules/ticketing/ticketing.routes';
 import slackBotsRoutes from '../src/modules/slack-bots/slackBots.routes';
+import externalAdminRoutes from '../src/modules/external-api/external-admin.routes';
 import { isPermissionKey } from '../src/config/permissions';
 
 // Route-level ENFORCEMENT, as opposed to permissions.test.ts which pins the
@@ -93,6 +94,16 @@ describe('slack-bot route enforcement', () => {
   it('splits view from manage', () => {
     for (const r of all) {
       expect(r.keys, `${r.method} ${r.path}`).toContain(r.method === 'GET' ? 'bots.view' : 'bots.manage');
+    }
+  });
+});
+
+describe('external-admin route enforcement', () => {
+  const all = routes(externalAdminRoutes);
+
+  it('splits view from manage', () => {
+    for (const r of all) {
+      expect(r.keys, `${r.method} ${r.path}`).toContain(r.method === 'GET' ? 'external_api.view' : 'external_api.manage');
     }
   });
 });
