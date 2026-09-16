@@ -93,6 +93,7 @@ export interface DashboardOverview {
 // ── Domain constants (mirror the ticketing service) ─────────────────────────
 
 const COMPLETED = 'completed';
+const DECLINED = 'declined';
 const PAUSED = 'client_pending';
 const OPEN_STATUSES = ['todo', 'in_progress', PAUSED];
 /** An open ticket with no update for this long counts as "stuck".
@@ -205,6 +206,7 @@ export function aggregate(feed: Feed, nowDate: Date, withUsers: boolean): Dashbo
 
   const countStatus = (s: string): number => tickets.filter((t) => t.status === s).length;
   const completed = countStatus(COMPLETED);
+  const declined = countStatus(DECLINED);
   const open = tickets.filter((t) => isOpen(t.status)).length;
   const today = tickets.filter((t) => ms(t.createdAt) >= startOfDay).length;
   const ticketStats = {
@@ -213,9 +215,10 @@ export function aggregate(feed: Feed, nowDate: Date, withUsers: boolean): Dashbo
     inProgress: countStatus('in_progress'),
     todo: countStatus('todo'),
     clientPending: countStatus(PAUSED),
-    // High priority only counts while it can still be acted on — a resolved urgent
-    // ticket is not a thing anyone needs to see on a dashboard.
-    highPriority: tickets.filter((t) => isHot(t) && t.status !== COMPLETED).length,
+    // ponytail: declined not in open or completed — excluded from highPriority
+    // and completionRate the same way completed is.
+    declined,
+    highPriority: tickets.filter((t) => isHot(t) && t.status !== COMPLETED && t.status !== DECLINED).length,
     today,
     open,
     completionRate: Math.round(pct(completed, total)),

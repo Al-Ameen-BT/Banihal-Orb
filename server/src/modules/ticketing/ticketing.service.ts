@@ -9,7 +9,7 @@ import { notifyTicketAssignedInBackground } from './services/ticketNotify';
 import { mirrorComment, mirrorFields, mirrorInBackground } from './services/escalationMirror';
 import { isBreached } from './services/dashboardAggregate';
 import { prisma } from '../../config/database';
-import { getTicketDbScope } from '../../config/ticketDatabase';
+import { getTicketDb, getTicketDbScope } from '../../config/ticketDatabase';
 import type { Role } from '@prisma/client';
 import type { z } from 'zod';
 import type { CreateTicketSchema, UpdateTicketSchema, CreateProjectSchema, UpdateProjectSchema, CreateSlaSchema } from './ticketing.schema';
@@ -215,6 +215,45 @@ export async function updateTicket(actorId: string, id: string, input: UpdateTic
     notifyTicketAssignedInBackground({ ticket, assigneeTicketUserId: input.assigneeId, actorTicketUserId: actorId });
   }
   return ticket;
+}
+
+// ─── Approval flow ─────────────────────────────────────────────────────────────
+// External-created tickets arrive with `pending:approval`. Approve or decline is
+// atomic: updateMany WHERE labels has 'pending:approval' AND status = 'todo'.
+// First valid decision wins; a concurrent second gets 0 rows → 409.
+// ponytail: no approval table; the label + conditional update is the state machine.
+
+export async function approveTicket(ticketId: string, actorTicketUserId: string): Promise<TicketDTO> {
+  const current = await db.getTicketCore(ticketId);
+  if (!current) throw notFound('Ticket');
+  const newLabels = (current.labels as string[]).filter(l => l !== 'pending:approval');
+  const res = await getTicketDb().tickets.updateMany({
+    where: { id: ticketId, status: 'todo', labels: { has: 'pending:approval' } },
+    data: { status: 'in_progress', labels: { set: newLabels } },
+  });
+  if (res.count === 0) throw Object.assign(
+    new Error('Ticket is no longer pending approval'),
+    { status: 409, code: 'TICKET_ALREADY_DECIDED' },
+  );
+  await db.writeActivity({ type: 'status_changed', ticketId, userId: actorTicketUserId, field: 'status', oldValue: 'todo', newValue: 'in_progress' });
+  return (await db.getTicketById(ticketId))!;
+}
+
+export async function declineTicket(ticketId: string, actorTicketUserId: string, reason: string | null): Promise<TicketDTO> {
+  const current = await db.getTicketCore(ticketId);
+  if (!current) throw notFound('Ticket');
+  const newLabels = (current.labels as string[]).filter(l => l !== 'pending:approval');
+  const res = await getTicketDb().tickets.updateMany({
+    where: { id: ticketId, status: 'todo', labels: { has: 'pending:approval' } },
+    data: { status: 'declined', labels: { set: newLabels } },
+  });
+  if (res.count === 0) throw Object.assign(
+    new Error('Ticket is no longer pending approval'),
+    { status: 409, code: 'TICKET_ALREADY_DECIDED' },
+  );
+  if (reason) await db.createComment(ticketId, actorTicketUserId, `Decline reason: ${reason}`);
+  await db.writeActivity({ type: 'status_changed', ticketId, userId: actorTicketUserId, field: 'status', oldValue: 'todo', newValue: 'declined' });
+  return (await db.getTicketById(ticketId))!;
 }
 
 // ─── Projects ──────────────────────────────────────────────────────────────────
@@ -476,7 +515,7 @@ export async function getStats(scope: string[] | null) {
   const inProgress = tickets.filter((t) => t.status === 'in_progress').length;
   const todo = tickets.filter((t) => t.status === 'todo').length;
   const clientPending = tickets.filter((t) => t.status === 'client_pending').length;
-  const highPriority = tickets.filter((t) => (t.priority === 'high' || t.priority === 'urgent') && t.status !== 'completed').length;
+  const highPriority = tickets.filter((t) => (t.priority === 'high' || t.priority === 'urgent') && t.status !== 'completed' && t.status !== 'declined').length;
   const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
   const today = tickets.filter((t) => t.createdAt >= startOfDay).length;
   return {

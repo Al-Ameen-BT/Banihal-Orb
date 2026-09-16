@@ -31,5 +31,7 @@ router.delete('/:id/fields/:fieldId', manage, c.deleteField);
 router.get('/:id/orgs', view, c.listOrgs);
 router.post('/:id/orgs', manage, c.assignOrg);
 router.delete('/:id/orgs/:customerId', manage, c.unassignOrg);
+// Slack approval-card delivery channel (null clears it)
+router.patch('/:id/orgs/:customerId/approval-channel', manage, c.setOrgApprovalChannel);
 
 export default router;

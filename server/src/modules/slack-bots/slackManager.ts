@@ -3,6 +3,7 @@ import { SocketModeClient } from '@slack/socket-mode';
 import { prisma } from '../../config/database';
 import { decryptSecret } from '../../config/slackCrypto';
 import { agentChat } from '../../services/agentApi';
+import { handleApprovalInteraction, type BlockActionPayload } from './slackApprovals';
 
 // ─── Slack bot manager (singleton) ───────────────────────────────────────────
 // Owns the live connections for every enabled SlackBot. Uses the Slack Web API to
@@ -91,7 +92,14 @@ class SlackManager {
 
   // Bridge an inbound Slack user message to the assistant and reply in-thread.
   private async handleEvent(conn: Conn, event: SlackEvent): Promise<void> {
-    if (!event || (event.type !== 'message' && event.type !== 'app_mention')) return;
+    if (!event) return;
+    // Approval-card button clicks (interactive events arrive with the full
+    // block_actions payload under `payload`). Side-effect free ack already sent.
+    if (event.type === 'interactive' && event.payload?.type === 'block_actions') {
+      await handleApprovalInteraction(conn, event.payload);
+      return;
+    }
+    if (event.type !== 'message' && event.type !== 'app_mention') return;
     if (event.bot_id || event.subtype || (conn.botUserId && event.user === conn.botUserId)) return; // ignore bots / edits / self
     if (event.type === 'message' && event.channel_type !== 'im') return; // only DMs (mentions handled via app_mention)
     const text = stripMention(event.text ?? '', conn.botUserId).trim();
@@ -111,6 +119,7 @@ interface SlackEvent {
   channel: string;
   channel_type?: string;
   thread_ts?: string;
+  payload?: BlockActionPayload;
 }
 
 function stripMention(text: string, botUserId?: string): string {

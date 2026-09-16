@@ -34,7 +34,9 @@ function buildPrisma() {
           // push controllers/lib), so it must not receive the auto-injected `customerId`.
           // PlatformRole is the vendor's own staff-role catalogue — platform-wide,
           // with no customerId, so it must never receive the tenant filter.
-          const globalModels = ['FeatureFlag', 'Customer', 'RefreshToken', 'Announcement', 'TicketNumberSetting', 'SlackBot', 'SlackBotFormField', 'TrustedDevice', 'PushSubscription', 'PlatformRole'];
+          // ExternalApiKey / ExternalWebhook are platform-global machine
+          // credentials, same rule.
+          const globalModels = ['FeatureFlag', 'Customer', 'RefreshToken', 'Announcement', 'TicketNumberSetting', 'SlackBot', 'SlackBotFormField', 'TrustedDevice', 'PushSubscription', 'PlatformRole', 'ExternalApiKey', 'ExternalWebhook'];
 
           if (store?.customerId && scopedOps.includes(operation) && !globalModels.includes(model)) {
             const existingWhere = (args['where'] as Record<string, unknown>) ?? {};

@@ -79,6 +79,11 @@ router.get('/customers', adminStore, ticketingController.listCustomers);
 router.get('/admin/escalation-alerts', adminStore, ticketingController.escalationAlerts);
 router.post('/admin/tickets/:id/claim', adminStore, requirePermission('tickets.write'), ticketingController.claimTicket);
 
+// Approval — ORG_ADMIN or platform staff (tickets.write). Calls the shared
+// atomic state transition: first valid decision wins, duplicates → 409.
+router.post('/tickets/:id/approve', staffWrite, ticketingController.approveTicket);
+router.post('/tickets/:id/decline', staffWrite, ticketingController.declineTicket);
+
 // Edit / delete — OPEN to every authenticated user, with the actual authorization
 // (ORG_ADMIN-any + owner-based for platform staff) enforced in assertCanEditTicket.
 // A ticket's CREATOR may edit it whatever their role — including a plain USER — so

@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { CreateBotSchema, UpdateBotSchema, FieldSchema, UpdateFieldSchema, AssignOrgSchema } from './slackBots.schema';
+import { CreateBotSchema, UpdateBotSchema, FieldSchema, UpdateFieldSchema, AssignOrgSchema, ApprovalChannelSchema } from './slackBots.schema';
 import * as service from './slackBots.service';
 
 export async function list(_req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -50,6 +50,13 @@ export async function assignOrg(req: Request, res: Response, next: NextFunction)
 }
 export async function unassignOrg(req: Request, res: Response, next: NextFunction): Promise<void> {
   try { await service.unassignOrg(req.params['id']!, req.params['customerId']!); res.status(204).end(); } catch (err) { next(err); }
+}
+export async function setOrgApprovalChannel(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { approvalChannelId } = ApprovalChannelSchema.parse(req.body);
+    await service.setOrgApprovalChannel(req.params['id']!, req.params['customerId']!, approvalChannelId);
+    res.status(204).end();
+  } catch (err) { next(err); }
 }
 export async function customers(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try { res.json({ customers: await service.listCustomers() }); } catch (err) { next(err); }

@@ -32,4 +32,13 @@ export const rateLimitConfig = {
   // so an interactive assistant session is never throttled in normal use; the cap
   // only guards the LLM backend against a single runaway/abusive user.
   chat: { windowMs: 60 * 1000, max: 240 },
+  // External ticketing API token endpoint: machine clients trading a standing
+  // secret for a short-lived JWT. Brute-forcing the secret is the only attack
+  // this guards (the secret is 43 random bytes — the limiter is belt for the
+  // suspenders), so a tight per-IP bucket is the right shape.
+  externalToken: { windowMs: 15 * 60 * 1000, max: 120 },
+  // Per-KEY resource budget for the external ticketing API (keyed by the API key,
+  // not by IP — one gateway IP serves many consumers). 600/min bounds a runaway
+  // integration without ever throttling a normal client.
+  externalKey: { windowMs: 60 * 1000, max: 600 },
 };

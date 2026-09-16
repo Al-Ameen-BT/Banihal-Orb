@@ -99,6 +99,20 @@ export const AUDIT_ACTIONS = [
   // itself, and the audit row is its only surviving record.
   { key: 'PROJECT_DELETED',                                                             defaultScope: true,  sadminFeed: true  },
 
+  // ── External ticketing API (machine credentials + approval decisions).
+  //    Key/webhook issuance is a staff credential decision — feed-worthy like
+  //    BOT_API_KEY_GENERATED. Approval decisions are defaultScope:false (high
+  //    volume, drowns the feed) but the rows are what answer "who let this
+  //    bot flow through, and when".
+  { key: 'EXTERNAL_KEY_CREATED',                                                        defaultScope: true,  sadminFeed: true  },
+  { key: 'EXTERNAL_KEY_REVOKED',                                                        defaultScope: true,  sadminFeed: true  },
+  { key: 'EXTERNAL_WEBHOOK_CREATED',                                                    defaultScope: false, sadminFeed: false },
+  { key: 'EXTERNAL_WEBHOOK_UPDATED',                                                    defaultScope: false, sadminFeed: false },
+  { key: 'EXTERNAL_WEBHOOK_DELETED',                                                    defaultScope: false, sadminFeed: false },
+  { key: 'TICKET_APPROVAL_REQUESTED',                                                   defaultScope: false, sadminFeed: false },
+  { key: 'TICKET_APPROVED',                                                             defaultScope: false, sadminFeed: false },
+  { key: 'TICKET_DECLINED',                                                             defaultScope: false, sadminFeed: false },
+
   // ── Configuration.
   { key: 'ANNOUNCEMENT_CREATED',                                                        defaultScope: false, sadminFeed: false },
   { key: 'ANNOUNCEMENT_DELETED',                                                        defaultScope: false, sadminFeed: false },

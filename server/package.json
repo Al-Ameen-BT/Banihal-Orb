@@ -21,6 +21,7 @@
     "test:watch": "vitest",
     "chat:doctor": "NODE_EXTRA_CA_CERTS=cert/agent.pem tsx scripts/chat-doctor.ts",
     "backfill:tickets": "tsx scripts/backfill-ticket-org-codes.ts",
+    "external:keys": "tsx scripts/external-api-keys.ts",
     "validate:escalations": "tsx scripts/validate-escalation-numbering.ts"
   },
   "dependencies": {

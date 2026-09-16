@@ -26,7 +26,7 @@ export async function escalateTicket(
   // Source lives in the shared (default) store.
   const source = await runWithTicketDb('default', () => db.getTicketById(sourceTicketId));
   if (!source) throw notFound('Ticket');
-  if (source.status === 'completed') {
+  if (source.status === 'completed' || source.status === 'declined') {
     throw Object.assign(new Error('Closed tickets cannot be escalated.'), { status: 409, code: 'TICKET_CLOSED' });
   }
   if (source.labels.includes('escalated')) {

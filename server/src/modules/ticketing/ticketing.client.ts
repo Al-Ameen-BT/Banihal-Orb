@@ -127,6 +127,7 @@ export async function listTickets(filters: TicketFilters = {}): Promise<TicketDT
       ...(filters.assigneeId ? { assigneeId: filters.assigneeId } : {}),
       ...(filters.escalatedOnly ? { labels: { has: 'escalated' } } : {}),
       ...(filters.since ? { createdAt: { gt: new Date(filters.since) } } : {}),
+      ...(filters.customerIds?.length ? { customerId: { in: filters.customerIds } } : {}),
       ...(and.length ? { AND: and } : {}),
     },
     include: ticketInclude,
@@ -157,6 +158,9 @@ export function getTicketCore(id: string) {
       // reporterId identifies the ticket's creator — the ownership check for the
       // edit lock (creator + admins may edit; see service.updateTicket).
       reporterId: true,
+      // labels: the approval state machine (pending:org-admin / pending:approval)
+      // keys off this label set.
+      labels: true,
     },
   });
 }

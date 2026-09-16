@@ -4,6 +4,8 @@
 // subtracts all paused time (historical + current) from wall-clock elapsed.
 
 export const PAUSED_STATUS = 'client_pending';
+// ponytail: keep a set in sync with a constant; when more terminal statuses arrive, upgrade to a Set.
+const TERMINAL_STATUSES = ['completed', 'declined'] as readonly string[];
 export const RESOLVED_STATUS = 'completed';
 
 export type TimeUnit = 'minutes' | 'hours' | 'days';
@@ -48,8 +50,8 @@ export interface SlaEvaluation {
 // resolution and response evaluators so their bar/pill behaviour stays identical.
 function evaluateAgainstBudget(t: TicketTimeFields, budget: number | null, now: Date): SlaEvaluation {
   if (budget == null) return { status: 'none', budgetSeconds: null, remainingSeconds: null, deadline: null };
-  if (t.status === RESOLVED_STATUS) {
-    // Completed → the clock is stopped; expose the budget but no live remaining/deadline.
+  if (TERMINAL_STATUSES.includes(t.status)) {
+    // Completed / declined → the clock is stopped; expose the budget but no live remaining/deadline.
     return { status: 'normal', budgetSeconds: budget, remainingSeconds: null, deadline: null };
   }
   const elapsed = effectiveElapsedSeconds(t, now);

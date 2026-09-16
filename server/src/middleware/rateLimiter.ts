@@ -134,3 +134,21 @@ export const chatRateLimiter = limiter(
     keyGenerator: (req) => req.user?.userId ?? req.ip ?? 'anonymous',
   },
 );
+
+export const externalTokenRateLimiter = limiter(
+  'external-token', rateLimitConfig.externalToken,
+  { error: 'Too many token requests', code: 'EXTERNAL_TOKEN_RATE_LIMITED' },
+);
+
+// Per API key, mounted AFTER externalAuth so the key (not the proxy IP) keys the
+// bucket. Legacy headers give the contract the external spec names:
+// X-RateLimit-Limit / X-RateLimit-Remaining / X-RateLimit-Reset.
+export const externalKeyRateLimiter = limiter(
+  'external-key', rateLimitConfig.externalKey,
+  { error: 'Too many requests for this API key', code: 'RATE_LIMITED' },
+  {
+    keyGenerator: (req) => req.external?.keyId ?? req.ip ?? 'anonymous',
+    standardHeaders: false,
+    legacyHeaders: true,
+  },
+);

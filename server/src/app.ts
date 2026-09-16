@@ -26,6 +26,7 @@ import slackBotsRoutes from './modules/slack-bots/slackBots.routes';
 import botsRoutes from './modules/bots/bots.routes';
 import adIngestRoutes from './modules/ad-secrets/adIngest.routes';
 import adSecretsRoutes from './modules/ad-secrets/adSecrets.routes';
+import externalRoutes from './modules/external-api/external.routes';
 import pushRoutes from './modules/push/push.routes';
 import notificationsRoutes from './modules/notifications/notifications.routes';
 import agentRoutes from './modules/agent/agent.routes';
@@ -67,6 +68,9 @@ app.use('/api/auth', authRoutes);
 // AD-automation machine ingest — authenticated by a per-bot API key (NOT a
 // session), so it is mounted before the cookie auth middleware.
 app.use('/api/ad-ingest', adIngestRoutes);
+// External ticketing API — machine clients authenticate with OAuth client
+// credentials (Bearer JWTs), so this must sit outside the cookie session wall.
+app.use('/api/external', externalRoutes);
 
 // ─── Health check ────────────────────────────────────────────────────────────
 // Pings the stores the app actually SERVES FROM. It used to ping b2b_ticketing —

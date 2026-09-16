@@ -180,6 +180,17 @@ export async function assignOrg(botId: string, customerId: string): Promise<void
   if (!bot) throw notFound('Bot');
   await prisma.slackBotOrg.upsert({ where: { botId_customerId: { botId, customerId } }, create: { botId, customerId }, update: {} });
 }
+// Set (or clear) the org's Slack approval-card channel. Upserts the org link too,
+// so a channel can be configured before the org is ever assigned from the UI.
+export async function setOrgApprovalChannel(botId: string, customerId: string, approvalChannelId: string | null): Promise<void> {
+  const bot = await prisma.slackBot.findUnique({ where: { id: botId }, select: { id: true } });
+  if (!bot) throw notFound('Bot');
+  await prisma.slackBotOrg.upsert({
+    where: { botId_customerId: { botId, customerId } },
+    create: { botId, customerId, approvalChannelId },
+    update: { approvalChannelId },
+  });
+}
 export async function unassignOrg(botId: string, customerId: string): Promise<void> {
   await prisma.slackBotOrg.deleteMany({ where: { botId, customerId } });
 }

@@ -24,9 +24,10 @@ export const PRIORITY_OPTIONS: { value: TicketPriority; label: string }[] = [
 export const STATUS_OPTIONS: { value: TicketStatus; label: string }[] = [
   { value: 'todo', label: 'To Do' }, { value: 'in_progress', label: 'In Progress' },
   { value: 'client_pending', label: 'Client Pending' }, { value: 'completed', label: 'Completed' },
+  { value: 'declined', label: 'Declined' },
 ];
 // Canonical column order for board / pipeline views.
-export const STATUS_ORDER: TicketStatus[] = ['todo', 'in_progress', 'client_pending', 'completed'];
+export const STATUS_ORDER: TicketStatus[] = ['todo', 'in_progress', 'client_pending', 'completed', 'declined'];
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 export const statusCfg: Record<string, { cls: string; dot: string; bar: string; label: string }> = {
@@ -34,6 +35,7 @@ export const statusCfg: Record<string, { cls: string; dot: string; bar: string; 
   in_progress:    { cls: 'text-cyan-700 bg-cyan-50 ring-cyan-600/15',         dot: 'bg-cyan-500',    bar: 'bg-cyan-400',    label: 'In Progress' },
   client_pending: { cls: 'text-amber-700 bg-amber-50 ring-amber-600/15',      dot: 'bg-amber-500',   bar: 'bg-amber-400',   label: 'Client Pending' },
   completed:      { cls: 'text-emerald-700 bg-emerald-50 ring-emerald-600/15', dot: 'bg-emerald-500', bar: 'bg-emerald-400', label: 'Completed' },
+  declined:       { cls: 'text-rose-700 bg-rose-50 ring-rose-600/15',         dot: 'bg-rose-500',    bar: 'bg-rose-400',    label: 'Declined' },
 };
 export const priorityCls: Record<string, string> = {
   urgent: 'text-red-700 bg-red-50 ring-red-600/15',

@@ -184,7 +184,7 @@ export interface SlaBreachReport {
 }
 
 // ─── In-app Ticketing Tool (rebuilt on the full b2b_ticket platform schema) ──
-export type TicketStatus = 'todo' | 'in_progress' | 'client_pending' | 'completed';
+export type TicketStatus = 'todo' | 'in_progress' | 'client_pending' | 'completed' | 'declined';
 export type TicketPriority = 'low' | 'medium' | 'high' | 'urgent';
 export type TicketType = 'bug' | 'feature' | 'task' | 'story';
 export type SlaStatus = 'none' | 'paused' | 'breached' | 'critical' | 'warning' | 'normal';

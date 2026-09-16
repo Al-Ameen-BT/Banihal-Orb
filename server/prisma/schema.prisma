@@ -132,6 +132,7 @@ model User {
   escalations         TicketEscalation[] @relation("UserEscalations")
   pushSubscriptions   PushSubscription[]
   notifications       Notification[]
+  externalApiKeys     ExternalApiKey[]
   customer            Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
   @@index([customerId])
@@ -568,6 +569,9 @@ model SlackBotOrg {
   id         String   @id @default(cuid())
   botId      String
   customerId String
+  // Channel the bot posts approval cards to for this org (external-created
+  // tickets). Null = no Slack approval delivery; the platform UI still works.
+  approvalChannelId String?
   createdAt  DateTime @default(now())
   bot        SlackBot @relation(fields: [botId], references: [id], onDelete: Cascade)
 
@@ -641,4 +645,71 @@ model AdCredentialDelivery {
   @@index([requestedById])
   @@unique([botId, ticketNumber])
   @@map("adCredentialDeliveries")
+}
+
+// ─── External ticketing API credentials (platform-global) ────────────────────
+// Standing credential for a MACHINE caller (a Slack bot program today) that
+// books tickets into the shared/admin ticket store. Issued by platform staff
+// (key CLI, later a small admin UI) — a key is not a session: it only trades a
+// secret for a short-lived access JWT via POST /oauth/external/token.
+//
+// Cross-tenant boundary: a default-store key lists the orgs (main-DB customer
+// ids) it may act for in `customerIds` — every ticket it touches must belong to
+// one of them. An admin-store key has no org axis (the admin store is already
+// platform-internal) and leaves `customerIds` empty.
+//
+// No customerId column by design: same rule as SlackBot — platform-managed,
+// cross-tenant. Kept out of the tenant auto-injection via globalModels.
+model ExternalApiKey {
+  id           String   @id @default(cuid())
+  name         String
+  // ext_ck_<random> — public identifier in the token request.
+  clientId     String   @unique
+  // SHA-256 of the plaintext secret (never stored). The system lookup key.
+  secretHash   String
+  // Last 4 of the raw secret for the management list — the raw secret is shown
+  // ONCE at issuance and is not recoverable afterwards.
+  secretHint   String
+  // ExternalScope[]: 'tickets.view' | 'tickets.write' | 'api_keys.manage'
+  scopes       Json     @default("[]")
+  // Which ticketing store the key routes to: 'default' | 'admin'
+  ticketStore  String   @default("default")
+  // Allowed orgs (main-DB customerIds) for default-store access. Empty = none.
+  customerIds  Json     @default("[]")
+  enabled      Boolean  @default(true)
+  expiresAt    DateTime?
+  lastUsedAt   DateTime?
+  createdById  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  createdBy    User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  webhooks     ExternalWebhook[]
+
+  @@index([clientId])
+  @@map("externalApiKeys")
+}
+
+// Delivery endpoint for event notifications from the external ticketing API
+// (ticket created / approved / declined). The shared HMAC secret is generated,
+// stored AES-256-GCM encrypted and returned in plaintext exactly once at
+// creation for the caller to sign outgoing requests with — it is never readable
+// again. `events` = the ExternalWebhookEvent[] this webhook subscribes to.
+model ExternalWebhook {
+  id              String          @id @default(cuid())
+  keyId           String
+  url             String
+  secretEnc       String
+  secretHint      String
+  events          Json            @default("[]")
+  enabled         Boolean         @default(true)
+  lastTriggeredAt DateTime?
+  lastDeliveryOk  Boolean?
+  failureCount    Int             @default(0)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  apiKey          ExternalApiKey  @relation(fields: [keyId], references: [id], onDelete: Cascade)
+
+  @@index([keyId])
+  @@index([enabled])
+  @@map("externalWebhooks")
 }

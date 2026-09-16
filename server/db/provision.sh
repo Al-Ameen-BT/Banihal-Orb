@@ -82,6 +82,8 @@ apply "$TICKET_DATABASE_URL"    "$DB_DIR/b2b_ticket.sql"
 echo "🔧 Applying post-schema migrations…"
 apply "$TICKET_DATABASE_URL"    "$DB_DIR/2026-09-09-tickets-resolved-at.sql"
 apply "$TICKET_DATABASE_URL"    "$DB_DIR/2026-09-10-projects-deleted-at.sql"
+apply "$DATABASE_URL"           "$DB_DIR/2026-09-16-external-api.sql"
+apply "$DATABASE_URL"           "$DB_DIR/2026-09-16-approval-channel.sql"
 # The Administrators' isolated store is the SAME 14-table schema in its own
 # database. Upstream loads it from the `ticketingDB` pg dump, which is not in this
 # repo — b2b_ticket.sql is idempotent and non-destructive, so applying it here

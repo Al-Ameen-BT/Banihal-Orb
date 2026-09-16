@@ -4,7 +4,7 @@
 
 import type { SlaStatus, SlaEvaluation } from './services/slaService';
 
-export type TicketStatus = 'todo' | 'in_progress' | 'client_pending' | 'completed';
+export type TicketStatus = 'todo' | 'in_progress' | 'client_pending' | 'completed' | 'declined';
 export type TicketPriority = 'low' | 'medium' | 'high' | 'urgent';
 export type TicketType = 'bug' | 'feature' | 'task' | 'story';
 export type ProjectPriority = 'low' | 'medium' | 'high';
@@ -117,4 +117,7 @@ export interface TicketFilters {
   since?: string;
   search?: string;
   escalatedOnly?: boolean; // admin "Escalated" category → labels has 'escalated'
+  /** Restrict to tickets linked to one of these Customers rows (external keys:
+   *  the cross-tenant axis resolved from the key's allowed orgs). */
+  customerIds?: string[];
 }

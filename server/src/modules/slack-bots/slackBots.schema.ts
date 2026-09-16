@@ -39,3 +39,6 @@ export const FieldSchema = z.object({
 export const UpdateFieldSchema = FieldSchema.partial().refine((d) => Object.keys(d).length > 0, { message: 'At least one field required' });
 
 export const AssignOrgSchema = z.object({ customerId: z.string().min(1) });
+
+// Per-org Slack approval card delivery channel. null clears it.
+export const ApprovalChannelSchema = z.object({ approvalChannelId: z.string().min(1).max(200).nullable() });

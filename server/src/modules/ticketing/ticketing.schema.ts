@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const StatusEnum = z.enum(['todo', 'in_progress', 'client_pending', 'completed']);
+export const StatusEnum = z.enum(['todo', 'in_progress', 'client_pending', 'completed', 'declined']);
 export const PriorityEnum = z.enum(['low', 'medium', 'high', 'urgent']);
 export const TypeEnum = z.enum(['bug', 'feature', 'task', 'story']);
 export const TimeUnitEnum = z.enum(['minutes', 'hours', 'days']);

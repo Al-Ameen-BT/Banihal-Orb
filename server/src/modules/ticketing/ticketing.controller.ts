@@ -15,7 +15,10 @@ import { aggregate } from './services/dashboardAggregate';
 import { cached, cacheKey, TTL, invalidate } from '../../lib/cache';
 import { audit } from '../../lib/audit';
 import { prisma } from '../../config/database';
+import { getTicketDbScope } from '../../config/ticketDatabase';
 import { notify } from '../notifications/notifications.service';
+import { emitOrgTicketEvent } from '../external-api/external-webhooks';
+import type { TicketDTO } from './ticketing.types';
 import type { AuditAction } from '../../config/auditActions';
 
 // Bridge the B2B-Site user to a ticketing staff Users row (id + mapped role).
@@ -573,6 +576,39 @@ export async function escalateTicket(req: Request, res: Response, next: NextFunc
     await auditTicket(req, 'TICKET_ESCALATED', { id: req.params['id']!, ticketNumber: escalated.ticketNumber });
     res.status(201).json(escalated);
   } catch (err) { next(err); }
+}
+
+// ─── Approval flow ─────────────────────────────────────────────────────────────
+export async function approveTicket(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const scope = await service.ticketAccessScope(req.user);
+    await service.assertTicketAccess(scope, req.params['id']!);
+    const me = await actor(req);
+    const ticket = await service.approveTicket(req.params['id']!, me.id);
+    await auditTicket(req, 'TICKET_APPROVED', ticket);
+    emitDecisionWebhookNext(ticket, req.user.customerId);
+    res.json(ticket);
+  } catch (err) { next(err); }
+}
+
+export async function declineTicket(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const scope = await service.ticketAccessScope(req.user);
+    await service.assertTicketAccess(scope, req.params['id']!);
+    const me = await actor(req);
+    const ticket = await service.declineTicket(req.params['id']!, me.id, req.body?.reason ?? null);
+    await auditTicket(req, 'TICKET_DECLINED', ticket);
+    emitDecisionWebhookNext(ticket, req.user.customerId);
+    res.json(ticket);
+  } catch (err) { next(err); }
+}
+
+// A decision made OUTSIDE the external API (platform UI) is still a status
+// change the org's webhook consumers care about. Only the shared default store
+// has consumers — the admin store is platform-internal ticketing.
+function emitDecisionWebhookNext(ticket: TicketDTO, orgCustomerId: string): void {
+  if (getTicketDbScope() !== 'default') return;
+  void emitOrgTicketEvent({ customerId: orgCustomerId, type: 'ticket.status_changed', ticket }).catch(() => undefined);
 }
 
 // ─── Notifications ───────────────────────────────────────────────────────────
