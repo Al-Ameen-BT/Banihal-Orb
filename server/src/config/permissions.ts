@@ -84,6 +84,14 @@ export const PERMISSIONS = [
   { key: 'bots.view',                group: 'Slack Bots',  label: 'View Slack bots' },
   { key: 'bots.manage',              group: 'Slack Bots',  label: 'Connect, disconnect & generate keys' },
 
+  // Squid proxy control. `squid.view` reads any organization's proxy config &
+  // status; `squid.manage` edits rules, reloads squid and rotates agent keys for
+  // any org (cross-tenant, via /api/saas-admin/squid). Neither is seeded — the
+  // Administration role computes as ALL keys automatically, so Administrators
+  // hold both, and the roles matrix decides which employee/intern-tier staff do.
+  { key: 'squid.view',               group: 'Squid Proxy', label: 'View all organizations’ squid proxies' },
+  { key: 'squid.manage',             group: 'Squid Proxy', label: 'Edit rules, reload & rotate agent keys (any org)' },
+
   // External ticketing API — machine credentials consumers use to reach the
   // /api/external surface. Issuing a key prints a raw secret exactly once, and
   // revoking one cuts off every integration holding it, so write access is a

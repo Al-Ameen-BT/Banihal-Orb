@@ -76,18 +76,31 @@ interface Decider {
   role: 'ADMINISTRATOR' | 'ORG_ADMIN' | 'USER';
 }
 
-/** users.info needs the bot's `users:read.email` scope to return profile.email. */
+/** Resolve the Slack clicker to a platform account. Prefers the Phase C slackId
+ *  binding (no API round-trip); falls back to email discovery via users.info
+ *  (needs the bot's `users:read.email` scope for profile.email). */
 async function resolveDecider(conn: { web: WebClient }, slackUserId: string): Promise<Decider | null> {
+  const linked = slackUserId
+    ? await prisma.user.findFirst({
+        where: { slackId: slackUserId },
+        select: { id: true, customerId: true, role: true },
+      })
+    : null;
+  const base = linked ?? await viaEmailDiscovery(conn, slackUserId);
+  if (!base) return null;
+  const actor = await runWithTicketDb('default', () => resolveTicketActor(base.id, base.role));
+  return { ticketUserId: actor.id, b2bUserId: base.id, customerId: base.customerId, role: base.role };
+}
+
+async function viaEmailDiscovery(conn: { web: WebClient }, slackUserId: string) {
+  if (!slackUserId) return null;
   const info = await conn.web.users.info({ user: slackUserId });
   const email = info.user?.profile?.email;
   if (!email) return null;
-  const user = await prisma.user.findFirst({
+  return prisma.user.findFirst({
     where: { email: { equals: email, mode: 'insensitive' } },
     select: { id: true, customerId: true, role: true },
   });
-  if (!user) return null;
-  const actor = await runWithTicketDb('default', () => resolveTicketActor(user.id, user.role));
-  return { ticketUserId: actor.id, b2bUserId: user.id, customerId: user.customerId, role: user.role };
 }
 
 /** Platform admins decide anything; org admins only their own org's tickets. */

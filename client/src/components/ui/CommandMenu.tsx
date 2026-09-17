@@ -52,6 +52,7 @@ export default function CommandMenu() {
       { id: 'nav-ticketing', group: 'Navigation', label: 'Open Ticketing',      shortcut: 'G T', icon: ICON.ticket,    action: () => router.push('/ticketing') },
       { id: 'nav-chat',      group: 'Navigation', label: 'Chat Assistant',      shortcut: 'G C', icon: ICON.chat,      action: () => router.push('/chat'),                 visible: () => !isStaff || can('nav.chat') },
       { id: 'nav-services',  group: 'Navigation', label: 'Services',            shortcut: 'G V', icon: ICON.services,  action: () => router.push('/services'),            visible: () => showServices },
+      { id: 'nav-squid',     group: 'Navigation', label: 'Squid Proxy',        shortcut: 'G P', icon: ICON.services, action: () => router.push('/squid'),              visible: () => !isStaff || can('squid.view') },
       { id: 'nav-users',     group: 'Navigation', label: 'Users',               shortcut: 'G U', icon: ICON.users,     action: () => router.push('/users'),               visible: () => showUsers },
       { id: 'nav-saas',      group: 'Navigation', label: 'Control Plane',       shortcut: 'G S', icon: ICON.shield,    action: () => router.push('/saas-admin'),          visible: () => can('nav.control_plane') },
       { id: 'nav-profile',   group: 'Account',    label: 'My Profile',          icon: ICON.user,   action: () => router.push('/profile') },

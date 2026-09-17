@@ -73,8 +73,8 @@ export async function createBot(input: z.infer<typeof CreateBotSchema>) {
   return toBotDTO(bot);
 }
 
-export async function updateBot(id: string, input: z.infer<typeof UpdateBotSchema>) {
-  const existing = await prisma.slackBot.findUnique({ where: { id }, select: { id: true } });
+export async function updateBot(id: string, input: z.infer<typeof UpdateBotSchema>, actor: { userId: string; customerId: string }) {
+  const existing = await prisma.slackBot.findUnique({ where: { id }, select: { id: true, name: true } });
   if (!existing) throw notFound('Bot');
   await prisma.slackBot.update({
     where: { id },
@@ -87,6 +87,14 @@ export async function updateBot(id: string, input: z.infer<typeof UpdateBotSchem
       ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
     },
   });
+  // Rotating a credential is the canonical audit-worthy exchange on a bot —
+  // a mirrored token is how a bot gets impersonated. Hint, never the token.
+  if (input.botToken !== undefined || input.appToken !== undefined) {
+    await audit({
+      action: 'BOT_TOKEN_ROTATED', performedById: actor.userId, targetId: id, customerId: actor.customerId,
+      metadata: { botName: existing.name, botToken: input.botToken !== undefined, appToken: input.appToken !== undefined },
+    });
+  }
   void slackManager.reconcile(id); // apply token/enabled changes to the live connection
   return getBot(id);
 }

@@ -104,7 +104,10 @@ export const RenewServiceSchema = z.object({
   months: z.coerce.number().int().min(1).max(60).default(12),
 });
 
-// Add a service to a customer (each org defines its own services).
+// Add a service to a customer (each org defines its own services, optionally
+// spawned from the platform catalog). Details the client already knows — name and
+// price — stay on this form; catalogServiceId is the hook that lets the saas-admin
+// service PROVISION zero-config infrastructure (e.g. kind=SQUID_PROXY catalog rows).
 export const AssignServiceSchema = z.object({
   name: z.string().min(1).max(120),
   monthlyPrice: z.coerce.number().int().min(0).default(0),
@@ -112,6 +115,7 @@ export const AssignServiceSchema = z.object({
   description: z.string().max(500).optional(),
   purchaseDate: z.coerce.date().optional(),
   notes: z.string().max(500).optional(),
+  catalogServiceId: z.string().optional(),
 });
 
 // ─── Service catalog (platform-level master list) ───────────────────────────
@@ -121,6 +125,9 @@ export const CreateCatalogServiceSchema = z.object({
   category: z.string().max(80).optional(),
   basePrice: z.coerce.number().int().min(0).default(0),
   enabled: z.boolean().default(true),
+  // Marks the offering as an infrastructure service the platform provisions
+  // on assign: 'SQUID_PROXY' spawns a SquidProxy row pre-armed with an agent key.
+  kind: z.string().max(40).optional(),
 });
 
 export const UpdateCatalogServiceSchema = z.object({
@@ -129,6 +136,7 @@ export const UpdateCatalogServiceSchema = z.object({
   category: z.string().max(80).optional(),
   basePrice: z.coerce.number().int().min(0).optional(),
   enabled: z.boolean().optional(),
+  kind: z.string().max(40).optional(),
 }).refine((d) => Object.keys(d).length > 0, { message: 'At least one field required' });
 
 // ─── System-wide activity log (ADMINISTRATOR audit console) ─────────────────

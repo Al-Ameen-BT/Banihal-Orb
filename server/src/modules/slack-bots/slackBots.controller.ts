@@ -12,7 +12,9 @@ export async function create(req: Request, res: Response, next: NextFunction): P
   try { res.status(201).json(await service.createBot(CreateBotSchema.parse(req.body))); } catch (err) { next(err); }
 }
 export async function update(req: Request, res: Response, next: NextFunction): Promise<void> {
-  try { res.json(await service.updateBot(req.params['id']!, UpdateBotSchema.parse(req.body))); } catch (err) { next(err); }
+  try {
+    res.json(await service.updateBot(req.params['id']!, UpdateBotSchema.parse(req.body), { userId: req.user.userId, customerId: req.user.customerId }));
+  } catch (err) { next(err); }
 }
 export async function remove(req: Request, res: Response, next: NextFunction): Promise<void> {
   try { await service.deleteBot(req.params['id']!); res.status(204).end(); } catch (err) { next(err); }

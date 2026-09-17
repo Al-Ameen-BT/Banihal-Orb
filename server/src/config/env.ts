@@ -72,6 +72,10 @@ const EnvSchema = z.object({
   // Secret for encrypting Slack bot tokens at rest (AES-256-GCM). Falls back to
   // JWT_ACCESS_SECRET when unset so no extra config is required in dev.
   SLACK_TOKEN_SECRET: z.string().optional(),
+  // Ed25519 seed (64 hex chars) that signs squid config bundles for the agents.
+  // Optional: derived from SLACK_TOKEN_SECRET in dev/test, but every prod
+  // deployment must set its own and pin signingPublicKeyPem() into the agents.
+  SQUID_SIGNING_PRIVATE_KEY: z.string().length(64).optional(),
   // Pepper for the password-reuse fingerprint (HMAC-SHA256). Keep it OUT of the database
   // and back it up: change it and every stored fingerprint stops matching, so reuse
   // detection silently degrades until users next set a password. Falls back to

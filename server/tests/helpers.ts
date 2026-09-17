@@ -149,6 +149,10 @@ export function ticketDbSkipReason(): string {
 
 export async function cleanDb() {
   assertTestDatabase();
+  await prisma.squidBranch.deleteMany();
+  await prisma.squidProxy.deleteMany();
+  await prisma.customerService.deleteMany();
+  await prisma.serviceCatalog.deleteMany();
   await prisma.auditLog.deleteMany();
   await prisma.refreshToken.deleteMany();
   await prisma.emailVerificationToken.deleteMany();

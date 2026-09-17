@@ -86,6 +86,7 @@ function CatalogPickerModal({ orgId, onClose }: { orgId: string; onClose: () => 
   const [selected, setSelected] = useState<CatalogItem | null>(null);
   const [endDate, setEndDate] = useState('');
   const [price, setPrice] = useState('');
+  const [provisioned, setProvisioned] = useState<{ rawKey?: string; hint?: string } | null>(null);
 
   const { data: catalog = [], isLoading } = useQuery<CatalogItem[]>({
     queryKey: ['catalog'],
@@ -107,10 +108,18 @@ function CatalogPickerModal({ orgId, onClose }: { orgId: string; onClose: () => 
       description: selected!.description ?? undefined,
       monthlyPrice: Number(price) || selected!.basePrice,
       endDate,
+      catalogServiceId: selected!.id,
     }),
-    onSuccess: () => {
+    onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ['org-detail'] });
-      onClose();
+      const p = (res.data as { provisioned?: { rawKey?: string; hint?: string } }).provisioned;
+      if (p?.rawKey) {
+        // One-time provisioning key — the org admin copies it from their Squid page;
+        // we surface it here so staff can hand it off immediately.
+        setProvisioned({ rawKey: p.rawKey, hint: p.hint });
+      } else {
+        onClose();
+      }
     },
   });
 
@@ -188,7 +197,27 @@ function CatalogPickerModal({ orgId, onClose }: { orgId: string; onClose: () => 
           )}
         </div>
 
-        {selected && (
+        {provisioned ? (
+          <div className="px-6 py-4 border-t border-slate-100 flex-shrink-0 bg-slate-50/60 rounded-b-2xl space-y-3">
+            <div>
+              <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1">
+                Provisioned — one-time agent registration key
+              </p>
+              <div className="rounded-lg bg-slate-900 text-slate-100 font-mono text-base px-4 py-3 flex items-center gap-3 break-all">
+                <span className="flex-1">{provisioned.rawKey}</span>
+                <button type="button" onClick={() => navigator.clipboard?.writeText(provisioned.rawKey ?? '')} className="text-brand-200 hover:text-white text-sm cursor-pointer flex-shrink-0">
+                  Copy
+                </button>
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-500">
+              This key is shown <strong>once</strong> — hand it to the org admin (hint: <span className="font-mono">{provisioned.hint}</span>) before closing. They enter it when installing the Squid agent.
+            </p>
+            <div className="flex items-center gap-3">
+              <GlowButton variant="ghost" onClick={onClose}>Done</GlowButton>
+            </div>
+          </div>
+        ) : selected && (
           <div className="px-6 py-4 border-t border-slate-100 flex-shrink-0 bg-slate-50/60 rounded-b-2xl">
             <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-3">Configure assignment for <span className="text-brand">{selected.name}</span></p>
             <div className="flex items-end gap-3 flex-wrap">

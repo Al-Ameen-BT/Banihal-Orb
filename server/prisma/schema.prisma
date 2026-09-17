@@ -47,6 +47,7 @@ model Customer {
   announcements Announcement[]
   escalations   TicketEscalation[]
   approvalChallenge OrgApprovalChallenge?
+  squidProxies  SquidProxy[]
 
   @@index([slug])
   @@map("customers")
@@ -117,6 +118,14 @@ model User {
   emailVerifiedAt DateTime?
   mfaEnabled    Boolean        @default(false)
   lastLoginAt   DateTime?
+  // Verified Slack identity binding (Phase C Slack hardening). Set once through
+  // the one-time link-code flow; approvals and the assistant resolve the Slack
+  // clicker through THIS id, never by per-event email discovery.
+  slackId       String?        @unique
+  // One-time link-code fields (cleared after redemption). Issued via the
+  // profile; redeemed from a Slack DM ("link LINK-XXXX"); never stored raw.
+  slackLinkCodeHash  String?
+  slackLinkExpiresAt DateTime?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   customerId    String
@@ -438,6 +447,10 @@ model ServiceCatalog {
   description String?
   category    String?
   basePrice   Int      @default(0)
+  // Service kind. null = standard catalog item. 'SQUID_PROXY' marks an
+  // infrastructure offering: assigning it to an org auto-provisions a SquidProxy
+  // record and the subscription governs that proxy's lifecycle.
+  kind        String?
   enabled     Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -461,6 +474,7 @@ model CustomerService {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  squidProxy   SquidProxy?
 
   @@index([customerId])
   @@index([endDate])
@@ -594,6 +608,93 @@ model BotTicketSubmission {
   @@index([customerId])
   @@index([botId])
   @@map("botTicketSubmissions")
+}
+
+// ─── Squid proxy management (per-organization, tenant-scoped) ──────────────
+// One SquidProxy per managed Squid instance (an org can own several, e.g. one
+// per branch office). Provisioned automatically when an ADMINISTRATOR assigns a
+// kind=SQUID_PROXY catalog service to the org; the CustomerService row is the
+// life-cycle contract (expiry locks the proxy read-only, removal disables it).
+//
+// Config is PLATFORM-side single source of truth: branch/network data lives here
+// and the ACL engine renders the include file + .txt contents, which the per-host
+// agent applies (atomic write → squid -k parse → squid -k reconfigure). The agent
+// authenticates per-request with its per-proxy `pk_` registration key: regKeyHash
+// is the SHA-256 constant-time lookup index, regKeyEncrypted holds the raw key
+// (AES-256-GCM) so each request's HMAC signature can be verified; appliedSeq is
+// the agent's monotonic ack watermark.
+model SquidProxy {
+  id                   String           @id @default(cuid())
+  customerId           String
+  name                 String
+  description          String?
+  transport            String           @default("agent")
+  regKeyHash           String?          @unique
+  regKeyEncrypted      String?
+  registrationHint     String?
+  status               SquidProxyStatus @default(UNPROVISIONED)
+  lastSeenAt           DateTime?
+  lastError            String?
+  // Monotonic config revision. Every rule/network edit bumps it — the rendered
+  // bundle is keyed to it. appliedSeq is the last revision the agent either
+  // acked or applied; a gap triggers a full-snapshot re-sync.
+  revision             Int              @default(0)
+  appliedSeq           Int              @default(0)
+  // Write-guard set when the governing subscription expires (read-only, like the
+  // BT Proxy license lock) or when the proxy is disabled. Central service check.
+  locked               Boolean          @default(false)
+  safePorts            Json             @default("[]")
+  sslPorts             Json             @default("[]")
+  // Full-access rules: [{src, description?, until?, window?{days,from,to} }]
+  fullAccess           Json             @default("[]")
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+  customer             Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerService      CustomerService? @relation(fields: [customerServiceId], references: [id])
+  customerServiceId    String?          @unique
+  branches             SquidBranch[]
+
+  @@index([customerId])
+  @@index([status])
+  @@map("squidProxies")
+}
+
+// A named access-rule group for one proxy (e.g. "Calicut_BR03"). Mirrors the BT
+// Proxy domain: sources are the IPs/subnets the rule applies to, mode decides
+// additive (whitelist + broader access) vs exclusive (whitelist-only, everything
+// else denied), and whitelist/blacklist hold site entries {
+// value: string; subdomain: boolean (+ type: 'domain'|'ip' resolved on render) }.
+model SquidBranch {
+  id          String          @id @default(cuid())
+  proxyId     String
+  customerId  String
+  name        String
+  description String?
+  mode        SquidBranchMode @default(ADDITIVE)
+  sources     Json            @default("[]")
+  whitelist   Json            @default("[]")
+  blacklist   Json            @default("[]")
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  proxy       SquidProxy      @relation(fields: [proxyId], references: [id], onDelete: Cascade)
+
+  @@unique([proxyId, name])
+  @@index([customerId])
+  @@map("squidBranches")
+}
+
+enum SquidProxyStatus {
+  UNPROVISIONED
+  PENDING
+  CONNECTED
+  OFFLINE
+  DISABLED
+  ERROR
+}
+
+enum SquidBranchMode {
+  ADDITIVE
+  EXCLUSIVE
 }
 
 enum SlackBotStatus {

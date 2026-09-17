@@ -25,6 +25,7 @@ export const icons = {
   clients:   'M13.5 21v-7.5a.75.75 0 01.75-.75h3a.75.75 0 01.75.75V21m-9 0V6.75a.75.75 0 00-.75-.75H4.5a.75.75 0 00-.75.75V21m0 0h16.5M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5',
   pending:   'M9 12.75l2.25 2.25 4.5-4.5M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292',
   logout:    'M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75',
+  squid:     'M5.25 14.25h13.5m-13.5 0a3 3 0 01-3-3m3 3a3 3 0 100 6h13.5a3 3 0 100-6m-16.5-3a3 3 0 013-3h13.5a3 3 0 013 3m-19.5 0a4.5 4.5 0 01.9-2.7L5.737 5.1a3.375 3.375 0 012.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 01.9 2.7m0 0a3 3 0 01-3 3m0 3h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008zm-3 6h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008z',
 };
 
 const roleConfig: Record<string, { label: string; badge: string; avatar: string }> = {
@@ -78,6 +79,7 @@ export default function Sidebar() {
     customerServices: can('customer_services.manage'),
     catalog: can('catalog.manage'),
     bots: can('bots.view'),
+    squid: can('squid.view'),
     externalApi: can('external_api.view'),
     systemActivity: can('system_activity.view'),
     systemLogs: can('system_activity.view'),
@@ -115,6 +117,9 @@ export default function Sidebar() {
           <NavItem href="/credentials" label="Credentials" icon={icons.key} active={path === '/credentials'} />
         )}
         {showServices && <NavItem href="/services" label="Services" icon={icons.services} active={path === '/services'} />}
+        {(!isStaff || can('squid.view')) && (
+          <NavItem href="/squid" label="Squid Proxy" icon={icons.squid} active={path === '/squid'} />
+        )}
         {showUsers && <NavItem href="/users" label="Users" icon={icons.users} active={path === '/users'} />}
 
         {showPlatform && (
@@ -126,6 +131,7 @@ export default function Sidebar() {
             {platform.customerServices && <NavItem href="/saas-admin/services" label="Customer Services" icon={icons.services} active={path === '/saas-admin/services'} />}
             {platform.catalog && <NavItem href="/saas-admin/catalog" label="Service Catalog" icon={icons.catalog} active={path === '/saas-admin/catalog'} />}
             {platform.bots && <NavItem href="/saas-admin/bots" label="Slack Bots" icon={icons.bots} active={path === '/saas-admin/bots'} />}
+            {platform.squid && <NavItem href="/saas-admin/squid" label="Squid Proxies" icon={icons.squid} active={path === '/saas-admin/squid'} />}
             {platform.externalApi && <NavItem href="/saas-admin/api-keys" label="External API" icon={icons.key} active={path === '/saas-admin/api-keys'} />}
             {platform.systemActivity && <NavItem href="/system-activity" label="System Activity" icon={icons.activity} active={path === '/system-activity'} />}
             {platform.systemLogs && <NavItem href="/system-logs" label="System Logs" icon={icons.logs} active={path === '/system-logs'} />}

@@ -4,6 +4,7 @@ import { prisma } from '../../config/database';
 import { decryptSecret } from '../../config/slackCrypto';
 import { agentChat } from '../../services/agentApi';
 import { handleApprovalInteraction, type BlockActionPayload } from './slackApprovals';
+import { redeemLinkCode, unlinkSlackId } from './slackLink';
 
 // ─── Slack bot manager (singleton) ───────────────────────────────────────────
 // Owns the live connections for every enabled SlackBot. Uses the Slack Web API to
@@ -104,9 +105,36 @@ class SlackManager {
     if (event.type === 'message' && event.channel_type !== 'im') return; // only DMs (mentions handled via app_mention)
     const text = stripMention(event.text ?? '', conn.botUserId).trim();
     if (!text) return;
+    // Phase C identity linking — intercept the one-time code and unlink commands
+    // before anything reaches the assistant.
+    const linked = await this.handleIdentityCommand(conn, event, text);
+    if (linked) return;
     // Slack users are not authenticated to us, so end_user guidance is the floor.
     const { reply } = await agentChat(text, 'end_user');
     if (reply) await conn.web.chat.postMessage({ channel: event.channel, text: reply, thread_ts: event.thread_ts });
+  }
+
+  // Handles `link LINK-XXXX` / `unlink` DMs. Returns true when consumed.
+  private async handleIdentityCommand(conn: Conn, event: SlackEvent, text: string): Promise<boolean> {
+    const m = text.match(/^link\s+(LINK-[0-9a-fA-F]{8})$/);
+    if (m) {
+      const user = await redeemLinkCode(m[1]!.toUpperCase(), event.user ?? '');
+      const msg = user
+        ? `Linked to ${user.email}${user.name ? ` (${user.name})` : ''}. Your Slack id now authorizes approval-card decisions on this platform.`
+        : 'Code not recognized or expired. Regenerate it from the platform (My Profile → Slack) and try again within 5 minutes.';
+      await conn.web.chat.postMessage({ channel: event.channel, text: msg, thread_ts: event.thread_ts });
+      return true;
+    }
+    if (/^unlink\s*$/.test(text)) {
+      const ok = await unlinkSlackId(event.user ?? '');
+      await conn.web.chat.postMessage({
+        channel: event.channel,
+        text: ok ? 'Your Slack identity is unlinked.' : 'No linked identity found for this Slack account.',
+        thread_ts: event.thread_ts,
+      });
+      return true;
+    }
+    return false;
   }
 }
 

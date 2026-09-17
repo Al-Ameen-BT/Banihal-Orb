@@ -30,6 +30,15 @@ export default function ProfilePage() {
   const [passwordSaved, setPasswordSaved] = useState(false);
   const [passwordError, setPasswordError] = useState('');
 
+  const [slackCode, setSlackCode] = useState<{ code: string; hint: string } | null>(null);
+
+  const slackLinkMutation = useMutation({
+    mutationFn: () => usersApi.slackLink(),
+    onSuccess: (res: { data?: { code?: string; hint?: string } }) => {
+      if (res?.data?.code) setSlackCode({ code: res.data.code, hint: res.data.hint ?? '' });
+    },
+  });
+
   const updateMutation = useMutation({
     mutationFn: (data: { name?: string; mfaEnabled?: boolean }) => usersApi.updateMe(data),
     onSuccess: async () => {
@@ -166,6 +175,34 @@ export default function ProfilePage() {
                   Applies to this browser only; enable it again on each device you use.
                 </p>
                 <EnablePushButton />
+              </div>
+            </motion.div>
+
+            {/* Slack */}
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.1, ease: [0.4,0,0.2,1] }}>
+              <h2 className="text-base font-semibold text-slate-900 mb-4">Slack</h2>
+              <div className="card p-6">
+                <p className="text-sm font-medium text-slate-900">Link your Slack identity</p>
+                <p className="text-xs text-slate-500 mt-1 mb-4">
+                  Generate a one-time code, then DM any connected platform bot <code className="text-slate-700 bg-slate-100 px-1 py-0.5 rounded">link LINK-XXXX</code>.
+                  Your Slack account then authorizes approval cards without email matching. Codes expire in 5 minutes.
+                </p>
+                <div className="flex items-center gap-3">
+                  <GlowButton onClick={() => slackLinkMutation.mutate()} disabled={slackLinkMutation.isPending} loading={slackLinkMutation.isPending} variant="secondary">
+                    Generate link code
+                  </GlowButton>
+                  {slackCode && (
+                    <div className="flex-1 min-w-0 flex items-center gap-2">
+                      <code className="text-sm font-semibold text-slate-900 bg-slate-100 border border-slate-200 rounded-lg px-3 py-2 select-all">{slackCode.code}</code>
+                      <button
+                        onClick={() => navigator.clipboard?.writeText(slackCode.code)}
+                        className="text-xs font-medium text-slate-500 hover:text-slate-800 underline underline-offset-2"
+                      >
+                        copy
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             </motion.div>
 

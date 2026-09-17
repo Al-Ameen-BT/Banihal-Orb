@@ -127,6 +127,7 @@ export const usersApi = {
   getMe: () => api.get('/users/me'),
   updateMe: (data: unknown) => api.patch('/users/me', data),
   changePassword: (data: { currentPassword: string; newPassword: string }) => api.patch('/users/me/password', data),
+  slackLink: () => api.post('/slack/link'),
   list: (params?: Record<string, unknown>) => api.get('/users', { params }),
   invite: (data: unknown) => api.post('/users/invite', data),
   changeRole: (id: string, data: unknown) => api.patch(`/users/${id}/role`, data),
@@ -183,6 +184,35 @@ export const botsApi = {
 export const adSecretsApi = {
   list: () => api.get('/ad-secrets'),
   reveal: (id: string) => api.post(`/ad-secrets/${id}/reveal`),
+};
+
+// Squid outbound proxies — ORG-facing (this org's proxies + their ACL config).
+// All writes bump the bundle revision; a pull-based agent applies it on next poll.
+export const squidApi = {
+  list: (params?: Record<string, unknown>) => api.get('/squid', { params }),
+  create: (data: { name: string; description?: string; transport?: string }) => api.post('/squid', data),
+  get: (id: string) => api.get(`/squid/${id}`),
+  update: (id: string, data: unknown) => api.patch(`/squid/${id}`, data),
+  remove: (id: string) => api.delete(`/squid/${id}`),
+  rotateKey: (id: string) => api.post(`/squid/${id}/rotate-key`),
+  bundlePublicKey: () => api.get('/squid/bundle-key'),
+  listBranches: (id: string) => api.get(`/squid/${id}/branches`),
+  createBranch: (id: string, data: { name: string; description?: string; mode?: string }) => api.post(`/squid/${id}/branches`, data),
+  updateBranch: (id: string, branchId: string, data: unknown) => api.patch(`/squid/${id}/branches/${branchId}`, data),
+  deleteBranch: (id: string, branchId: string) => api.delete(`/squid/${id}/branches/${branchId}`),
+  setBranchLists: (id: string, branchId: string, data: { sources: string[]; whitelist: { value: string; subdomain: boolean }[]; blacklist: { value: string; subdomain: boolean }[] }) =>
+    api.put(`/squid/${id}/branches/${branchId}/lists`, data),
+  setPorts: (id: string, data: { safePorts?: string[]; sslPorts?: string[]; fullAccess?: unknown[] }) => api.put(`/squid/${id}/ports`, data),
+  setFullAccess: (id: string, data: unknown) => api.put(`/squid/${id}/full-access`, data),
+};
+
+// Squid proxies — STAFF console (cross-tenant read/manage).
+export const squidAdminApi = {
+  list: (params?: Record<string, unknown>) => api.get('/saas-admin/squid', { params }),
+  get: (id: string) => api.get(`/saas-admin/squid/${id}`),
+  rotateKey: (id: string) => api.post(`/saas-admin/squid/${id}/rotate-key`),
+  lock: (id: string) => api.post(`/saas-admin/squid/${id}/lock`),
+  enable: (id: string) => api.post(`/saas-admin/squid/${id}/enable`),
 };
 
 // External ticketing API — ADMINISTRATOR registry: machine keys + delivery webhooks.

@@ -79,6 +79,34 @@ export const AUDIT_ACTIONS = [
   { key: 'UPDATE_SERVICE_REQUEST',                                                      defaultScope: false, sadminFeed: false },
   { key: 'ESCALATION_UPDATED',                                                          defaultScope: false, sadminFeed: false },
 
+  // ── Squid proxy control. Config changes are network-policy mutations and
+  //    cross-tenant for staff (ADMINISTRATOR and squid.manage holders), so the
+  //    rows are sadminFeed-worthy like every other staff credential/control
+  //    action. Reload/apply are high-ish volume but each one is a live policy
+  //    change — keep them in the default scope so "what changed" never needs a
+  //    filter first. Locks (subscription expiry) and proxy disabling are
+  //    irreversible-enough governance events: defaultScope true.
+  { key: 'SQUID_SERVICE_PROVISIONED',                                                   defaultScope: true,  sadminFeed: true  },
+  { key: 'SQUID_PROXY_KEY_GENERATED',                                                   defaultScope: true,  sadminFeed: true  },
+  { key: 'SQUID_BRANCH_CREATED',                                                        defaultScope: true,  sadminFeed: false },
+  { key: 'SQUID_BRANCH_UPDATED',                                                        defaultScope: true,  sadminFeed: false },
+  { key: 'SQUID_BRANCH_DELETED',                                                        defaultScope: true,  sadminFeed: false },
+  { key: 'SQUID_LIST_UPDATED',                                                          defaultScope: true,  sadminFeed: false },
+  { key: 'SQUID_NETWORK_UPDATED',                                                       defaultScope: true,  sadminFeed: false },
+  { key: 'SQUID_RELOAD_REQUESTED',                                                      defaultScope: true,  sadminFeed: true  },
+  { key: 'SQUID_APPLY_RESULT',                                                          defaultScope: false, sadminFeed: false },
+  { key: 'SQUID_CONFIG_LOCKED',                                                         defaultScope: true,  sadminFeed: true  },
+  { key: 'SQUID_PROXY_DISABLED',                                                        defaultScope: true,  sadminFeed: true  },
+  { key: 'SQUID_PROXY_ENABLED',                                                         defaultScope: true,  sadminFeed: true  },
+  { key: 'SQUID_AGENT_AUTH_FAILED',                                                     defaultScope: false, sadminFeed: true  },
+
+  // ── Slack identity linking (Phase C). Issuing a link code is a low-volume,
+  //    user-initiated event; binding a Slack member id is a security-relevant
+  //    authorization decision that needs a paper trail — both feed-worthy.
+  { key: 'SLACK_LINK_CODE_ISSUED',                                                      defaultScope: true,  sadminFeed: true  },
+  { key: 'SLACK_IDENTITY_LINKED',                                                       defaultScope: true,  sadminFeed: true  },
+  { key: 'BOT_TOKEN_ROTATED',                                                           defaultScope: true,  sadminFeed: true  },
+
   // ── Ticketing. The module wrote NO audit rows at all before this: the only
   //    record of a ticket's history was the per-ticket Activities table in the
   //    ticket store, which is ON DELETE CASCADE on the ticket — so deleting a

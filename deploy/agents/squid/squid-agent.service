@@ -1,0 +1,26 @@
+[Unit]
+Description=B2B Squid outbound-proxy config agent (pull-based)
+Documentation=deploy/agents/squid/README.md
+After=network-online.target squid.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# EnvironmentFile must be created by install.sh with:
+#   SQUID_PLATFORM=https://...  SQUID_PROXY_ID=...  SQUID_INTERVAL=5
+EnvironmentFile=-/etc/squid-agent/env
+ExecStart=/usr/local/sbin/squid-agent.sh
+Restart=on-failure
+RestartSec=5
+# The agent runs unprivileged except for touching the squid conf dir + reload.
+# Give it just those rights via sudoers, not a shell.
+User=root
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/etc/squid /etc/squid/acls /var/log
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

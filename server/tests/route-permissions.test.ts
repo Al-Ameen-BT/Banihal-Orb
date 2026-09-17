@@ -3,6 +3,7 @@ import saasAdminRoutes from '../src/modules/saas-admin/saas-admin.routes';
 import ticketingRoutes from '../src/modules/ticketing/ticketing.routes';
 import slackBotsRoutes from '../src/modules/slack-bots/slackBots.routes';
 import externalAdminRoutes from '../src/modules/external-api/external-admin.routes';
+import squidAdminRoutes from '../src/modules/squid/squid-admin.routes';
 import { isPermissionKey } from '../src/config/permissions';
 
 // Route-level ENFORCEMENT, as opposed to permissions.test.ts which pins the
@@ -104,6 +105,18 @@ describe('external-admin route enforcement', () => {
   it('splits view from manage', () => {
     for (const r of all) {
       expect(r.keys, `${r.method} ${r.path}`).toContain(r.method === 'GET' ? 'external_api.view' : 'external_api.manage');
+    }
+  });
+});
+
+// Skew: squid-managed infrastructure crosses every tenant, so its staff console is
+// guarded on get=view / mutate=manage exactly like the machine-key registries.
+describe('squid-admin route enforcement', () => {
+  const all = routes(squidAdminRoutes);
+
+  it('splits view from manage across every admin squid route', () => {
+    for (const r of all) {
+      expect(r.keys, `${r.method} ${r.path}`).toContain(r.method === 'GET' ? 'squid.view' : 'squid.manage');
     }
   });
 });

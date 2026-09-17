@@ -10,6 +10,7 @@ import { sendInviteEmail, sendOrgSuspendedEmail } from '../mail/mail.service';
 import type { PermissionKey } from '../../config/permissions';
 import { passwordFingerprint } from '../auth/passwordReuse';
 import { deactivateUserInTicketStores } from '../ticketing/ticketing.client';
+import { provisionSquidProxy, disableSquidProxy } from '../squid/squid.service';
 import type {
   ListOrgsInput, UpdateOrgInput, ToggleFlagInput,
   ListRequestsInput, UpdateRequestInput,
@@ -349,7 +350,10 @@ export async function listAllServices(input: ListServicesInput) {
   const [rows, total] = await Promise.all([
     prisma.customerService.findMany({
       where, skip, take: input.limit,
-      include: { customer: { select: { id: true, name: true, plan: true, industry: true } } },
+      include: {
+        customer: { select: { id: true, name: true, plan: true, industry: true } },
+        squidProxy: { select: { id: true } },
+      },
       orderBy: { endDate: 'asc' },
     }),
     prisma.customerService.count({ where }),
@@ -365,6 +369,9 @@ export async function listAllServices(input: ListServicesInput) {
     status: deriveStatus(r.endDate),
     notes: r.notes,
     customer: r.customer,
+    // Non-null when this line item provisioned a squid proxy (link the admin
+    // console to the proxy's control page).
+    squidProxyId: r.squidProxy?.id ?? null,
   }));
 
   return { services, total, page: input.page, limit: input.limit, pages: Math.ceil(total / input.limit) };
@@ -434,20 +441,38 @@ export async function assignCustomerService(customerId: string, adminUserId: str
     include: { customer: { select: { id: true, name: true } } },
   });
 
+  // Zero-config infrastructure provisioning: assigning a catalog service marked
+  // kind=SQUID_PROXY spawns the org's SquidProxy row + an agent registration key
+  // (returned once, shown to the admin, hashed for storage). Every other kind is
+  // just a billable line item.
+  let provisioned: { proxyId: string; rawKey: string; hint: string } | null = null;
+    if (input.catalogServiceId) {
+      const catalog = await prisma.serviceCatalog.findUnique({ where: { id: input.catalogServiceId }, select: { kind: true } });
+      if (catalog?.kind === 'SQUID_PROXY') {
+        const { proxy, key, hint } = await provisionSquidProxy(customerId, created.id, input.name, adminUserId);
+        provisioned = { proxyId: proxy.id, rawKey: key, hint };
+      }
+    }
   await prisma.auditLog.create({
     data: {
       action: 'SERVICE_ASSIGNED', performedById: adminUserId, targetId: created.id,
       customerId,
-      metadata: { service: input.name, customer: customer.name, endDate: input.endDate },
+      metadata: { service: input.name, customer: customer.name, endDate: input.endDate, kind: provisioned ? 'SQUID_PROXY' : 'standard' },
     },
   });
 
-  return created;
+  return { service: created, provisioned };
 }
 
 export async function removeCustomerService(id: string, adminUserId: string) {
   const existing = await prisma.customerService.findUnique({ where: { id } });
   if (!existing) throw Object.assign(new Error('Service not found'), { status: 404, code: 'NOT_FOUND' });
+
+  // If this service provisioned a squid proxy, disabling the service disables the
+  // proxy: the CustomerService row is the lifecycle contract (mirror of the BT
+  // Proxy license lock). Not found? nothing to tear down.
+  const squid = await prisma.squidProxy.findUnique({ where: { customerServiceId: id } });
+  if (squid) await disableSquidProxy(squid.id, adminUserId, existing.customerId, `service “${existing.name}” removed`);
 
   await prisma.auditLog.create({
     data: {

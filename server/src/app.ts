@@ -23,6 +23,7 @@ import requestsRoutes from './modules/requests/requests.routes';
 import announcementsRoutes from './modules/announcements/announcements.routes';
 import ticketingRoutes from './modules/ticketing/ticketing.routes';
 import slackBotsRoutes from './modules/slack-bots/slackBots.routes';
+import slackLinkRoutes from './modules/slack-bots/slackLink.routes';
 import botsRoutes from './modules/bots/bots.routes';
 import adIngestRoutes from './modules/ad-secrets/adIngest.routes';
 import adSecretsRoutes from './modules/ad-secrets/adSecrets.routes';
@@ -31,6 +32,9 @@ import externalAdminRoutes from './modules/external-api/external-admin.routes';
 import pushRoutes from './modules/push/push.routes';
 import notificationsRoutes from './modules/notifications/notifications.routes';
 import agentRoutes from './modules/agent/agent.routes';
+import proxyAgentRoutes from './modules/squid/squid-agent.routes';
+import squidRoutes from './modules/squid/squid.routes';
+import squidAdminRoutes from './modules/squid/squid-admin.routes';
 
 const app = express();
 
@@ -62,7 +66,10 @@ app.use(helmet({
 app.use(cors(corsOptions));
 app.use(globalRateLimiter);
 app.use(cookieParser());
-app.use(express.json({ limit: '1mb' }));
+// verify() keeps the raw body bytes around so the squid agent's per-request
+// HMAC can cover the exact payload (the agent signs sha256(rawBody)); a parsed
+// JSON re-serialization would not be stable between signer and verifier.
+app.use(express.json({ limit: '1mb', verify: (req, _res, buf) => { (req as unknown as { rawBody?: Buffer }).rawBody = buf; } }));
 
 // ─── Public routes (no auth required) ───────────────────────────────────────
 app.use('/api/auth', authRoutes);
@@ -72,6 +79,9 @@ app.use('/api/ad-ingest', adIngestRoutes);
 // External ticketing API — machine clients authenticate with OAuth client
 // credentials (Bearer JWTs), so this must sit outside the cookie session wall.
 app.use('/api/external', externalRoutes);
+// Squid per-proxy agents — machines authenticate per request with an HMAC signed
+// off their raw registration key; like /api/external this predates the session wall.
+app.use('/api/proxy-agent', proxyAgentRoutes);
 
 // ─── Health check ────────────────────────────────────────────────────────────
 // Pings the stores the app actually SERVES FROM. It used to ping b2b_ticketing —
@@ -118,14 +128,22 @@ app.use('/api/push', pushRoutes);
 // withTenant so the tenant extension scopes reads; the service additionally
 // filters by userId, which is what keeps one member out of another's list.
 app.use('/api/notifications', withTenant, notificationsRoutes);
+// Org-facing squid proxy management — tenant-scoped; per-route role guards inside.
+app.use('/api/squid', withTenant, squidRoutes);
 
 // Sadmin / Administrator — platform-level access, no tenant scope
 app.use('/api/saas-admin', requireRole('ADMINISTRATOR'), saasAdminRoutes);
 // Slack bot registry — administrators manage bots cross-tenant (no tenant scope).
 app.use('/api/slack-bots', requireRole('ADMINISTRATOR'), slackBotsRoutes);
+// User-facing Slack identity link — any authenticated member can issue a
+// one-time code for their own profile.
+app.use('/api/slack/link', slackLinkRoutes);
 // External ticketing API key/webhook registry — administrators manage machine
 // credentials cross-tenant (no tenant scope; same mount pattern as slack-bots).
 app.use('/api/external-admin', requireRole('ADMINISTRATOR'), externalAdminRoutes);
+// Steam squid management — Administrators view/edit any org's squid config
+// cross-tenant (no tenant scope). Guarded per-route by squid.view / squid.manage.
+app.use('/api/saas-admin/squid', requireRole('ADMINISTRATOR'), squidAdminRoutes);
 
 // ─── 404 handler ─────────────────────────────────────────────────────────────
 app.use((_req, res) => {

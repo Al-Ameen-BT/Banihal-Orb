@@ -17,6 +17,7 @@ interface CatalogItem {
   category: string | null;
   basePrice: number;
   enabled: boolean;
+  kind: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -56,18 +57,19 @@ function CatalogDrawer({
   const [name, setName] = useState(item?.name ?? '');
   const [description, setDescription] = useState(item?.description ?? '');
   const [category, setCategory] = useState(item?.category ?? '');
+  const [kind, setKind] = useState(item?.kind ?? '');
   const [basePrice, setBasePrice] = useState(String(item?.basePrice ?? 0));
   const [enabled, setEnabled] = useState(item?.enabled ?? true);
   const [error, setError] = useState('');
 
   const createMutation = useMutation({
-    mutationFn: () => saasAdminApi.createCatalogItem({ name: name.trim(), description: description.trim() || undefined, category: category || undefined, basePrice: Number(basePrice) || 0, enabled }),
+    mutationFn: () => saasAdminApi.createCatalogItem({ name: name.trim(), description: description.trim() || undefined, category: category || undefined, kind: kind || undefined, basePrice: Number(basePrice) || 0, enabled }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['catalog'] }); onClose(); },
     onError: () => setError('Failed to create service. Please try again.'),
   });
 
   const updateMutation = useMutation({
-    mutationFn: () => saasAdminApi.updateCatalogItem(item!.id, { name: name.trim(), description: description.trim() || undefined, category: category || undefined, basePrice: Number(basePrice) || 0, enabled }),
+    mutationFn: () => saasAdminApi.updateCatalogItem(item!.id, { name: name.trim(), description: description.trim() || undefined, category: category || undefined, kind: kind || undefined, basePrice: Number(basePrice) || 0, enabled }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['catalog'] }); onClose(); },
     onError: () => setError('Failed to update service. Please try again.'),
   });
@@ -113,6 +115,15 @@ function CatalogDrawer({
               <option value="">— Select category —</option>
               {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">Provisioning kind</label>
+            <select value={kind} onChange={(e) => setKind(e.target.value)} className="input">
+              <option value="">Standard service (manual setup)</option>
+              <option value="SQUID_PROXY">Squid outbound proxy (auto-provisions an agent key)</option>
+            </select>
+            <p className="text-xs text-slate-400 mt-1">SQUID_PROXY services mint a one-time agent registration key when assigned.</p>
           </div>
 
           <div>
