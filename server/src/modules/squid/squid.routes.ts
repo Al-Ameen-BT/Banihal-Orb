@@ -1,33 +1,36 @@
 import { Router } from 'express';
 import * as c from './squid.controller';
-import { requireRole } from '../../middleware/rbac.middleware';
+import { requireRole, requirePermissionIfPlatform } from '../../middleware/rbac.middleware';
 
 // Org-facing squid proxy management. Mounted at /api/squid WITH the tenant
 // middleware — every read/write auto-scopes to the caller's organization via the
 // prisma tenant extension... except BUNDLE (below), which any logged-in megacert
 // employee may hold for setup documents handed to branch engineers.
 //
-// Customers: management is an ORG_ADMIN action; USERs read. Platform staff
-// additionally need squid.view/squid.manage (gunpowder gates nothing for them —
-// this router is the CUSTOMER surface).
+// Customers: only ORG_ADMIN may reach this surface — plain USERs have no squid
+// options. Platform staff pass through the role guard and are then gated on
+// squid.view (read) / squid.manage (write) — the shared-surface pattern.
 
 const router = Router();
 
-router.get('/', requireRole('USER', 'ORG_ADMIN'), c.listProxies);
-router.get('/bundle-key', requireRole('USER', 'ORG_ADMIN'), c.getBundleKey);
-router.get('/:proxyId', requireRole('USER', 'ORG_ADMIN'), c.getProxy);
-router.post('/', requireRole('ORG_ADMIN'), c.createProxy);
-router.patch('/:proxyId', requireRole('ORG_ADMIN'), c.updateProxy);
-router.delete('/:proxyId', requireRole('ORG_ADMIN'), c.deleteProxy);
-router.post('/:proxyId/rotate-key', requireRole('ORG_ADMIN'), c.rotateKey);
+const view  = [requireRole('ORG_ADMIN', 'ADMINISTRATOR'), requirePermissionIfPlatform('squid.view')];
+const manage = [requireRole('ORG_ADMIN', 'ADMINISTRATOR'), requirePermissionIfPlatform('squid.manage')];
 
-router.get('/:proxyId/branches', requireRole('ORG_ADMIN'), c.listBranches);
-router.post('/:proxyId/branches', requireRole('ORG_ADMIN'), c.createBranch);
-router.patch('/:proxyId/branches/:branchId', requireRole('ORG_ADMIN'), c.updateBranch);
-router.delete('/:proxyId/branches/:branchId', requireRole('ORG_ADMIN'), c.deleteBranch);
-router.put('/:proxyId/branches/:branchId/lists', requireRole('ORG_ADMIN'), c.setBranchLists);
+router.get('/', ...view, c.listProxies);
+router.get('/bundle-key', ...view, c.getBundleKey);
+router.get('/:proxyId', ...view, c.getProxy);
+router.post('/', ...manage, c.createProxy);
+router.patch('/:proxyId', ...manage, c.updateProxy);
+router.delete('/:proxyId', ...manage, c.deleteProxy);
+router.post('/:proxyId/rotate-key', ...manage, c.rotateKey);
 
-router.put('/:proxyId/ports', requireRole('ORG_ADMIN'), c.setPorts);
-router.put('/:proxyId/full-access', requireRole('ORG_ADMIN'), c.setFullAccess);
+router.get('/:proxyId/branches', ...view, c.listBranches);
+router.post('/:proxyId/branches', ...manage, c.createBranch);
+router.patch('/:proxyId/branches/:branchId', ...manage, c.updateBranch);
+router.delete('/:proxyId/branches/:branchId', ...manage, c.deleteBranch);
+router.put('/:proxyId/branches/:branchId/lists', ...manage, c.setBranchLists);
+
+router.put('/:proxyId/ports', ...manage, c.setPorts);
+router.put('/:proxyId/full-access', ...manage, c.setFullAccess);
 
 export default router;

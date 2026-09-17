@@ -117,7 +117,7 @@ export default function Sidebar() {
           <NavItem href="/credentials" label="Credentials" icon={icons.key} active={path === '/credentials'} />
         )}
         {showServices && <NavItem href="/services" label="Services" icon={icons.services} active={path === '/services'} />}
-        {(!isStaff || can('squid.view')) && (
+        {(isOrgAdmin || (isStaff && can('squid.view'))) && (
           <NavItem href="/squid" label="Squid Proxy" icon={icons.squid} active={path === '/squid'} />
         )}
         {showUsers && <NavItem href="/users" label="Users" icon={icons.users} active={path === '/users'} />}

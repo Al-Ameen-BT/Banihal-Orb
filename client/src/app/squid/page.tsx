@@ -420,7 +420,7 @@ export default function SquidPage() {
   const proxies = data?.proxies ?? [];
 
   return (
-    <RoleGuard allowedRoles={['USER', 'ORG_ADMIN', 'ADMINISTRATOR']}>
+    <RoleGuard allowedRoles={['ORG_ADMIN', 'ADMINISTRATOR']}>
       <div className="flex h-screen overflow-hidden bg-canvas">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">
