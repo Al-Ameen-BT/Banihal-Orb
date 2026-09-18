@@ -659,6 +659,8 @@ model SquidProxy {
   customerServiceId    String?          @unique
   branches             SquidBranch[]
   changeRequests       SquidChangeRequest[]
+  telemetry            SquidTelemetry[]
+  logEntries           SquidLogEntry[]
 
   @@index([customerId])
   @@index([status])
@@ -727,6 +729,48 @@ model SquidChangeRequest {
   @@index([customerId])
   @@index([proxyId])
   @@map("squidChangeRequests")
+}
+
+// One telemetry snapshot per agent report window. Counters are CUMULATIVE
+// (requests/denied/bytes/clients since start) so deltas are derived on read;
+// sessions is the set of client IPs the agent saw active. Kept ~7 days.
+model SquidTelemetry {
+  id            String     @id @default(cuid())
+  proxyId       String
+  customerId    String
+  observedAt    DateTime   @default(now())
+  seq           Int
+  squidVersion  String?
+  uptimeSeconds Int?
+  cpuPercent    Float?
+  memPercent    Float?
+  diskPercent   Float?
+  sessions      Json       @default("[]")
+  counters      Json       @default("{}")
+  proxy         SquidProxy @relation(fields: [proxyId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([proxyId, observedAt])
+  @@map("squidTelemetry")
+}
+
+// Recent access.log lines shipped by the agent log tail (retained ~48h) —
+// the live Activity viewer and the Sessions list (unique clients in the last
+// 10 minutes) both read from here. No long-term log analytics storage.
+model SquidLogEntry {
+  id         String     @id @default(cuid())
+  proxyId    String
+  customerId String
+  observedAt DateTime   @default(now())
+  clientIp   String     @default("")
+  method     String     @default("")
+  action     String     @default("") // allowed | denied
+  url        String     @default("")
+  proxy      SquidProxy @relation(fields: [proxyId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([proxyId, observedAt])
+  @@map("squidLogEntries")
 }
 
 enum SlackBotStatus {

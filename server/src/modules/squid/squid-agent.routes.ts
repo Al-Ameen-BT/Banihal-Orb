@@ -3,8 +3,8 @@ import crypto from 'crypto';
 import { prisma } from '../../config/database';
 import { decryptSecret } from '../../config/slackCrypto';
 import { audit } from '../../lib/audit';
-import { agentPoll, agentResult, agentBundlePublicKey } from './squid.service';
-import { AgentResultSchema } from './squid.schema';
+import { agentPoll, agentResult, agentBundlePublicKey, ingestTelemetry } from './squid.service';
+import { AgentResultSchema, TelemetryIngestSchema } from './squid.schema';
 import { notify } from '../notifications/notifications.service';
 
 // ─── Agent control API ───────────────────────────────────────────────────────
@@ -107,6 +107,18 @@ router.post('/result', agentAuth, async (req, res, next) => {
     if (!parsed.success) { res.status(400).json({ error: parsed.error.message, code: 'VALIDATION_ERROR' }); return; }
     const proxy = (req as Request & { proxy: AuthedProxy }).proxy;
     res.json(await agentResult(proxy.id, null, proxy.customerId, parsed.data));
+  } catch (e) { next(e); }
+});
+
+// Agent pushes a telemetry snapshot + recent access-log lines. Same HMAC auth as
+// poll/result; idempotent-ish (each report is one more row; the 48h/7d TTL prune
+// keeps the tables bounded).
+router.post('/telemetry', agentAuth, async (req, res, next) => {
+  try {
+    const parsed = TelemetryIngestSchema.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: parsed.error.message, code: 'VALIDATION_ERROR' }); return; }
+    const proxy = (req as Request & { proxy: AuthedProxy }).proxy;
+    res.json(await ingestTelemetry(proxy.id, proxy.customerId, parsed.data));
   } catch (e) { next(e); }
 });
 

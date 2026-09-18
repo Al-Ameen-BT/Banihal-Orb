@@ -1,0 +1,72 @@
+#!/bin/bash
+# BT Proxy - Squid package update helper
+# Installed at /usr/local/sbin/btproxy-squid-update (root:root, chmod 755)
+#
+# This wrapper exists so the web GUI never receives blanket apt/dnf sudo
+# rights. It accepts exactly two verbs and can only ever touch the squid
+# package.
+#
+#   btproxy-squid-update check    -> prints current + available version
+#   btproxy-squid-update apply    -> upgrades ONLY the squid package
+#
+set -o pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+if command -v apt-get >/dev/null 2>&1; then
+    PKGMGR=apt
+elif command -v dnf >/dev/null 2>&1; then
+    PKGMGR=dnf
+else
+    die "no supported package manager (apt/dnf) found"
+fi
+
+current_version() {
+    if [ "$PKGMGR" = apt ]; then
+        dpkg-query -W -f='${Version}' squid 2>/dev/null || echo "not installed"
+    else
+        rpm -q --qf '%{VERSION}-%{RELEASE}' squid 2>/dev/null || echo "not installed"
+    fi
+}
+
+case "$1" in
+  check)
+    echo "current: $(current_version)"
+    if [ "$PKGMGR" = apt ]; then
+        apt-get update -qq >/dev/null 2>&1
+        avail=$(apt-cache policy squid 2>/dev/null | awk '/Candidate:/{print $2}')
+        echo "available: ${avail:-unknown}"
+    else
+        dnf -q check-update squid >/dev/null 2>&1
+        rc=$?
+        if [ $rc -eq 100 ]; then
+            avail=$(dnf -q list --available squid 2>/dev/null | awk '/^squid/{print $2; exit}')
+            echo "available: ${avail:-newer version}"
+        else
+            echo "available: $(current_version)"
+        fi
+    fi
+    ;;
+
+  apply)
+    before=$(current_version)
+    if [ "$PKGMGR" = apt ]; then
+        apt-get update -qq || die "apt-get update failed"
+        apt-get install -y --only-upgrade squid || die "squid upgrade failed"
+    else
+        dnf upgrade -y squid || die "squid upgrade failed"
+    fi
+    after=$(current_version)
+    echo "upgraded: $before -> $after"
+    # Package scripts usually restart squid; make sure it is running.
+    systemctl is-active --quiet squid || systemctl start squid
+    /usr/sbin/squid -k parse >/dev/null 2>&1 || \
+        echo "WARNING: squid.conf did not parse cleanly after upgrade"
+    ;;
+
+  *)
+    echo "usage: $0 {check|apply}" >&2
+    exit 2
+    ;;
+esac

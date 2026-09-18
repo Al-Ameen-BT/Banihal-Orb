@@ -16,16 +16,21 @@
 #   SQUID_PUBKEY     PEM with the bundle public key. If set, bundles are
 #                    signature-checked before apply. If unset, the agent DOES
 #                    NOT apply unsigned bundles (safety first).
+#   SQUID_TELEMETRY_INTERVAL  telemetry push seconds  (default 60)
+#   SQUID_TELEMETRY_HELPER    path to the telemetry helper (default
+#                             /usr/local/libexec/squid-agent-telemetry.py)
 set -u
 
 : "${SQUID_PLATFORM:?SQUID_PLATFORM is required}"
 : "${SQUID_PROXY_ID:?SQUID_PROXY_ID is required}"
 : "${SQUID_INTERVAL:=5}"
 : "${SQUID_CONF_DIR:=/etc/squid/acls}"
+: "${SQUID_TELEMETRY_INTERVAL:=60}"
 KEY_FILE="${SQUID_KEY_FILE:/etc/squid-agent/key}"
 SQUID_MAIN_CONF="${SQUID_MAIN_CONF:/etc/squid/squid.conf}"
 PLATFORM="$SQUID_PLATFORM"
 SHASUM_EMPTY="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+TELEMETRY_HELPER="${SQUID_TELEMETRY_HELPER:-/usr/local/libexec/squid-agent-telemetry.py}"
 
 log() { printf '[%s] squid-agent(%s) %s\n' "$(date '+%F %T')" "$SQUID_PROXY_ID" "$*" | tee -a /var/log/squid-agent.log; }
 e() { log "fatal: $*"; exit 1; }
@@ -131,5 +136,17 @@ poll() {
   rm -rf "$workdir"
 }
 
+# Push a telemetry snapshot at most every SQUID_TELEMETRY_INTERVAL seconds.
+telemetry() {
+  command -v python3 >/dev/null 2>&1 || return 0
+  local last now
+  last="$(cat /var/run/squid-agent-telemetry 2>/dev/null || echo 0)"
+  now="$(date +%s)"
+  (( now - last >= SQUID_TELEMETRY_INTERVAL )) || return 0
+  echo "$now" >/var/run/squid-agent-telemetry
+  python3 "$TELEMETRY_HELPER" >>/var/log/squid-agent.log 2>&1 \
+    || log "telemetry push failed (helper)"
+}
+
 log "agent up (platform $PLATFORM, poll ${SQUID_INTERVAL}s)"
-while true; do poll; sleep "$SQUID_INTERVAL"; done
+while true; do poll; telemetry; sleep "$SQUID_INTERVAL"; done

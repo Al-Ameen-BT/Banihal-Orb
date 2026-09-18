@@ -206,6 +206,11 @@ export const squidApi = {
   setPorts: (id: string, data: { safePorts?: string[]; sslPorts?: string[]; fullAccess?: unknown[] }) => api.put(`/squid/${id}/ports`, data),
   setFullAccess: (id: string, data: unknown) => api.put(`/squid/${id}/full-access`, data),
   listChangeRequests: (id: string) => api.get(`/squid/${id}/change-requests`),
+  telemetry: (id: string) => api.get(`/squid/${id}/telemetry`),
+  activity: (id: string, params?: Record<string, unknown>) => api.get(`/squid/${id}/activity`, { params }),
+  reportUrl: (id: string, days = 7) => `/api/squid/${id}/report.csv?days=${days}`,
+  report: (id: string, days = 7) => api.get(`/squid/${id}/report.csv`, { params: { days }, responseType: 'text' }),
+  dependencyScan: (id: string, data: { url: string; branchId?: string }) => api.post(`/squid/${id}/dependency-scan`, data),
 };
 
 // Squid proxies — STAFF console (cross-tenant read/manage).

@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import {
   CreateProxySchema, UpdateProxySchema, ListProxiesSchema, VerifyTokenSchema,
   CreateBranchSchema, UpdateBranchSchema, SetBranchListsSchema, SetPortsSchema, SetFullAccessSchema,
+  ActivityQuerySchema, ReportQuerySchema, DependencyScanSchema,
 } from './squid.schema';
 import * as service from './squid.service';
 
@@ -100,4 +101,29 @@ export async function setFullAccess(req: Request, res: Response, next: NextFunct
 
 export async function getBundleKey(_req: Request, res: Response): Promise<void> {
   res.json({ publicKey: service.agentBundlePublicKey() });
+}
+
+// ─── Ops surface: telemetry dashboard, live activity, reports, dep finder ─────
+export async function getTelemetry(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try { res.json(await service.getTelemetrySummary(req.params['proxyId']!)); } catch (e) { next(e); }
+}
+
+export async function listActivity(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try { res.json(await service.listActivity(req.params['proxyId']!, ActivityQuerySchema.parse(req.query))); } catch (e) { next(e); }
+}
+
+export async function report(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { days } = ReportQuerySchema.parse(req.query);
+    const csv = await service.reportCsv(req.params['proxyId']!, days);
+    res.set({ 'Content-Type': 'text/csv', 'Content-Disposition': `attachment; filename="squid-report-${req.params['proxyId']!.slice(0, 8)}.csv"` });
+    res.send(csv);
+  } catch (e) { next(e); }
+}
+
+export async function runDependencyScan(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = DependencyScanSchema.parse(req.body);
+    res.json(await service.dependencyScan(req.params['proxyId']!, req.user.userId, req.user.customerId!, input));
+  } catch (e) { next(e); }
 }

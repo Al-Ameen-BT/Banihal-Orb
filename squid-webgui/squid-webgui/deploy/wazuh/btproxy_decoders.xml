@@ -1,0 +1,31 @@
+<!-- BT Proxy (Banihal Technologies LLP) - Wazuh decoders  [rev4]
+     Install: /var/ossec/etc/decoders/btproxy_decoders.xml
+     Requires BT Proxy >= 1.12.11 (RFC3164 syslog: timestamp + hostname).
+
+     Wazuh extracts the syslog header (timestamp/hostname/program) itself; these
+     decoders parse the application message. \S+ = non-space (valid OS_Regex).
+     A <prematch> gates the field decoder, and the parent's program_name chains
+     it. Verify with wazuh-logtest: Phase 2 must list srcuser / action, and
+     srcip when the line ends with 'from <ip>'. -->
+
+<decoder name="btproxy">
+  <program_name>^btproxy</program_name>
+  <prematch>user=</prematch>
+</decoder>
+
+<!-- Field extraction. \S+ stops at spaces, so it captures the exact tokens.
+     detail is greedy to end of line; the optional ' from <ip>' tail is pulled
+     out separately by the sibling decoder below. -->
+<decoder name="btproxy">
+  <parent>btproxy</parent>
+  <regex>user=(\S+) action=(\S+) detail=(\.+)</regex>
+  <order>srcuser, action, extra_data</order>
+</decoder>
+
+<!-- Sibling: pull srcip when the message ends with 'from <ip>'. Runs in
+     addition to the field decoder above (same name = sibling set). -->
+<decoder name="btproxy">
+  <parent>btproxy</parent>
+  <regex>from (\d+.\d+.\d+.\d+)\.?$</regex>
+  <order>srcip</order>
+</decoder>

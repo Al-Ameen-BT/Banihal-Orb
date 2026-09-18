@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block title %}Certificates · {{ app_title }}{% endblock %}
+{% block content %}
+<h1>SSL Certificates</h1>
+
+<section class="panel">
+  <header class="acl-head">
+    <span class="led {{ 'led-green' if ssl_enabled and cert and not cert.expired else 'led-red' if cert and cert.expired else 'led-dim' }}"></span>
+    <h2>Current certificate</h2>
+    <span class="role-tag {{ 'green' if ssl_enabled }}">HTTPS {{ 'ON' if ssl_enabled else 'off' }}</span>
+  </header>
+  {% if cert %}
+  <table class="log-table">
+    <tbody>
+      <tr><td>Type</td><td class="mono">{{ cert.type }}</td></tr>
+      <tr><td>Common name</td><td class="mono">{{ cert.cn }}</td></tr>
+      <tr><td>Subject alt names</td><td class="mono">{{ cert.sans|join(', ') or '—' }}</td></tr>
+      <tr><td>Issuer</td><td class="mono">{{ cert.issuer }}</td></tr>
+      <tr><td>Valid</td><td class="mono">{{ cert.not_before }} → {{ cert.not_after }}</td></tr>
+      <tr><td>Days remaining</td>
+          <td class="mono {{ 'deny' if cert.days_left <= 7 }}">
+            {% if cert.expired %}<span class="deny">EXPIRED</span>
+            {% else %}{{ cert.days_left }}{% endif %}</td></tr>
+    </tbody>
+  </table>
+  <form method="post" action="{{ url_for('ssl_toggle') }}" class="mt"
+        onsubmit="return confirm('{{ 'Disable' if ssl_enabled else 'Enable' }} HTTPS and restart the service now? Your browser will need to reconnect on {{ 'http' if ssl_enabled else 'https' }}://')">
+    <input type="hidden" name="ssl_enabled" value="{{ 'off' if ssl_enabled else 'on' }}">
+    <button class="btn {{ 'btn-red-outline' if ssl_enabled else 'btn-green' }}">
+      {{ 'Disable HTTPS' if ssl_enabled else 'Enable HTTPS' }}
+    </button>
+  </form>
+  {% else %}
+  <p class="muted">No certificate installed yet. Generate a self-signed one or import a purchased certificate below, then enable HTTPS.</p>
+  {% endif %}
+</section>
+
+{% if not ssl_enabled %}
+<div class="flash flash-warn">HTTPS is currently off. Uploading a private key
+below travels over plain HTTP. For the first certificate, prefer
+<strong>self-signed generation</strong> (the key never leaves the server) or
+place files via SSH. Use import over HTTPS for later replacements.</div>
+{% endif %}
+
+<div class="two-col">
+  <section class="panel">
+    <h2>Generate self-signed</h2>
+    <form method="post" action="{{ url_for('cert_self_signed') }}">
+      <label>Hostname or IP (Common Name)
+        <input name="cn" value="{{ default_cn }}" required>
+      </label>
+      <label>Extra SANs <span class="muted small">(space/comma separated, optional)</span>
+        <input name="sans" placeholder="btproxy.bank.local 172.20.99.10">
+      </label>
+      <label>Validity (years)
+        <input type="number" name="years" value="5" min="1" max="20" class="w-narrow">
+      </label>
+      <button class="btn btn-primary"
+              onclick="return confirm('Generate a new self-signed certificate and replace the current one? The previous certificate is backed up.')">
+        Generate &amp; install
+      </button>
+    </form>
+    <p class="muted small">Include the IP you browse to as the CN or a SAN —
+    browsers require it in the SAN field. Distribute the resulting certificate
+    to client PCs (e.g. via GPO) for a trusted padlock.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Import purchased certificate</h2>
+    <form method="post" action="{{ url_for('cert_import') }}" enctype="multipart/form-data">
+      <label>Certificate (.crt / .pem)
+        <input type="file" name="cert" accept=".crt,.pem,.cer" required>
+      </label>
+      <label>Private key (.key)
+        {% if has_pending %}<span class="muted small">— or reuse the CSR key below</span>{% endif %}
+        <input type="file" name="key" accept=".key,.pem">
+      </label>
+      {% if has_pending %}
+      <label class="check" style="margin-bottom:12px">
+        <input type="checkbox" name="use_pending"> use the key from the CSR I generated
+      </label>
+      {% endif %}
+      <label>CA bundle / intermediates <span class="muted small">(optional)</span>
+        <input type="file" name="bundle" accept=".crt,.pem,.ca-bundle,.cer">
+      </label>
+      <label>Key passphrase <span class="muted small">(only if the key is encrypted)</span>
+        <input type="password" name="passphrase" autocomplete="off">
+      </label>
+      <button class="btn btn-primary">Validate &amp; install</button>
+    </form>
+    <p class="muted small">The key is checked against the certificate and the
+    chain/expiry validated before anything is installed.</p>
+  </section>
+</div>
+
+<details class="panel" {{ 'open' if csr_pem }}>
+  <summary><strong>Generate a CSR</strong> (to order a certificate from a CA)</summary>
+  {% if csr_pem %}
+  <div class="flash flash-ok">CSR generated. The private key is stored on the
+  server; submit the CSR below to your CA, then import the issued certificate
+  and tick "use the key from the CSR".</div>
+  <label>Copy this CSR into your CA's order form
+    <textarea class="mono csr-box" rows="12" readonly onclick="this.select()">{{ csr_pem }}</textarea>
+  </label>
+  {% endif %}
+  <form method="post" action="{{ url_for('cert_csr') }}">
+    <div class="row">
+      <label>Common Name (hostname/IP) <input name="cn" value="{{ default_cn }}" required></label>
+      <label>Organization <input name="org" placeholder="Organisation name"></label>
+    </div>
+    <div class="row">
+      <label>Locality <input name="locality" placeholder="City"></label>
+      <label>State <input name="state" placeholder="State"></label>
+      <label>Country <input name="country" placeholder="IN" maxlength="2" class="w-narrow"></label>
+    </div>
+    <label>Extra SANs <input name="sans" placeholder="optional"></label>
+    <button class="btn">Generate CSR</button>
+  </form>
+</details>
+
+{% if backups %}
+<section class="panel">
+  <h2>Backups</h2>
+  <p class="muted small">Previous certificates, kept automatically before each change.</p>
+  <table class="log-table">
+    <thead><tr><th>Backup</th><th></th></tr></thead>
+    <tbody>
+      {% for b in backups %}
+      <tr>
+        <td class="mono">{{ b.replace('_',' ') }}</td>
+        <td>
+          <form method="post" action="{{ url_for('cert_restore') }}" class="inline"
+                onsubmit="return confirm('Restore this certificate and restart the service?')">
+            <input type="hidden" name="name" value="{{ b }}">
+            <button class="btn btn-small">Restore</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+{% endblock %}

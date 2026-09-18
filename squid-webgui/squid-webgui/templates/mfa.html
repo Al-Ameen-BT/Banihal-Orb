@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Two-factor · {{ app_title }}{% endblock %}
+{% block anon %}
+<div class="login-wrap">
+  <form class="login-card" method="post" autocomplete="off">
+    {% if logo %}
+    <div class="logo-wrap"><img src="{{ url_for('static', filename=logo) }}" alt="" class="logo"></div>
+    {% endif %}
+    <div class="brand big">
+      <span class="led led-green"></span>
+      <div>
+        <div class="brand-name">{{ app_title }}</div>
+        <div class="brand-sub">two-factor authentication</div>
+      </div>
+    </div>
+    {% with msgs = get_flashed_messages(with_categories=true) %}
+      {% for cat, m in msgs %}<div class="flash flash-{{ cat }}">{{ m }}</div>{% endfor %}
+    {% endwith %}
+    <label>Enter the 6-digit code from your authenticator app
+      <input name="code" inputmode="numeric" pattern="[0-9 ]{6,7}" maxlength="7"
+             autofocus required placeholder="000 000" class="code-input">
+    </label>
+    <button type="submit" class="btn btn-primary wide">Verify</button>
+    <p class="muted small center"><a href="{{ url_for('login') }}">Back to sign in</a></p>
+  </form>
+</div>
+{% endblock %}

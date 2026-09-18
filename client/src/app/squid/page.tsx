@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { squidApi } from '@/lib/api';
@@ -34,6 +34,21 @@ interface ChangeRequest {
   createdAt: string;
 }
 
+interface TelemetrySummary {
+  latest: {
+    observedAt: string; seq: number;
+    squidVersion: string | null; uptimeSeconds: number | null;
+    cpuPercent: number | null; memPercent: number | null; diskPercent: number | null;
+    sessions: string[];
+  } | null;
+  hour: { requests: number; denied: number; bytes: number; clients: number };
+  sessions: { clientIp: string; lastSeenAt: string }[];
+}
+
+interface ActivityRow { observedAt: string; clientIp: string; method: string; action: string; url: string }
+
+interface DepScanResult { finalUrl: string; dependencies: { value: string; host: string; excluded: boolean; category: string; self: boolean }[]; excluded: { value: string; host: string; excluded: boolean; category: string; self: boolean }[] }
+
 interface SiteEntry { value: string; subdomain: boolean }
 interface BranchView {
   id: string; name: string; description: string | null; mode: string;
@@ -64,6 +79,22 @@ function ago(iso: string | null): string {
   if (s < 60) return 'just now';
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
   return `${Math.floor(s / 3600)}h ago`;
+}
+
+function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let v = n;
+  let u = -1;
+  do { v /= 1024; u++; } while (v >= 1024 && u < units.length - 1);
+  return `${v.toFixed(v >= 10 ? 1 : 2)} ${units[u]}`;
+}
+
+function fmtDuration(s: number | null): string {
+  if (s == null) return '—';
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }
 
 // Subscription status for a service-backed proxy: past/30-day windows get a
@@ -187,6 +218,285 @@ function VerifyTokenField({ proxyId }: { proxyId: string }) {
   );
 }
 
+// ─── Live ops dashboard (telemetry) ──────────────────────────────────────────
+function StatCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="card p-3">
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">{label}</p>
+      <p className="text-lg font-semibold text-slate-900 mt-1 tabular-nums">{value}</p>
+      {hint && <p className="text-[11px] text-slate-400 mt-0.5">{hint}</p>}
+    </div>
+  );
+}
+
+function Meter({ label, pct }: { label: string; pct: number | null }) {
+  const v = pct ?? 0;
+  const n = pct == null;
+  return (
+    <div className="card p-3">
+      <div className="flex items-center justify-between">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">{label}</p>
+        <p className="text-xs font-medium text-slate-700 tabular-nums">{n ? '—' : `${v.toFixed(0)}%`}</p>
+      </div>
+      <div className="h-1.5 rounded-full bg-slate-100 mt-2 overflow-hidden">
+        <div className={`h-full rounded-full transition-all duration-500 ${v > 85 ? 'bg-red-500' : v > 60 ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: n ? '0%' : `${Math.min(100, v)}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function OpsView({ proxyId }: { proxyId: string }) {
+  const { data } = useQuery<TelemetrySummary>({
+    queryKey: ['squid-telemetry', proxyId],
+    queryFn: () => squidApi.telemetry(proxyId).then((r) => r.data as TelemetrySummary),
+    refetchInterval: 10_000,
+    refetchIntervalInBackground: false,
+  });
+  const l = data?.latest;
+  if (!l) return (
+    <div className="card p-8 text-center">
+      <p className="text-sm font-medium text-slate-700 mb-1">No telemetry yet</p>
+      <p className="text-xs text-slate-400">Live metrics appear once the agent&apos;s telemetry push lands. Update the agent to <span className="font-mono">squid-agent.sh</span> v1.2+ with the <span className="font-mono">squid-agent-telemetry.py</span> helper installed.</p>
+    </div>
+  );
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <StatCard label="Requests (1h)" value={data!.hour.requests.toLocaleString()} />
+        <StatCard label="Denied (1h)" value={data!.hour.denied.toLocaleString()} hint="Blocked by ACL rules" />
+        <StatCard label="Active sessions" value={String(data!.sessions.length)} hint="Clients active in last 10 min" />
+        <StatCard label="Data (1h)" value={fmtBytes(data!.hour.bytes)} hint={`${data!.hour.clients} clients`} />
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <Meter label="CPU" pct={l.cpuPercent} />
+        <Meter label="Memory" pct={l.memPercent} />
+        <Meter label="Disk" pct={l.diskPercent} />
+      </div>
+      <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-4 space-y-1.5 text-sm">
+        <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Agent host</p>
+        <p className="text-slate-500">Squid <span className="font-medium text-slate-700">{l.squidVersion || '—'}</span> · up <span className="font-medium text-slate-700">{fmtDuration(l.uptimeSeconds)}</span></p>
+        <p className="text-slate-500">Snapshot {new Date(l.observedAt).toLocaleString()} · seq {l.seq}</p>
+      </div>
+      {data!.sessions.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Active client sessions</p>
+          <div className="grid sm:grid-cols-2 gap-1.5">
+            {data!.sessions.map((s) => (
+              <div key={s.clientIp} className="card px-3 py-2 flex items-center justify-between">
+                <span className="font-mono text-xs text-slate-700">{s.clientIp}</span>
+                <span className="text-[11px] text-slate-400">{ago(s.lastSeenAt)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <div>
+        <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Usage report</p>
+        <a href={squidApi.reportUrl(proxyId, 7)} className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-700 hover:text-brand-800">
+          Download 7-day report (CSV)
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+        </a>
+      </div>
+    </div>
+  );
+}
+
+// ─── Usage report (daily aggregates from telemetry snapshots) ────────────────
+interface ReportRow { day: string; requests: number; denied: number; bytes: number; clients: number }
+
+function parseReport(csv: string): ReportRow[] {
+  const lines = csv.trim().split('\n');
+  if (lines.length < 2) return [];
+  return lines.slice(1).map((l) => {
+    const [day, requests, denied, bytes, clients] = l.split(',');
+    return { day, requests: Number(requests), denied: Number(denied), bytes: Number(bytes), clients: Number(clients) };
+  });
+}
+
+function ReportsView({ proxyId }: { proxyId: string }) {
+  const [days, setDays] = useState(7);
+  const { data } = useQuery<string>({
+    queryKey: ['squid-report', proxyId, days],
+    queryFn: () => squidApi.report(proxyId, days).then((r) => r.data as string),
+  });
+  if (!data) return (
+    <div className="card p-8 text-center">
+      <p className="text-sm font-medium text-slate-700 mb-1">No usage data yet</p>
+      <p className="text-xs text-slate-400">Daily numbers appear once the agent&apos;s telemetry pushes cover a full day.</p>
+    </div>
+  );
+  const rows = parseReport(data);
+  if (!rows.length) return (
+    <div className="card p-8 text-center">
+      <p className="text-sm font-medium text-slate-700">No telemetry captured in the selected window</p>
+    </div>
+  );
+  const total = rows.reduce((t, r) => ({ requests: t.requests + r.requests, denied: t.denied + r.denied, bytes: t.bytes + r.bytes, clients: t.clients + r.clients }), { requests: 0, denied: 0, bytes: 0, clients: 0 });
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-1">
+          {[7, 14, 30].map((d) => (
+            <button key={d} onClick={() => setDays(d)} className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors cursor-pointer ${days === d ? 'bg-brand text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{d} days</button>
+          ))}
+        </div>
+        <a href={squidApi.reportUrl(proxyId, days)} className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-700 hover:text-brand-800">
+          Download CSV
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+        </a>
+      </div>
+      <div className="rounded-xl border border-slate-100 overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
+            <tr><th className="text-left font-semibold px-3 py-2">Day</th><th className="text-right font-semibold px-3 py-2">Requests</th><th className="text-right font-semibold px-3 py-2">Denied</th><th className="text-right font-semibold px-3 py-2">Data</th><th className="text-right font-semibold px-3 py-2">Active clients</th></tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows.map((r) => (
+              <tr key={r.day} className="hover:bg-slate-50">
+                <td className="px-3 py-2 font-mono text-xs text-slate-700">{r.day}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-slate-700">{r.requests.toLocaleString()}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-slate-700">{r.denied.toLocaleString()}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-slate-700">{fmtBytes(r.bytes)}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-slate-700">{r.clients}</td>
+              </tr>
+            ))}
+            <tr className="bg-slate-50 font-semibold text-slate-800">
+              <td className="px-3 py-2 text-xs uppercase tracking-wider">Totals</td>
+              <td className="px-3 py-2 text-right tabular-nums">{total.requests.toLocaleString()}</td>
+              <td className="px-3 py-2 text-right tabular-nums">{total.denied.toLocaleString()}</td>
+              <td className="px-3 py-2 text-right tabular-nums">{fmtBytes(total.bytes)}</td>
+              <td className="px-3 py-2 text-right tabular-nums">{total.clients}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ─── Live activity feed (recent access-log lines) ────────────────────────────
+function ActivityView({ proxyId }: { proxyId: string }) {
+  const [q, setQ] = useState('');
+  const [denied, setDenied] = useState('');
+  const { data } = useQuery<{ activity: ActivityRow[] }>({
+    queryKey: ['squid-activity', proxyId, q, denied],
+    queryFn: () => squidApi.activity(proxyId, { q: q || undefined, denied: denied || undefined, limit: 200 }).then((r) => r.data as { activity: ActivityRow[] }),
+    refetchInterval: 5000,
+  });
+  const rows = data?.activity ?? [];
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search URLs…" className="input text-sm flex-1 min-w-[180px]" />
+        <select value={denied} onChange={(e) => setDenied(e.target.value)} className="input text-sm w-auto">
+          <option value="">All actions</option>
+          <option value="true">Denied only</option>
+          <option value="false">Allowed only</option>
+        </select>
+      </div>
+      {rows.length === 0 ? (
+        <div className="card p-8 text-center">
+          <p className="text-sm font-medium text-slate-700 mb-1">No activity yet</p>
+          <p className="text-xs text-slate-400">Recent access-log lines appear here (retained 48h). No telemetry push yet? Probe the proxy from a client first.</p>
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          {rows.map((r) => (
+            <div key={r.observedAt + r.clientIp + r.url} className="card px-3 py-2 flex items-start gap-3">
+              <span className={`mt-0.5 shrink-0 text-[10px] font-bold uppercase px-1.5 py-0.5 rounded w-[52px] text-center ${r.action === 'denied' ? 'text-red-700 bg-red-50' : 'text-emerald-700 bg-emerald-50'}`}>{r.action}</span>
+              <span className="mt-0.5 shrink-0 font-mono text-[11px] text-slate-400">{new Date(r.observedAt).toLocaleTimeString()}</span>
+              <span className="mt-0.5 shrink-0 font-mono text-[11px] text-slate-500">{r.clientIp}</span>
+              <span className="mt-0.5 shrink-0 font-mono text-[11px] text-slate-400">{r.method}</span>
+              <span className="text-xs text-slate-700 truncate flex-1" title={r.url}>{r.url}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Dependency finder (static-HTML scan → human ticks → whitelist) ──────────
+function DependencyFinderModal({ proxyId, branchId, onClose, onAdd }: {
+  proxyId: string; branchId: string; onClose: () => void; onAdd: (lines: string[]) => void;
+}) {
+  const [url, setUrl] = useState('');
+  const [branch, setBranch] = useState('');
+  const [scan, setScan] = useState<DepScanResult | null>(null);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [error, setError] = useState('');
+  const run = useMutation({
+    mutationFn: () => squidApi.dependencyScan(proxyId, { url: url.trim(), branchId }),
+    onSuccess: (r) => { setScan(r.data as DepScanResult); setPicked(new Set((r.data as DepScanResult).dependencies.filter((d) => !d.self).map((d) => d.value))); },
+    onError: (e: unknown) => setError((e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Could not scan — the site may be unreachable or blocked as a private address.'),
+  });
+  const deps = scan?.dependencies ?? [];
+  const toggle = (v: string) => setPicked((p) => { const n = new Set(p); if (n.has(v)) n.delete(v); else n.add(v); return n; });
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[82vh] overflow-hidden">
+        <div className="px-5 py-4 border-b border-slate-100 flex items-start justify-between flex-shrink-0">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Dependency finder</p>
+            <p className="text-sm text-slate-500 mt-0.5">Static HTML scan — no JavaScript is executed. Resources loaded via scripts won&apos;t show up (the Slack bot&apos;s Playwright <span className="font-mono text-xs">/discover</span> covers those).</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors cursor-pointer ml-3 flex-shrink-0" aria-label="Close">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div className="p-5 space-y-3 overflow-y-auto">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">Site to scan <span className="text-red-500">*</span></label>
+            <input value={url} onChange={(e) => { setUrl(e.target.value); setScan(null); }} placeholder="https://example.com" className="input font-mono text-sm" />
+          </div>
+          {error && <p className="text-sm text-red-600">{error}</p>}
+          {!scan ? (
+            <GlowButton onClick={() => run.mutate()} disabled={!url.trim() || run.isPending} loading={run.isPending}>Scan for dependencies</GlowButton>
+          ) : (
+            <>
+              <p className="text-xs text-slate-400">Final URL: <span className="font-mono">{scan.finalUrl}</span> · {deps.length} kept, {scan.excluded.length} filtered as tracking/ad/social noise.</p>
+              {deps.length === 0 ? (
+                <p className="text-sm text-slate-500">No external dependencies found in the HTML.</p>
+              ) : (
+                <div className="space-y-1.5 max-h-[240px] overflow-y-auto border border-slate-100 rounded-xl p-2">
+                  {deps.map((d) => (
+                    <label key={d.value} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 cursor-pointer">
+                      <input type="checkbox" checked={picked.has(d.value)} onChange={() => toggle(d.value)} className="accent-brand" />
+                      <span className="font-mono text-xs text-slate-800 flex-1">{d.value}</span>
+                      {d.self && <span className="text-[10px] font-semibold uppercase text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded" title="Same root as the scanned site — usually not needed">site itself</span>}
+                      {d.category === 'cdn' && <span className="text-[10px] font-semibold uppercase text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded">cdn</span>}
+                    </label>
+                  ))}
+                </div>
+              )}
+              {scan.excluded.length > 0 && (
+                <details>
+                  <summary className="text-xs font-medium text-slate-500 cursor-pointer">Excluded ({scan.excluded.length}) — tracking / analytics / social / ads</summary>
+                  <div className="mt-2 space-y-1">
+                    {scan.excluded.map((d) => (
+                      <p key={d.value} className="font-mono text-[11px] text-slate-400 flex items-center gap-2">
+                        <span>{d.value}</span><span className="text-[10px] uppercase text-slate-300">({d.category})</span>
+                      </p>
+                    ))}
+                  </div>
+                </details>
+              )}
+              <div className="flex items-center gap-3 pt-1">
+                <GlowButton onClick={() => { onAdd(deps.filter((d) => picked.has(d.value)).map((d) => '.' + d.value.replace(/^\./, ''))); onClose(); }}
+                  disabled={picked.size === 0}>
+                  Add {picked.size} to whitelist
+                </GlowButton>
+                <GlowButton variant="ghost" onClick={onClose}>Cancel</GlowButton>
+              </div>
+            </>
+          )}
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 // ─── Branch lists editor ─────────────────────────────────────────────────────
 const ENTRY_RE = /^\./;
 function parseEntries(text: string): SiteEntry[] {
@@ -196,11 +506,55 @@ function parseEntries(text: string): SiteEntry[] {
   }));
 }
 
+// Bulk upload from a plain-text file, one entry per line (v1.12.6 bulk upload
+// adapted to the textarea model). Every line still goes through the same
+// server-side validation as a typed entry.
+function FilePicker({ label, onLoad }: { label: string; onLoad: (text: string) => void }) {
+  const ref = useRef<HTMLInputElement | null>(null);
+  return (
+    <>
+      <input ref={ref} type="file" accept=".txt,.csv,text/plain" className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (!f) return;
+          if (f.size > 1_000_000) { notify('File too large — 1 MB max', 'error'); e.target.value = ''; return; }
+          const r = new FileReader();
+          r.onload = () => { onLoad(String(r.result ?? '')); };
+          r.readAsText(f);
+          e.target.value = '';
+        }} />
+      <GlowButton variant="ghost" className="py-0.5 px-2 text-[11px]" onClick={() => ref.current?.click()}>{label}</GlowButton>
+    </>
+  );
+}
+
+const countLines = (t: string) => t.split('\n').map((l) => l.trim()).filter(Boolean).length;
+
+type ListFieldProps = {
+  label: string; value: string; onChange: (v: string) => void;
+  rows: number; placeholder: string;
+};
+function ListField({ label, value, onChange, rows, placeholder }: ListFieldProps) {
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <label className="text-xs font-semibold text-slate-600 uppercase tracking-wider">{label}</label>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] text-slate-400 tabular-nums">{countLines(value)} entries</span>
+          <FilePicker label="Load from file" onLoad={(t) => onChange(value ? value + '\n' + t : t)} />
+        </div>
+      </div>
+      <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={rows} placeholder={placeholder} className="input resize-none text-sm font-mono" />
+    </div>
+  );
+}
+
 function BranchEditor({ proxyId, branch, onDone }: { proxyId: string; branch: BranchView; onDone: () => void }) {
   const qc = useQueryClient();
   const [sources, setSources] = useState(branch.sources.join('\n'));
   const [wl, setWl] = useState(branch.whitelist.map((e) => (e.subdomain ? '.' : '') + e.value).join('\n'));
   const [bl, setBl] = useState(branch.blacklist.map((e) => (e.subdomain ? '.' : '') + e.value).join('\n'));
+  const [finding, setFinding] = useState(false);
   const [error, setError] = useState('');
   const save = useMutation({
     mutationFn: () => squidApi.setBranchLists(proxyId, branch.id, {
@@ -213,23 +567,31 @@ function BranchEditor({ proxyId, branch, onDone }: { proxyId: string; branch: Br
   });
   return (
     <div className="space-y-3 mt-3 p-3 rounded-xl bg-slate-50 border border-slate-100">
-      <div>
-        <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1">Allowed source IPs / CIDRs</label>
-        <textarea value={sources} onChange={(e) => setSources(e.target.value)} rows={2} placeholder={'One per line, e.g.\n203.0.113.0/24\n198.51.100.10'} className="input resize-none text-sm font-mono" />
-      </div>
-      <div>
-        <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1">Whitelist (allowed sites)</label>
-        <textarea value={wl} onChange={(e) => setWl(e.target.value)} rows={4} placeholder={'example.com\ngithub.com — prefix with a dot ( .example.com ) to include all subdomains'} className="input resize-none text-sm font-mono" />
-      </div>
-      <div>
-        <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1">Blacklist (blocked sites)</label>
-        <textarea value={bl} onChange={(e) => setBl(e.target.value)} rows={3} placeholder={'bad.example.com — always wins over a whitelist match'} className="input resize-none text-sm font-mono" />
+      <ListField label="Allowed source IPs / CIDRs" value={sources} onChange={setSources} rows={2}
+        placeholder={'One per line, e.g.\n203.0.113.0/24\n198.51.100.10'} />
+      <ListField label="Whitelist (allowed sites)" value={wl} onChange={setWl} rows={4}
+        placeholder={'example.com\ngithub.com — prefix with a dot ( .example.com ) to include all subdomains'} />
+      <ListField label="Blacklist (blocked sites)" value={bl} onChange={setBl} rows={3}
+        placeholder={'bad.example.com — always wins over a whitelist match'} />
+      <div className="flex items-center justify-between pt-0.5">
+        <p className="text-[11px] text-slate-400">Add only sites the branch actually needs.</p>
+        <GlowButton variant="secondary" className="py-1 px-2.5 text-xs" onClick={() => setFinding(true)}>Find dependencies</GlowButton>
       </div>
       {error && <p className="text-sm text-red-600">{error}</p>}
       <div className="flex items-center gap-3">
         <GlowButton onClick={() => save.mutate()} disabled={save.isPending} loading={save.isPending}>Save lists</GlowButton>
         <GlowButton variant="ghost" onClick={onDone}>Done</GlowButton>
       </div>
+      <AnimatePresence>
+        {finding && (
+          <DependencyFinderModal
+            proxyId={proxyId}
+            branchId={branch.id}
+            onClose={() => setFinding(false)}
+            onAdd={(lines) => { setWl((prev) => (prev ? prev + '\n' : '') + lines.join('\n')); notify(`${lines.length} site${lines.length === 1 ? '' : 's'} added — review, then Save lists`, 'success'); }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -239,7 +601,8 @@ function ProxyDetailModal({ proxySummary, onClose }: { proxySummary: ProxySummar
   const qc = useQueryClient();
   const { user } = useAuth();
   const canEdit = user?.role === 'ORG_ADMIN';
-  const [tab, setTab] = useState<'branches' | 'ports' | 'history' | 'setup'>('branches');
+  const [tab, setTab] = useState<'branches' | 'ports' | 'ops' | 'activity' | 'reports' | 'history' | 'setup'>('branches');
+  const [branchFilter, setBranchFilter] = useState('');
   const [editingBranch, setEditingBranch] = useState<BranchView | null>(null);
   const [addBranch, setAddBranch] = useState(false);
   const [branchName, setBranchName] = useState('');
@@ -290,7 +653,14 @@ function ProxyDetailModal({ proxySummary, onClose }: { proxySummary: ProxySummar
   });
 
   const saveFa = useMutation({
-    mutationFn: () => squidApi.setFullAccess(proxySummary.id, { fullAccess: fa.filter((f) => f.src.trim()) }),
+    mutationFn: () => squidApi.setFullAccess(proxySummary.id, {
+      fullAccess: fa.filter((f) => f.src.trim()).map((f) => ({
+        src: f.src.trim(),
+        // The date input is day-precision only; the schema demands a full ISO
+        // timestamp, so send local midnight (converts cleanly to UTC).
+        ...(f.until ? { until: new Date(`${f.until}T00:00:00`).toISOString() } : {}),
+      })),
+    }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['squid-proxy'] }); notify('Full-access list saved', 'success'); },
     onError: (e: unknown) => setError((e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Could not save the full-access list.'),
   });
@@ -310,6 +680,11 @@ function ProxyDetailModal({ proxySummary, onClose }: { proxySummary: ProxySummar
   // Hydrate the full-access editor from the DB once, so saving never wipes
   // entries you haven't touched.
   if (!faLoaded) { setFa(detail.fullAccess.map((f) => ({ src: f.src, until: f.until ?? undefined }))); setFaLoaded(true); }
+
+  const q = branchFilter.trim().toLowerCase();
+  const filteredBranches = detail.branches.filter(
+    (b) => !q || b.name.toLowerCase().includes(q) || (b.description ?? '').toLowerCase().includes(q),
+  );
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
@@ -335,7 +710,7 @@ function ProxyDetailModal({ proxySummary, onClose }: { proxySummary: ProxySummar
         </div>
 
         <div className="px-6 pt-3 flex items-center gap-1 border-b border-slate-100 flex-shrink-0">
-          {([['branches', 'Branches'], ['ports', 'Ports & access'], ['history', 'Change log'], ['setup', 'Install & keys']] as const).map(([key, label]) => (
+          {([['branches', 'Branches'], ['ports', 'Ports & access'], ['ops', 'Live ops'], ['activity', 'Activity'], ['reports', 'Reports'], ['history', 'Change log'], ['setup', 'Install & keys']] as const).map(([key, label]) => (
             <button key={key} onClick={() => setTab(key)} className={`px-3 py-2 text-sm font-medium rounded-t-lg -mb-px border-b-2 transition-colors cursor-pointer ${tab === key ? 'border-brand text-brand-700' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>
               {label}
             </button>
@@ -352,6 +727,11 @@ function ProxyDetailModal({ proxySummary, onClose }: { proxySummary: ProxySummar
                   <GlowButton variant="secondary" className="py-1.5 px-3 text-xs" onClick={() => setAddBranch(!addBranch)}>{addBranch ? 'Cancel' : '+ Branch'}</GlowButton>
                 </div>
               )}
+              {detail.branches.length > 0 && (
+                <input value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)}
+                  placeholder={`Search ${detail.branches.length} branch${detail.branches.length === 1 ? '' : 'es'} by name or description…`}
+                  className="input text-sm" />
+              )}
               {addBranch && (
                 <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-2">
                   <input value={branchName} onChange={(e) => setBranchName(e.target.value)} placeholder="Branch name (e.g. sales_team)" className="input text-sm" />
@@ -362,12 +742,12 @@ function ProxyDetailModal({ proxySummary, onClose }: { proxySummary: ProxySummar
                   <GlowButton onClick={() => addBranchMut.mutate()} disabled={!branchName.trim() || addBranchMut.isPending} loading={addBranchMut.isPending} className="py-1.5 px-3 text-xs">Add branch</GlowButton>
                 </div>
               )}
-              {detail.branches.length === 0 ? (
+              {filteredBranches.length === 0 ? (
                 <div className="card p-8 text-center">
-                  <p className="text-sm font-medium text-slate-700 mb-1">No branches yet</p>
-                  <p className="text-xs text-slate-400">Add your first branch to start publishing ACL rules to this proxy.</p>
+                  <p className="text-sm font-medium text-slate-700 mb-1">{q ? `No branches match "${q}"` : 'No branches yet'}</p>
+                  <p className="text-xs text-slate-400">{q ? 'Try a different search term.' : 'Add your first branch to start publishing ACL rules to this proxy.'}</p>
                 </div>
-              ) : detail.branches.map((b) => (
+              ) : filteredBranches.map((b) => (
                 <div key={b.id} className="card p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
@@ -412,6 +792,16 @@ function ProxyDetailModal({ proxySummary, onClose }: { proxySummary: ProxySummar
                     <div key={i} className="flex items-center gap-2">
                       <input value={row.src} onChange={(e) => setFa(fa.map((r, j) => j === i ? { ...r, src: e.target.value } : r))} placeholder="IP or CIDR" className="input font-mono text-sm flex-1" />
                       <input type="date" disabled={!row.src.trim()} onChange={(e) => setFa(fa.map((r, j) => j === i ? { ...r, until: e.target.value } : r))} className="input text-sm flex-1" title="Expiry date (optional)" />
+                      <div className="flex items-center gap-1">
+                        {[1, 2, 4, 8, 24].map((h) => (
+                          <button key={h} type="button" disabled={!row.src.trim()}
+                            onClick={() => setFa(fa.map((r, j) => j === i ? { ...r, until: new Date(Date.now() + h * 3600e3).toLocaleDateString('en-CA') } : r))}
+                            title={`Allow for another ${h} hour${h === 1 ? '' : 's'}`}
+                            className="text-[11px] px-1.5 py-1 rounded border border-slate-200 text-slate-500 hover:border-brand-200 hover:text-brand-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">
+                            +{h}h
+                          </button>
+                        ))}
+                      </div>
                       <GlowButton variant="ghost" className="py-1 px-2.5 text-xs" onClick={() => setFa(fa.filter((_, j) => j !== i))}>Remove</GlowButton>
                     </div>
                   ))}
@@ -427,6 +817,11 @@ function ProxyDetailModal({ proxySummary, onClose }: { proxySummary: ProxySummar
               )}
             </div>
           )}
+
+          {tab === 'ops' && <OpsView proxyId={proxySummary.id} />}
+
+          {tab === 'activity' && <ActivityView proxyId={proxySummary.id} />}
+          {tab === 'reports' && <ReportsView proxyId={proxySummary.id} />}
 
           {tab === 'history' && (
             <div className="space-y-3">

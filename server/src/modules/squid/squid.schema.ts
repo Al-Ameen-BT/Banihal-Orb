@@ -77,6 +77,50 @@ export const AgentResultSchema = z.object({
   error: z.string().trim().max(500).optional(),
 });
 
+// ─── Agent telemetry push ────────────────────────────────────────────────────
+export const TelemetryLogLineSchema = z.object({
+  ts: z.coerce.number().int().min(0).optional(), // epoch seconds — the log event time
+  ip: z.string().trim().max(64).default(''),
+  method: z.string().trim().max(16).default(''),
+  action: z.enum(['allowed', 'denied']).default('allowed'),
+  url: z.string().trim().max(2048).default(''),
+});
+
+export const TelemetryIngestSchema = z.object({
+  seq: z.coerce.number().int().min(0),
+  observedAt: z.coerce.number().int().min(0).optional(), // epoch ms; server clock when omitted
+  squidVersion: z.string().trim().max(80).optional(),
+  uptimeSeconds: z.coerce.number().int().min(0).optional(),
+  cpuPercent: z.coerce.number().min(0).max(100).optional(),
+  memPercent: z.coerce.number().min(0).max(100).optional(),
+  diskPercent: z.coerce.number().min(0).max(100).optional(),
+  sessions: z.array(z.string().trim().min(1).max(64)).max(5000).default([]),
+  counters: z.object({
+    requests: z.coerce.number().int().min(0).default(0),
+    denied: z.coerce.number().int().min(0).default(0),
+    bytes: z.coerce.number().int().min(0).default(0),
+    clients: z.coerce.number().int().min(0).default(0),
+  }).default({}),
+  logLines: z.array(TelemetryLogLineSchema).max(500).default([]),
+});
+
+export const ActivityQuerySchema = z.object({
+  q: z.string().trim().max(200).optional(),
+  clientIp: z.string().trim().max(64).optional(),
+  denied: z.string().optional().refine((v) => v === undefined || v === '' || v === 'true' || v === 'false', { message: 'denied must be true|false' }),
+  limit: z.coerce.number().int().min(1).max(500).default(200),
+  before: z.coerce.number().int().min(0).optional(), // epoch ms cursor
+});
+
+export const ReportQuerySchema = z.object({
+  days: z.coerce.number().int().min(1).max(7).default(7),
+});
+
+export const DependencyScanSchema = z.object({
+  url: z.string().url().max(500),
+  branchId: z.string().trim().optional(),
+});
+
 export type CreateProxyInput = z.infer<typeof CreateProxySchema>;
 export type UpdateProxyInput = z.infer<typeof UpdateProxySchema>;
 export type ListProxiesInput = z.infer<typeof ListProxiesSchema>;
@@ -87,3 +131,7 @@ export type SetPortsInput = z.infer<typeof SetPortsSchema>;
 export type SetFullAccessInput = z.infer<typeof SetFullAccessSchema>;
 export type VerifyTokenInput = z.infer<typeof VerifyTokenSchema>;
 export type AgentResultInput = z.infer<typeof AgentResultSchema>;
+export type TelemetryIngestInput = z.infer<typeof TelemetryIngestSchema>;
+export type ActivityQueryInput = z.infer<typeof ActivityQuerySchema>;
+export type ReportQueryInput = z.infer<typeof ReportQuerySchema>;
+export type DependencyScanInput = z.infer<typeof DependencyScanSchema>;

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Two-factor · {{ app_title }}{% endblock %}
+{% block content %}
+<h1>Two-factor authentication</h1>
+
+{% if enabled %}
+<div class="panel narrow">
+  <p><span class="led led-green"></span> MFA is <strong>ON</strong> for your account.
+  You will be asked for a 6-digit code at every sign-in.</p>
+  <p class="muted small">Lost your phone? An administrator can reset your MFA from the
+  Users page, or use the server CLI: <span class="mono">manage.py reset-mfa &lt;username&gt;</span></p>
+  <form method="post" action="{{ url_for('mfa_disable') }}"
+        onsubmit="return confirm('Turn OFF two-factor authentication for your account?')">
+    <label>Confirm your password to turn MFA off
+      <input type="password" name="password" required>
+    </label>
+    <button class="btn btn-red">Disable MFA</button>
+  </form>
+</div>
+{% else %}
+<div class="panel narrow">
+  <p><strong>Step 1.</strong> Open Microsoft Authenticator or Google Authenticator on
+  your phone, choose <em>Add account → Scan QR code</em>, and scan:</p>
+  <div class="qr-wrap"><img src="{{ qr }}" alt="MFA QR code"></div>
+  <p class="muted small">Can't scan? Enter this key manually:
+  <span class="mono">{{ secret }}</span></p>
+  <form method="post">
+    <input type="hidden" name="action" value="confirm">
+    <label><strong>Step 2.</strong> Enter the 6-digit code the app shows now
+      <input name="code" inputmode="numeric" maxlength="7" required
+             placeholder="000 000" class="code-input">
+    </label>
+    <button class="btn btn-primary">Turn on MFA</button>
+  </form>
+</div>
+{% endif %}
+{% endblock %}

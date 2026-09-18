@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Sign in · {{ app_title }}{% endblock %}
+{% block anon %}
+<div class="login-wrap">
+  <form class="login-card" method="post" autocomplete="off">
+    {% if logo %}
+    <div class="logo-wrap">
+      <img src="{{ url_for('static', filename=logo) }}" alt="Company logo" class="logo">
+    </div>
+    {% endif %}
+    <div class="brand big">
+      <span class="led led-green"></span>
+      <div>
+        <div class="brand-name">{{ app_title }}</div>
+        <div class="brand-sub">{{ app_subtitle }}</div>
+      </div>
+    </div>
+    {% with msgs = get_flashed_messages(with_categories=true) %}
+      {% for cat, m in msgs %}
+        <div class="flash flash-{{ cat }}">{{ m }}</div>
+      {% endfor %}
+    {% endwith %}
+    <label>Username
+      <input name="username" required autofocus>
+    </label>
+    <label>Password
+      <input name="password" type="password" required>
+    </label>
+    <button type="submit" class="btn btn-primary wide">Sign in</button>
+    <p class="muted small center">Authorized personnel only. All actions are logged.</p>
+    <p class="version center">v{{ cfg.APP_VERSION }}</p>
+    <p class="copyright center">© {{ now().year }} Banihal Technologies LLP</p>
+  </form>
+</div>
+{% endblock %}

@@ -90,6 +90,7 @@ export const AUDIT_ACTIONS = [
   { key: 'SQUID_PROXY_KEY_GENERATED',                                                   defaultScope: true,  sadminFeed: true  },
   { key: 'SQUID_TOKEN_VERIFIED',                                                        defaultScope: false, sadminFeed: false },
   { key: 'SQUID_TOKEN_VERIFY_FAILED',                                                   defaultScope: false, sadminFeed: false },
+  { key: 'SQUID_DEPENDENCY_SCAN',                                                       defaultScope: true,  sadminFeed: false },
   { key: 'SQUID_BRANCH_CREATED',                                                        defaultScope: true,  sadminFeed: false },
   { key: 'SQUID_BRANCH_UPDATED',                                                        defaultScope: true,  sadminFeed: false },
   { key: 'SQUID_BRANCH_DELETED',                                                        defaultScope: true,  sadminFeed: false },

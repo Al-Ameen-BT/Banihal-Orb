@@ -1,0 +1,402 @@
+{% extends "base.html" %}
+{% block title %}Settings · {{ app_title }}{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+
+<div class="two-col">
+  <section class="panel">
+    <h2>Branding</h2>
+    <form method="post">
+      <input type="hidden" name="action" value="branding">
+      <label>Product name (shown on login screen and sidebar)
+        <input name="app_title" value="{{ s.app_title }}" maxlength="40" required>
+      </label>
+      <label>Subtitle
+        <input name="app_subtitle" value="{{ s.app_subtitle }}" maxlength="60">
+      </label>
+      <button class="btn btn-primary">Save branding</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>Logo</h2>
+    {% if logo %}
+      <div class="logo-preview">
+        <img src="{{ url_for('static', filename=logo) }}?v={{ now().timestamp()|int }}" alt="Current logo">
+      </div>
+    {% else %}
+      <p class="muted small">No logo uploaded yet.</p>
+    {% endif %}
+    <form method="post" enctype="multipart/form-data">
+      <input type="hidden" name="action" value="logo">
+      <label>Upload logo <span class="muted small">(PNG/JPG/SVG, max 2 MB, ~200px wide looks best)</span>
+        <input type="file" name="logo" accept=".png,.jpg,.jpeg,.svg,.gif,.webp" required>
+      </label>
+      <div class="btn-group">
+        <button class="btn btn-primary">Upload</button>
+      </div>
+    </form>
+    {% if logo %}
+    <form method="post" class="mt">
+      <input type="hidden" name="action" value="logo_remove">
+      <button class="btn btn-small btn-red" onclick="return confirm('Remove the logo?')">Remove logo</button>
+    </form>
+    {% endif %}
+  </section>
+</div>
+
+<div class="two-col">
+  <section class="panel">
+    <h2>Password policy</h2>
+    <form method="post">
+      <input type="hidden" name="action" value="pwpolicy">
+      <div class="row">
+        <label>Minimum length
+          <input type="number" name="pw_min_length" min="6" max="32"
+                 value="{{ s.pw_min_length or 8 }}" class="w-narrow">
+        </label>
+        <label>Complexity
+          <select name="pw_complexity">
+            <option value="off"    {{ 'selected' if (s.pw_complexity or 'off') == 'off' }}>Off — length only</option>
+            <option value="medium" {{ 'selected' if s.pw_complexity == 'medium' }}>Medium — letters + numbers</option>
+            <option value="strong" {{ 'selected' if s.pw_complexity == 'strong' }}>Strong — upper, lower, number, special</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <label>Password history <span class="muted small">(0 = off, blocks reuse of last N)</span>
+          <input type="number" name="pw_history" min="0" max="10"
+                 value="{{ s.pw_history or 0 }}" class="w-narrow">
+        </label>
+        <label>Expire after days <span class="muted small">(0 = never)</span>
+          <input type="number" name="pw_expire_days" min="0" max="365"
+                 value="{{ s.pw_expire_days or 0 }}" class="w-narrow">
+        </label>
+      </div>
+      <button class="btn btn-primary">Save policy</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>License</h2>
+    <table class="log-table">
+      <tbody>
+        <tr><td>Status</td>
+            <td class="mono">
+              {% if lic.expired %}<span class="deny">EXPIRED</span>
+              {% elif lic.trial %}Trial — {{ lic.days_left }} day(s) left
+              {% else %}Licensed{% endif %}
+            </td></tr>
+        <tr><td>Licensed to</td><td class="mono">{{ lic.customer }}</td></tr>
+        <tr><td>Valid until</td><td class="mono">{{ lic.expires }}
+            {% if not lic.expired %}({{ lic.days_left }} days){% endif %}</td></tr>
+      </tbody>
+    </table>
+    <form method="post" class="mt">
+      <input type="hidden" name="action" value="license">
+      <label>Enter license key
+        <input name="license_key" placeholder="BTP1.XXXX.XXXX" required class="mono">
+      </label>
+      <button class="btn btn-primary">Activate</button>
+    </form>
+    <p class="muted small">License keys are issued by Banihal Technologies LLP
+    (1 / 3 / 5 year subscriptions). When expired, Access Lists and Network
+    Rules become read-only; monitoring keeps working.</p>
+  </section>
+</div>
+
+<section class="panel" id="smtp">
+  <h2>Email alerts (SMTP)</h2>
+  <p class="muted small">Sends security and operational alerts, and can email
+  scheduled configuration backups. The password is stored encrypted.</p>
+  <form method="post" action="{{ url_for('settings_smtp') }}">
+    <label class="check">
+      <input type="checkbox" name="smtp_enabled" {{ 'checked' if s.smtp_enabled }}>
+      enable email alerting
+    </label>
+    <div class="row">
+      <label>SMTP server
+        <input name="smtp_host" value="{{ s.smtp_host or '' }}" placeholder="smtp.example.com">
+        <small class="hint">Microsoft 365 organisation mailbox: smtp.office365.com &middot; internal relay: its hostname or IP</small>
+      </label>
+      <label>Port
+        <input name="smtp_port" type="number" min="1" max="65535" value="{{ s.smtp_port or 587 }}" size="5">
+      </label>
+      <label>Security
+        <select name="smtp_security">
+          {% for v, lbl in [('starttls','STARTTLS (587)'),('ssl','SSL/TLS (465)'),('none','None (25)')] %}
+          <option value="{{ v }}" {{ 'selected' if s.smtp_security == v }}>{{ lbl }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <label class="check">
+      <input type="checkbox" name="smtp_verify_cert" {{ 'checked' if s.smtp_verify_cert }}>
+      verify the mail server's TLS certificate (recommended)
+    </label>
+    <div class="row">
+      <label>Username
+        <input name="smtp_user" value="{{ s.smtp_user or '' }}" autocomplete="off">
+        <small class="hint">Full email address, e.g. alerts@example.com</small>
+      </label>
+      <label>Password
+        <input type="password" name="smtp_password" placeholder="{{ 'unchanged' if s.smtp_password else '' }}" autocomplete="new-password">
+        <small class="hint">App password: enter the 16 characters with no spaces</small>
+      </label>
+    </div>
+    <div class="row">
+      <label>From address
+        <input name="smtp_from" value="{{ s.smtp_from or '' }}" placeholder="btproxy@example.com">
+      </label>
+      <label>Send alerts to
+        <input name="smtp_to" value="{{ s.smtp_to or '' }}" placeholder="it@example.com, security@example.com">
+      </label>
+    </div>
+    <p class="small" style="margin-top:10px"><strong>Alert on:</strong></p>
+    <label class="check"><input type="checkbox" name="alert_login_fail" {{ 'checked' if s.alert_login_fail }}> account lockouts (repeated failed logins)</label>
+    <label class="check"><input type="checkbox" name="alert_config_change" {{ 'checked' if s.alert_config_change }}> access list / network rule changes</label>
+    <label class="check"><input type="checkbox" name="alert_service" {{ 'checked' if s.alert_service }}> service or Squid restart failures</label>
+    <label class="check"><input type="checkbox" name="alert_license" {{ 'checked' if s.alert_license }}> license expiry and tampering</label>
+    <label class="check"><input type="checkbox" name="alert_cert" {{ 'checked' if s.alert_cert }}> certificate expiry</label>
+    <p class="muted small">Critical security events (account lockout, license
+    tampering, factory reset) are always mailed when email is enabled.</p>
+    <button class="btn btn-primary">Save email settings</button>
+  </form>
+  <form method="post" action="{{ url_for('settings_smtp_test') }}" class="inline">
+    <button class="btn">Send test email</button>
+  </form>
+</section>
+
+<section class="panel" id="deplists">
+  <h2>Dependency Finder — category lists</h2>
+  <p class="muted small">These lists label domains the Dependency Finder discovers,
+  to help operators judge them. They are advisory only and never allow anything
+  automatically. Import domains (one per line) to extend the built-in lists.</p>
+  <table class="log-table">
+    <thead><tr><th>Category</th><th>Purpose</th><th>Domains</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">telemetry</td><td class="small">Browser/search/tracking noise — flagged "avoid"</td><td class="mono">{{ deplist_stats.telemetry }}</td></tr>
+      <tr><td class="mono">cdn</td><td class="small">Known CDNs/infrastructure — flagged "likely"</td><td class="mono">{{ deplist_stats.cdn }}</td></tr>
+      <tr><td class="mono">provider</td><td class="small">Platform endpoints (M365/Google)</td><td class="mono">{{ deplist_stats.provider }}</td></tr>
+    </tbody>
+  </table>
+  <form method="post" action="{{ url_for('deplists_import') }}" enctype="multipart/form-data" class="mt">
+    <div class="row">
+      <label>Category
+        <select name="category">
+          <option value="telemetry">telemetry (noise)</option>
+          <option value="cdn">cdn (infrastructure)</option>
+          <option value="provider">provider (platforms)</option>
+        </select>
+      </label>
+    </div>
+    <label>Paste domains (one per line)
+      <textarea name="domains" rows="4" placeholder="cdn.example.com&#10;analytics.example.net"></textarea>
+    </label>
+    <label>…or upload a list file
+      <input type="file" name="file" accept=".txt,.list">
+    </label>
+    <button class="btn btn-primary">Import into list</button>
+  </form>
+</section>
+
+<section class="panel" id="ad">
+  <h2>Active Directory authentication (optional)</h2>
+  <p class="muted small">When enabled, users not found locally are authenticated
+  against AD and mapped to a role by group membership. <strong>Local accounts
+  always work</strong> — AD is never required, and if every domain controller is
+  unreachable you can still sign in locally. MFA still applies on top of AD.</p>
+  <form method="post" action="{{ url_for('settings_ad') }}">
+    <input type="hidden" name="action" value="save">
+    <label class="check" style="margin-bottom:14px">
+      <input type="checkbox" name="ad_enabled" {{ 'checked' if s.ad_enabled }}> enable Active Directory login
+    </label>
+    <div class="row">
+      <label>Domain controller 1 <input name="ad_host1" value="{{ s.ad_host1 or '' }}" placeholder="dc1.bank.local"></label>
+      <label>Domain controller 2 <input name="ad_host2" value="{{ s.ad_host2 or '' }}" placeholder="dc2.bank.local (optional)"></label>
+    </div>
+    <div class="row">
+      <label>Security
+        <select name="ad_security" onchange="adPort(this.value)">
+          {% set curmode = s.ad_security or ('ldaps' if s.ad_use_ssl else 'none') %}
+          <option value="ldaps"    {{ 'selected' if curmode == 'ldaps' }}>LDAPS - TLS on 636 (recommended)</option>
+          <option value="starttls" {{ 'selected' if curmode == 'starttls' }}>StartTLS - upgrade on 389</option>
+          <option value="none"     {{ 'selected' if curmode == 'none' }}>None - plaintext 389 (not recommended)</option>
+        </select>
+      </label>
+      <label>Port <input type="number" name="ad_port" id="ad_port" value="{{ s.ad_port or 636 }}" class="w-narrow"></label>
+      <label>Timeout (s) <input type="number" name="ad_timeout" value="{{ s.ad_timeout or 5 }}" min="2" max="30" class="w-narrow"></label>
+    </div>
+    <div class="row">
+      <label class="check" style="margin-bottom:12px"><input type="checkbox" name="ad_verify_cert" {{ 'checked' if s.ad_verify_cert }}> verify DC certificate</label>
+    </div>
+    <p class="hint" style="margin:-4px 0 10px">If LDAPS on 636 is reset by the domain
+      controller, it usually has no LDAPS certificate installed. StartTLS on 389 still
+      encrypts credentials and often works where LDAPS does not.</p>
+    <div class="row">
+      <label>AD domain (UPN suffix) <input name="ad_domain" value="{{ s.ad_domain or '' }}" placeholder="bank.local"></label>
+      <label>Base DN <input name="ad_base_dn" value="{{ s.ad_base_dn or '' }}" placeholder="DC=bank,DC=local"></label>
+    </div>
+    <div class="row">
+      <label>Service account <span class="muted small">(read-only, optional)</span>
+        <input name="ad_bind_user" value="{{ s.ad_bind_user or '' }}" placeholder="svc-btproxy@bank.local"></label>
+      <label>Service password <span class="muted small">(leave blank to keep)</span>
+        <input type="password" name="ad_bind_password" autocomplete="off" placeholder="••••••••"></label>
+    </div>
+    <label>CA certificate file <span class="muted small">(optional PEM for verifying the DC)</span>
+      <input name="ad_ca_file" value="{{ s.ad_ca_file or '' }}" placeholder="/opt/squid-webgui/certs/dc-ca.pem"></label>
+    <h2 class="mt">Group → role mapping</h2>
+    <p class="muted small">Enter the group name or full DN. Most privileged match wins. A user in none of these is denied.</p>
+    <label>Admin group <input name="ad_group_admin" value="{{ s.ad_group_admin or '' }}" placeholder="BTProxy-Admins"></label>
+    <label>Operator group <input name="ad_group_operator" value="{{ s.ad_group_operator or '' }}" placeholder="BTProxy-Operators"></label>
+    <label>Viewer group <input name="ad_group_viewer" value="{{ s.ad_group_viewer or '' }}" placeholder="BTProxy-Viewers"></label>
+    <button class="btn btn-primary">Save AD settings</button>
+  </form>
+  <form method="post" action="{{ url_for('settings_ad_test') }}" class="mt">
+    <h2>Test connection</h2>
+    <div class="row">
+      <label>Test username <span class="muted small">(optional, verifies a real login)</span>
+        <input name="test_user" placeholder="jsmith"></label>
+      <label>Test password <input type="password" name="test_password" autocomplete="off"></label>
+      <button class="btn">Test AD</button>
+    </div>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Syslog server (central log forwarding)</h2>
+  <p class="muted small">Forwards every GUI audit event (logins, list changes,
+  reloads, report generation) to your central syslog server in real time —
+  facility LOCAL1. For forwarding Squid's own access.log, see the README.</p>
+  <form method="post">
+    <input type="hidden" name="action" value="syslog">
+    <div class="row">
+      <label class="check" style="margin-bottom:12px">
+        <input type="checkbox" name="syslog_enabled" {{ 'checked' if s.syslog_enabled }}> enable
+      </label>
+      <label>Server IP / hostname
+        <input name="syslog_host" value="{{ s.syslog_host or '' }}" placeholder="e.g. 172.20.99.50">
+      </label>
+      <label>Port
+        <input name="syslog_port" type="number" min="1" max="65535" value="{{ s.syslog_port or 514 }}">
+      </label>
+      <label>Protocol
+        <select name="syslog_proto">
+          <option value="udp" {{ 'selected' if s.syslog_proto != 'tcp' }}>UDP (standard)</option>
+          <option value="tcp" {{ 'selected' if s.syslog_proto == 'tcp' }}>TCP (reliable)</option>
+        </select>
+      </label>
+      <button class="btn btn-primary">Save</button>
+    </div>
+  </form>
+  {% if s.syslog_enabled %}
+  <form method="post" class="mt">
+    <input type="hidden" name="action" value="syslog_test">
+    <button class="btn btn-small">Send test message</button>
+  </form>
+  {% endif %}
+</section>
+
+<section class="panel" id="dr">
+  <h2>DC-DR replication (High availability)</h2>
+  {% if s.dr_enabled and s.dr_mode == 'active-passive' and s.dr_role == 'standby' %}
+  <div class="danger-panel">
+    <strong>This node is the DR STANDBY.</strong>
+    Configuration is read-only here and is managed from the primary
+    ({{ s.dr_peer_host or 'peer' }}). If the primary is down, you can take over:
+    <form method="post" action="{{ url_for('dr_promote') }}" class="mt"
+          onsubmit="return confirm('Make this node the PRIMARY? Only do this if the current primary is offline or demoted — two primaries will diverge.');">
+      <input type="text" name="confirm" placeholder="type PROMOTE" autocomplete="off">
+      <button class="btn btn-red">Become primary</button>
+    </form>
+  </div>
+  {% endif %}
+
+  <p class="hint">Replicates access rules, ports, lists and policy settings to a
+    second node over your DC-DR tunnel. Users, MFA, certificates and the licence
+    are never copied — each node keeps its own. The shared secret authenticates
+    every transfer (HMAC) on top of the tunnel.</p>
+
+  <form method="post" action="{{ url_for('settings_dr') }}">
+    <label class="check">
+      <input type="checkbox" name="dr_enabled" {{ 'checked' if s.dr_enabled }}>
+      enable DC-DR replication
+    </label>
+    <div class="row">
+      <label>Mode
+        <select name="dr_mode">
+          <option value="active-passive" {{ 'selected' if s.dr_mode != 'active-active' }}>Active-Passive — one primary, one standby (recommended)</option>
+          <option value="active-active" {{ 'selected' if s.dr_mode == 'active-active' }}>Active-Active — both serve, both editable</option>
+        </select>
+      </label>
+      <label>This node is
+        <select name="dr_role">
+          <option value="primary" {{ 'selected' if s.dr_role != 'standby' }}>Primary</option>
+          <option value="standby" {{ 'selected' if s.dr_role == 'standby' }}>Standby</option>
+        </select>
+      </label>
+    </div>
+    <div class="row">
+      <label>Peer address (on the DC-DR tunnel)
+        <input name="dr_peer_host" value="{{ s.dr_peer_host or '' }}" placeholder="10.x.x.x or peer hostname">
+      </label>
+      <label>Peer port
+        <input type="number" name="dr_peer_port" value="{{ s.dr_peer_port or cfg.LISTEN_PORT }}" class="w-narrow">
+      </label>
+    </div>
+    <div class="row">
+      <label>Shared secret {{ '(set — leave blank to keep)' if s.dr_secret else '' }}
+        <input type="password" name="dr_secret" autocomplete="new-password"
+               placeholder="{{ 'unchanged' if s.dr_secret else 'a long random string, same on both nodes' }}">
+      </label>
+      <label>Safety-sync every (seconds)
+        <input type="number" name="dr_sync_interval" value="{{ s.dr_sync_interval or 300 }}" min="60" max="3600" class="w-narrow">
+      </label>
+    </div>
+    <label class="check">
+      <input type="checkbox" name="dr_verify_cert" {{ 'checked' if s.dr_verify_cert }}>
+      verify the peer's TLS certificate (leave off if the peer uses a self-signed cert)
+    </label>
+    <button class="btn">Save DR settings</button>
+  </form>
+
+  {% if s.dr_enabled and not (s.dr_mode == 'active-passive' and s.dr_role == 'standby') %}
+  <form method="post" action="{{ url_for('dr_sync_now') }}" class="inline mt">
+    <button class="btn btn-small">Sync now → peer</button>
+  </form>
+  {% endif %}
+  {% if s.dr_last_status %}
+  <p class="hint mt">Last sync: {{ s.dr_last_sync }} — {{ s.dr_last_status }}</p>
+  {% endif %}
+</section>
+  <table class="log-table">
+    <tbody>
+      <tr><td>HTTPS (SSL)</td>
+          <td class="mono">{{ 'ENABLED' if cfg.SSL_ENABLED else 'disabled — enable in config.py when certificate is ready' }}</td></tr>
+      <tr><td>Login lockout</td>
+          <td class="mono">{{ cfg.LOGIN_MAX_FAILS }} failures → locked {{ cfg.LOGIN_LOCK_MIN }} min</td></tr>
+      <tr><td>Idle auto-logout</td>
+          <td class="mono">{{ cfg.IDLE_TIMEOUT_MIN }} minutes</td></tr>
+      <tr><td>CSRF protection</td><td class="mono">active on all forms</td></tr>
+      <tr><td>GUI port</td><td class="mono">{{ cfg.LISTEN_PORT }} — restrict by firewall to the IT subnet</td></tr>
+      <tr><td>Squid proxy port</td><td class="mono">{{ squid_ports or 'could not read squid.conf' }}</td></tr>
+      <tr><td>Squid version</td><td class="mono">{{ squid_ver or 'unknown' }}</td></tr>
+      <tr><td>BT Proxy version</td><td class="mono">v{{ cfg.APP_VERSION }}</td></tr>
+    </tbody>
+  </table>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function adPort(mode){
+  // Only auto-fill when the field still holds the OTHER mode's default,
+  // so an operator's custom port is never overwritten.
+  const el = document.getElementById('ad_port');
+  if (!el) return;
+  const cur = el.value.trim();
+  if (mode === 'ldaps' && (cur === '389' || cur === '')) el.value = '636';
+  if ((mode === 'starttls' || mode === 'none') && (cur === '636' || cur === '')) el.value = '389';
+}
+</script>
+{% endblock %}

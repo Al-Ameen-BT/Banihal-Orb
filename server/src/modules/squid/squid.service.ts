@@ -5,11 +5,13 @@ import { encryptSecret, decryptSecret, hashApiKey, maskToken } from '../../confi
 import { audit } from '../../lib/audit';
 import { renderProxyConfig, classifyEntry, validateSource, validatePortSpec, validBranchName } from './aclEngine';
 import { signBundle, signingPublicKeyPem } from './bundleSigning';
+import { scanDependencies } from './depFinder';
 import { notify } from '../notifications/notifications.service';
 import type {
   CreateProxyInput, UpdateProxyInput, ListProxiesInput,
   CreateBranchInput, UpdateBranchInput, SetBranchListsInput,
   SetPortsInput, SetFullAccessInput, AgentResultInput,
+  TelemetryIngestInput, ActivityQueryInput, DependencyScanInput,
 } from './squid.schema';
 
 // ─── Squid proxy control-plane ───────────────────────────────────────────────
@@ -405,3 +407,147 @@ export async function agentResult(proxyId: string, actorId: string | null, custo
 }
 
 export { decryptSecret };
+
+// ─── Telemetry (agent → platform) ────────────────────────────────────────────
+const TTL_TELEMETRY_MS = 7 * 24 * 3600e3;   // snapshots kept 7 days → 7-day reports
+const TTL_LOGS_MS = 48 * 3600e3;            // live log lines kept 48h → bounded table
+const SESSION_WINDOW_MS = 10 * 60e3;        // "active session" = seen in last 10 min
+
+/** Agent pushes one telemetry snapshot per report window (no audit — too noisy). */
+export async function ingestTelemetry(proxyId: string, customerId: string, input: TelemetryIngestInput) {
+  const observedAt = input.observedAt ? new Date(input.observedAt) : new Date();
+
+  if (input.logLines.length) {
+    await prisma.squidLogEntry.createMany({
+      data: input.logLines.map((l) => ({
+        proxyId, customerId,
+        observedAt: l.ts ? new Date(l.ts * 1000) : observedAt,
+        clientIp: l.ip, method: l.method, action: l.action, url: l.url,
+      })),
+    });
+  }
+  await prisma.squidTelemetry.create({
+    data: {
+      proxyId, customerId, observedAt, seq: input.seq,
+      squidVersion: input.squidVersion ?? null,
+      uptimeSeconds: input.uptimeSeconds ?? null,
+      cpuPercent: input.cpuPercent ?? null,
+      memPercent: input.memPercent ?? null,
+      diskPercent: input.diskPercent ?? null,
+      sessions: input.sessions,
+      counters: input.counters,
+    },
+  });
+  // Bounded retention — prune on ingest keeps both tables small for a fleet.
+  await prisma.squidTelemetry.deleteMany({ where: { proxyId, observedAt: { lt: new Date(Date.now() - TTL_TELEMETRY_MS) } } });
+  await prisma.squidLogEntry.deleteMany({ where: { proxyId, observedAt: { lt: new Date(Date.now() - TTL_LOGS_MS) } } });
+  await prisma.squidProxy.update({ where: { id: proxyId }, data: { lastSeenAt: new Date() } }).catch(() => {});
+  return { ok: true };
+}
+
+/** Org dashboard: latest snapshot + last-hour traffic deltas + active sessions. */
+export async function getTelemetrySummary(proxyId: string) {
+  await loadProxy(proxyId);
+  const now = Date.now();
+  const hourAgo = new Date(now - 3600e3);
+
+  const latest = await prisma.squidTelemetry.findFirst({ where: { proxyId }, orderBy: { observedAt: 'desc' } });
+  const inWindow = await prisma.squidTelemetry.findMany({
+    where: { proxyId, observedAt: { gte: hourAgo } },
+    orderBy: { observedAt: 'asc' as const },
+  });
+  const baseline = inWindow[0] ?? latest;
+
+  const counter = (json: unknown, key: 'requests' | 'denied' | 'bytes' | 'clients') =>
+    Number((json as Record<string, unknown>)?.[key] ?? 0);
+
+  const hour = latest && baseline
+    ? {
+        requests: Math.max(0, counter(latest.counters, 'requests') - counter(baseline.counters, 'requests')),
+        denied: Math.max(0, counter(latest.counters, 'denied') - counter(baseline.counters, 'denied')),
+        bytes: Math.max(0, counter(latest.counters, 'bytes') - counter(baseline.counters, 'bytes')),
+        clients: Math.max(0, counter(latest.counters, 'clients') - counter(baseline.counters, 'clients')),
+      }
+    : { requests: 0, denied: 0, bytes: 0, clients: 0 };
+
+  const sessions = await prisma.squidLogEntry.findMany({
+    where: { proxyId, observedAt: { gte: new Date(now - SESSION_WINDOW_MS) } },
+    orderBy: { observedAt: 'desc' as const },
+    distinct: ['clientIp'],
+    select: { clientIp: true, observedAt: true },
+    take: 5000,
+  });
+
+  return {
+    latest: latest ? {
+      observedAt: latest.observedAt.toISOString(), seq: latest.seq,
+      squidVersion: latest.squidVersion, uptimeSeconds: latest.uptimeSeconds,
+      cpuPercent: latest.cpuPercent, memPercent: latest.memPercent, diskPercent: latest.diskPercent,
+      sessions: latest.sessions,
+    } : null,
+    hour,
+    sessions: sessions.map((s) => ({ clientIp: s.clientIp, lastSeenAt: s.observedAt.toISOString() })),
+  };
+}
+
+/** Live Activity feed from the agent's recent log lines. */
+export async function listActivity(proxyId: string, q: ActivityQueryInput) {
+  await loadProxy(proxyId);
+  const denied = q.denied === undefined || q.denied === '' ? undefined : q.denied === 'true';
+  const where: Prisma.SquidLogEntryWhereInput = {
+    proxyId,
+    action: denied === undefined ? undefined : denied ? 'denied' : 'allowed',
+    clientIp: q.clientIp || undefined,
+    url: q.q ? { contains: q.q, mode: 'insensitive' } : undefined,
+    observedAt: q.before ? { lt: new Date(q.before) } : undefined,
+  };
+  const rows = await prisma.squidLogEntry.findMany({ where, orderBy: { observedAt: 'desc' as const }, take: q.limit });
+  return {
+    activity: rows.map((r) => ({
+      observedAt: r.observedAt.toISOString(), clientIp: r.clientIp,
+      method: r.method, action: r.action, url: r.url,
+    })),
+  };
+}
+
+/** 7-day usage report as CSV rows — derived from the bounded telemetry snapshots. */
+export async function reportCsv(proxyId: string, days: number) {
+  await loadProxy(proxyId);
+  const rows = await prisma.squidTelemetry.findMany({
+    where: { proxyId, observedAt: { gte: new Date(Date.now() - days * 24 * 3600e3) } },
+    orderBy: { observedAt: 'asc' as const },
+    select: { observedAt: true, counters: true, sessions: true },
+  });
+  const counter = (json: unknown, key: string) => Number((json as Record<string, unknown>)?.[key] ?? 0);
+
+  // Bucket by UTC day; per-day deltas between that day's first and last snapshot.
+  const daily = new Map<string, { start: (typeof rows)[number] | null; end: (typeof rows)[number] | null; peers: Set<string> }>();
+  for (const r of rows) {
+    const day = r.observedAt.toISOString().slice(0, 10);
+    const d = daily.get(day) ?? { start: null as (typeof rows)[number] | null, end: null as (typeof rows)[number] | null, peers: new Set<string>() };
+    if (!d.start) d.start = r;
+    d.end = r;
+    for (const ip of (Array.isArray(r.sessions) ? r.sessions : []) as string[]) d.peers.add(ip);
+    daily.set(day, d);
+  }
+
+  const out = ['day,requests,denied,bytes,active_clients'];
+  for (const [day, d] of [...daily.entries()].sort()) {
+    const requests = d.start && d.end ? Math.max(0, counter(d.end.counters, 'requests') - counter(d.start.counters, 'requests')) : 0;
+    const denied = d.start && d.end ? Math.max(0, counter(d.end.counters, 'denied') - counter(d.start.counters, 'denied')) : 0;
+    const bytes = d.start && d.end ? Math.max(0, counter(d.end.counters, 'bytes') - counter(d.start.counters, 'bytes')) : 0;
+    out.push([day, requests, denied, bytes, d.peers.size].join(','));
+  }
+  return out.join('\n');
+}
+
+/** Dependency finder (static HTML, SSRF-guarded). Human ticks → then whitelist. */
+export async function dependencyScan(proxyId: string, actorId: string, customerId: string, input: DependencyScanInput) {
+  await loadProxy(proxyId);
+  const result = await scanDependencies(input.url);
+  await audit({
+    action: 'SQUID_DEPENDENCY_SCAN', performedById: actorId, customerId, targetId: proxyId,
+    metadata: { url: input.url, branchId: input.branchId ?? null, found: result.dependencies.length, excluded: result.excluded.length },
+  });
+  return result;
+}
