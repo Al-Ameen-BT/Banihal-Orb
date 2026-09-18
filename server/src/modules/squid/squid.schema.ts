@@ -67,6 +67,10 @@ export const SetFullAccessSchema = z.object({
   fullAccess: z.array(FullAccessSchema).max(500).default([]),
 });
 
+export const VerifyTokenSchema = z.object({
+  token: z.string().trim().min(1).max(300),
+});
+
 export const AgentResultSchema = z.object({
   seq: z.coerce.number().int().min(0),
   ok: z.boolean(),
@@ -81,4 +85,5 @@ export type UpdateBranchInput = z.infer<typeof UpdateBranchSchema>;
 export type SetBranchListsInput = z.infer<typeof SetBranchListsSchema>;
 export type SetPortsInput = z.infer<typeof SetPortsSchema>;
 export type SetFullAccessInput = z.infer<typeof SetFullAccessSchema>;
+export type VerifyTokenInput = z.infer<typeof VerifyTokenSchema>;
 export type AgentResultInput = z.infer<typeof AgentResultSchema>;

@@ -158,6 +158,35 @@ function RotateKeyModal({ proxyId, onClose }: { proxyId: string; onClose: () => 
   );
 }
 
+// ─── Verify pasted registration token ────────────────────────────────────────
+function VerifyTokenField({ proxyId }: { proxyId: string }) {
+  const [token, setToken] = useState('');
+  const [result, setResult] = useState<'valid' | 'invalid' | 'error' | null>(null);
+  const verify = useMutation({
+    mutationFn: () => squidApi.verifyToken(proxyId, token),
+    onSuccess: (r) => setResult((r.data as { valid: boolean }).valid ? 'valid' : 'invalid'),
+    onError: () => setResult('error'),
+  });
+  return (
+    <div className="pt-2 border-t border-slate-200/70 space-y-2">
+      <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Verify a pasted token</p>
+      <div className="flex gap-2">
+        <input
+          type="text" value={token} onChange={(e) => { setToken(e.target.value); setResult(null); }}
+          placeholder="Paste the registration token (pk_…)"
+          className="input text-xs font-mono flex-1" disabled={verify.isPending}
+        />
+        <GlowButton variant="secondary" className="py-1.5 px-3 text-xs whitespace-nowrap" onClick={() => verify.mutate()} loading={verify.isPending} disabled={verify.isPending || !token.trim()}>Verify</GlowButton>
+      </div>
+      {result && (
+        <p className={`text-sm ${result === 'valid' ? 'text-emerald-600' : 'text-red-600'}`}>
+          {result === 'valid' ? 'Matches the registered key — the agent can authenticate with it.' : result === 'invalid' ? 'Does not match the registered key.' : 'Could not verify — try again.'}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ─── Branch lists editor ─────────────────────────────────────────────────────
 const ENTRY_RE = /^\./;
 function parseEntries(text: string): SiteEntry[] {
@@ -439,6 +468,7 @@ function ProxyDetailModal({ proxySummary, onClose }: { proxySummary: ProxySummar
                   <p className="text-slate-500">No key registered yet{canEdit ? ' — create the proxy, then rotate to mint one' : ''}.</p>
                 )}
                 {canEdit && <GlowButton variant="secondary" className="py-1.5 px-3 text-xs" onClick={() => setRotating(true)}>Rotate agent key</GlowButton>}
+                {canEdit && <VerifyTokenField proxyId={proxySummary.id} />}
               </div>
 
               <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-4 space-y-2 break-all">

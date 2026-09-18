@@ -195,6 +195,7 @@ export const squidApi = {
   update: (id: string, data: unknown) => api.patch(`/squid/${id}`, data),
   remove: (id: string) => api.delete(`/squid/${id}`),
   rotateKey: (id: string) => api.post(`/squid/${id}/rotate-key`),
+  verifyToken: (id: string, token: string) => api.post(`/squid/${id}/verify-token`, { token }),
   bundlePublicKey: () => api.get('/squid/bundle-key'),
   listBranches: (id: string) => api.get(`/squid/${id}/branches`),
   createBranch: (id: string, data: { name: string; description?: string; mode?: string }) => api.post(`/squid/${id}/branches`, data),

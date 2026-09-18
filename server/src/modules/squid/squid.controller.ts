@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import {
-  CreateProxySchema, UpdateProxySchema, ListProxiesSchema,
+  CreateProxySchema, UpdateProxySchema, ListProxiesSchema, VerifyTokenSchema,
   CreateBranchSchema, UpdateBranchSchema, SetBranchListsSchema, SetPortsSchema, SetFullAccessSchema,
 } from './squid.schema';
 import * as service from './squid.service';
@@ -43,6 +43,13 @@ export async function deleteProxy(req: Request, res: Response, next: NextFunctio
 export async function rotateKey(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     res.json(await service.rotateAgentKey(req.params['proxyId']!, req.user.userId, req.user.customerId!));
+  } catch (e) { next(e); }
+}
+
+export async function verifyToken(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = VerifyTokenSchema.parse(req.body);
+    res.json(await service.verifyRegistrationToken(req.params['proxyId']!, req.user.userId, req.user.customerId!, input.token));
   } catch (e) { next(e); }
 }
 

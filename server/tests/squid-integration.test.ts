@@ -207,6 +207,22 @@ describe('Squid org API + agent protocol', () => {
     expect(history.body.changeRequests.map((c: { action: string }) => c.action).sort())
       .toEqual(['CREATE_BRANCH', 'SET_LISTS', 'SET_PORTS']);
   });
+
+  it('verifies a pasted registration token against the registered key', async () => {
+    const { cookies } = await orgFixture('Verify Org', 'verify@test.dev');
+    const proxy = (await request(app).post('/api/squid').set('Cookie', cookies).send({ name: 'trusted' })).body;
+    const raw = (await request(app).post(`/api/squid/${proxy.id}/rotate-key`).set('Cookie', cookies)).body.raw;
+
+    const good = await request(app).post(`/api/squid/${proxy.id}/verify-token`).set('Cookie', cookies).send({ token: raw });
+    expect(good.status).toBe(200);
+    expect(good.body.valid).toBe(true);
+    expect(good.body.hint).toBeTruthy();
+
+    const bad = await request(app).post(`/api/squid/${proxy.id}/verify-token`).set('Cookie', cookies).send({ token: 'pk_definitely-not-it' });
+    expect(bad.status).toBe(200);
+    expect(bad.body.valid).toBe(false);
+    expect(bad.body.hint).toBeNull();
+  });
 });
 
 describe('Squid catalog provisioning (ADMINISTRATOR)', () => {

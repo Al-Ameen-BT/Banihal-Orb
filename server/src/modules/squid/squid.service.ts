@@ -67,6 +67,26 @@ export async function rotateAgentKey(proxyId: string, actorId: string, customerI
   return { hint: k.hint, raw: k.raw };
 }
 
+/**
+ * Verify a pasted registration token against the proxy's stored key. Lets the
+ * org admin confirm the token handed over by the platform admin (or a team
+ * member) is the actual current key — no one-time-display dependency. Read-only:
+ * no control-plane state changes, so the lock guard does not apply.
+ */
+export async function verifyRegistrationToken(proxyId: string, actorId: string, customerId: string, token: string): Promise<{ valid: boolean; hint: string | null }> {
+  const proxy = await prisma.squidProxy.findUnique({ where: { id: proxyId }, select: { regKeyEncrypted: true, registrationHint: true } });
+  if (!proxy) throw err(404, 'NOT_FOUND', 'Proxy not found');
+  let expected: string;
+  try { expected = proxy.regKeyEncrypted ? decryptSecret(proxy.regKeyEncrypted) : ''; } catch { expected = ''; }
+  const valid = expected.length > 0 && token.length === expected.length && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(expected));
+  await audit({
+    action: valid ? 'SQUID_TOKEN_VERIFIED' : 'SQUID_TOKEN_VERIFY_FAILED',
+    performedById: actorId, customerId, targetId: proxyId,
+    metadata: { hint: valid ? proxy.registrationHint : undefined },
+  });
+  return { valid, hint: valid ? proxy.registrationHint : null };
+}
+
 // ─── Org-facing CRUD ─────────────────────────────────────────────────────────
 export async function listProxies(input: ListProxiesInput) {
   const skip = (input.page - 1) * input.limit;

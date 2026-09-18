@@ -24,6 +24,7 @@ router.post('/', ...manage, c.createProxy);
 router.patch('/:proxyId', ...manage, c.updateProxy);
 router.delete('/:proxyId', ...manage, c.deleteProxy);
 router.post('/:proxyId/rotate-key', ...manage, c.rotateKey);
+router.post('/:proxyId/verify-token', ...manage, c.verifyToken);
 
 router.get('/:proxyId/branches', ...view, c.listBranches);
 router.post('/:proxyId/branches', ...manage, c.createBranch);

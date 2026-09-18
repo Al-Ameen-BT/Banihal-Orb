@@ -88,6 +88,8 @@ export const AUDIT_ACTIONS = [
   //    irreversible-enough governance events: defaultScope true.
   { key: 'SQUID_SERVICE_PROVISIONED',                                                   defaultScope: true,  sadminFeed: true  },
   { key: 'SQUID_PROXY_KEY_GENERATED',                                                   defaultScope: true,  sadminFeed: true  },
+  { key: 'SQUID_TOKEN_VERIFIED',                                                        defaultScope: false, sadminFeed: false },
+  { key: 'SQUID_TOKEN_VERIFY_FAILED',                                                   defaultScope: false, sadminFeed: false },
   { key: 'SQUID_BRANCH_CREATED',                                                        defaultScope: true,  sadminFeed: false },
   { key: 'SQUID_BRANCH_UPDATED',                                                        defaultScope: true,  sadminFeed: false },
   { key: 'SQUID_BRANCH_DELETED',                                                        defaultScope: true,  sadminFeed: false },
