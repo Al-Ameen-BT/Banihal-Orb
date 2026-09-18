@@ -16,6 +16,10 @@ export async function getProxy(req: Request, res: Response, next: NextFunction):
   try { res.json(await service.getProxy(req.params['proxyId']!)); } catch (e) { next(e); }
 }
 
+export async function listChangeRequests(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try { res.json(await service.listChangeRequests(req.params['proxyId']!)); } catch (e) { next(e); }
+}
+
 export async function createProxy(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const input = CreateProxySchema.parse(req.body);

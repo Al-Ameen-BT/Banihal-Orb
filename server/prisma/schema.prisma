@@ -471,10 +471,15 @@ model CustomerService {
   purchaseDate DateTime @default(now())
   endDate      DateTime
   notes        String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  squidProxy   SquidProxy?
+  // Expiry-reminder watermark: the last date a reminder email was sent for this
+  // service. A reminder fires again only on a later day, and only when the
+  // remaining days cross one of the configured windows — so each threshold
+  // mails exactly once.
+  lastRemindedAt DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  customer       Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  squidProxy     SquidProxy?
 
   @@index([customerId])
   @@index([endDate])
@@ -653,6 +658,7 @@ model SquidProxy {
   customerService      CustomerService? @relation(fields: [customerServiceId], references: [id])
   customerServiceId    String?          @unique
   branches             SquidBranch[]
+  changeRequests       SquidChangeRequest[]
 
   @@index([customerId])
   @@index([status])
@@ -695,6 +701,32 @@ enum SquidProxyStatus {
 enum SquidBranchMode {
   ADDITIVE
   EXCLUSIVE
+}
+
+// Every requested config change to a proxy — from the web dashboard (WEB) with
+// the SLACK/API channels reserved for bot-driven requests. One row per change:
+// the "auto ticket" left behind so each requested change is attributable.
+enum SquidChangeSource {
+  WEB
+  SLACK
+  API
+}
+
+model SquidChangeRequest {
+  id         String             @id @default(cuid())
+  proxyId    String
+  customerId String
+  actorId    String?
+  source     SquidChangeSource  @default(WEB)
+  action     String
+  summary    String
+  details    Json
+  createdAt  DateTime           @default(now())
+  proxy      SquidProxy         @relation(fields: [proxyId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([proxyId])
+  @@map("squidChangeRequests")
 }
 
 enum SlackBotStatus {

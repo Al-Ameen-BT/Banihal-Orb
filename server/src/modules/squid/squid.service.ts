@@ -75,8 +75,9 @@ export async function listProxies(input: ListProxiesInput) {
       skip, take: input.limit,
       orderBy: { createdAt: 'desc' },
       select: {
-        id: true, name: true, description: true, status: true, lastSeenAt: true,
+        id: true, name: true, description: true, status: true, lastSeenAt: true, lastError: true,
         revision: true, appliedSeq: true, locked: true, createdAt: true,
+        customerService: { select: { id: true, name: true, endDate: true } },
         _count: { select: { branches: true } },
       },
     }),
@@ -151,6 +152,32 @@ async function bumpRevision(proxyId: string) {
   return prisma.squidProxy.update({ where: { id: proxyId }, data: { revision: { increment: 1 } }, select: { id: true } });
 }
 
+/** Auto-ticket: record each requested config change so it is attributable,
+ *  whether it came from the web dashboard or a Slack/API bot surface. */
+async function recordChangeRequest(input: {
+  proxyId: string; customerId: string; actorId: string | null;
+  source?: 'WEB' | 'SLACK' | 'API'; action: string; summary: string; details?: Record<string, unknown>;
+}) {
+  await prisma.squidChangeRequest.create({
+    data: {
+      proxyId: input.proxyId, customerId: input.customerId,
+      actorId: input.actorId ?? null, source: input.source ?? 'WEB',
+      action: input.action, summary: input.summary, details: input.details ?? {},
+    },
+  }).catch(() => {});
+}
+
+/** Recent change-request records for a proxy (the auto-ticket ledger). */
+export async function listChangeRequests(proxyId: string, limit = 100) {
+  await loadProxy(proxyId);
+  const rows = await prisma.squidChangeRequest.findMany({
+    where: { proxyId },
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+  });
+  return { changeRequests: rows };
+}
+
 export async function listBranches(proxyId: string) {
   await loadProxy(proxyId);
   return prisma.squidBranch.findMany({ where: { proxyId }, orderBy: { createdAt: 'asc' } });
@@ -167,6 +194,7 @@ export async function createBranch(proxyId: string, actorId: string, customerId:
   });
   await bumpRevision(proxyId);
   await audit({ action: 'SQUID_BRANCH_CREATED', performedById: actorId, customerId, targetId: branch.id, metadata: { proxyId, branch: input.name } });
+  await recordChangeRequest({ proxyId, customerId, actorId, action: 'CREATE_BRANCH', summary: `Branch “${input.name}” created (${input.mode})`, details: { branchId: branch.id, branch: input.name, mode: input.mode } });
   return branch;
 }
 
@@ -182,6 +210,7 @@ export async function updateBranch(proxyId: string, branchId: string, actorId: s
   const updated = await prisma.squidBranch.update({ where: { id: branchId }, data: { name: input.name, description: input.description, mode: input.mode } });
   await bumpRevision(proxyId);
   await audit({ action: 'SQUID_BRANCH_UPDATED', performedById: actorId, customerId, targetId: branchId, metadata: { proxyId, changes: input } });
+  await recordChangeRequest({ proxyId, customerId, actorId, action: 'UPDATE_BRANCH', summary: `Branch “${input.name ?? branch.name}” updated`, details: { branchId, changes: input } });
   return updated;
 }
 
@@ -193,6 +222,7 @@ export async function deleteBranch(proxyId: string, branchId: string, actorId: s
   await prisma.squidBranch.delete({ where: { id: branchId } });
   await bumpRevision(proxyId); // revision bumps even though we only DELETE a file
   await audit({ action: 'SQUID_BRANCH_DELETED', performedById: actorId, customerId, targetId: branchId, metadata: { proxyId, branch: branch.name } });
+  await recordChangeRequest({ proxyId, customerId, actorId, action: 'DELETE_BRANCH', summary: `Branch “${branch.name}” deleted`, details: { branchId } });
   return { ok: true };
 }
 
@@ -211,6 +241,11 @@ export async function setBranchLists(proxyId: string, branchId: string, actorId:
     action: 'SQUID_LIST_UPDATED', performedById: actorId, customerId, targetId: branchId,
     metadata: { proxyId, branch: branch.name, sourceCount: input.sources.length, whitelistCount: input.whitelist.length, blacklistCount: input.blacklist.length },
   });
+  await recordChangeRequest({
+    proxyId, customerId, actorId, action: 'SET_LISTS',
+    summary: `Lists updated on branch “${branch.name}” (${input.sources.length} sources, ${input.whitelist.length} whitelist, ${input.blacklist.length} blacklist)`,
+    details: { branchId, sourceCount: input.sources.length, whitelistCount: input.whitelist.length, blacklistCount: input.blacklist.length },
+  });
   return { ok: true };
 }
 
@@ -221,6 +256,7 @@ export async function setPorts(proxyId: string, actorId: string, customerId: str
   await prisma.squidProxy.update({ where: { id: proxyId }, data: { safePorts: input.safePorts, sslPorts: input.sslPorts } });
   await bumpRevision(proxyId);
   await audit({ action: 'SQUID_NETWORK_UPDATED', performedById: actorId, customerId, targetId: proxyId, metadata: { ports: input } });
+  await recordChangeRequest({ proxyId, customerId, actorId, action: 'SET_PORTS', summary: `Ports updated (${input.safePorts.length} safe, ${input.sslPorts.length} ssl)`, details: { ports: input } });
   return { ok: true };
 }
 
@@ -231,6 +267,7 @@ export async function setFullAccess(proxyId: string, actorId: string, customerId
   await prisma.squidProxy.update({ where: { id: proxyId }, data: { fullAccess: input.fullAccess } });
   await bumpRevision(proxyId);
   await audit({ action: 'SQUID_NETWORK_UPDATED', performedById: actorId, customerId, targetId: proxyId, metadata: { fullAccessCount: input.fullAccess.length } });
+  await recordChangeRequest({ proxyId, customerId, actorId, action: 'SET_FULL_ACCESS', summary: `Full-access list updated (${input.fullAccess.length} entries)`, details: { fullAccessCount: input.fullAccess.length } });
   return { ok: true };
 }
 
@@ -292,17 +329,44 @@ async function notifyAdminsOfProxy(customerId: string, message: string): Promise
 
 // ─── Agent runtime surface ───────────────────────────────────────────────────
 export async function agentPoll(proxyId: string) {
-  const proxy = await prisma.squidProxy.findUnique({ where: { id: proxyId } });
+  const proxy = await prisma.squidProxy.findUnique({
+    where: { id: proxyId },
+    include: { customerService: { select: { endDate: true } } },
+  });
   if (!proxy) throw err(404, 'NOT_FOUND', 'Proxy not found');
+
+  // Auto-suspend: the agent poll is the enforcement point for expiry AND the
+  // explicit lock. A proxy whose subscription has lapsed (or that was disabled)
+  // stops receiving its real rules and is pushed a default-deny lock bundle —
+  // the host applies it like any other revision, so the network actually closes.
+  const now = Date.now();
+  const suspended = proxy.locked || (!!proxy.customerService && proxy.customerService.endDate.getTime() < now);
+  let revision = proxy.revision;
+
   // Heartbeat: a successful authenticated poll = the agent is alive. Only a
   // DISABLED proxy stays put (disabled is an explicit operational decision that a
   // poll must never silently override); everything else flips to CONNECTED.
   const nextStatus = proxy.status === 'DISABLED' ? 'DISABLED' : 'CONNECTED';
   await prisma.squidProxy.update({ where: { id: proxyId }, data: { lastSeenAt: new Date(), status: nextStatus } });
-  if (proxy.revision <= proxy.appliedSeq) return { pending: null, appliedSeq: proxy.appliedSeq, revision: proxy.revision };
-  const { bundle } = await renderBundle(proxyId);
-  if (!bundle) return { pending: null, appliedSeq: proxy.appliedSeq, revision: proxy.revision };
-  return { pending: buildSignedBundle(bundle.files, proxy.revision), appliedSeq: proxy.appliedSeq, revision: proxy.revision };
+
+  if (suspended && !proxy.locked) {
+    // First observation of the lapse: persist the write-guard, raise the lock
+    // revision so the agent pulls the deny-all bundle, and tell the org admins.
+    await prisma.squidProxy.update({ where: { id: proxyId }, data: { locked: true, revision: { increment: 1 } } });
+    revision += 1;
+    await audit({
+      action: 'SQUID_CONFIG_LOCKED', performedById: null, customerId: proxy.customerId, targetId: proxyId,
+      metadata: { reason: proxy.customerService ? 'subscription expired' : 'locked', seq: revision },
+    }).catch(() => {});
+    await notifyAdminsOfProxy(proxy.customerId, `Proxy “${proxy.name}” auto-suspended (subscription expired) — its config is locked deny-all.`).catch(() => {});
+  }
+
+  if (revision <= proxy.appliedSeq) return { pending: null, appliedSeq: proxy.appliedSeq, revision };
+
+  const bundle = suspended
+    ? renderProxyConfig({ safePorts: [], sslPorts: [], fullAccess: [] }, [], revision)
+    : (await renderBundle(proxyId)).bundle;
+  return { pending: buildSignedBundle(bundle.files, revision), appliedSeq: proxy.appliedSeq, revision };
 }
 
 /** Agent reports the outcome of applying a rendered revision. */

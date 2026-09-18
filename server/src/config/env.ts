@@ -87,6 +87,10 @@ const EnvSchema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
   MAIL_FROM: z.string().default('noreply@b2bsaas.com'),
+  // Service-expiry reminder cadence, comma-separated "days before end date".
+  // Each window where remaining days exactly equals the value mails once per
+  // service (e.g. 30,14,7,3,1 → five reminders over the life of a subscription).
+  SERVICE_EXPIRY_REMINDER_DAYS: z.string().optional(),
   // Email MFA: a 6-digit code is required on every login. TTL, max wrong-code
   // attempts before the challenge is burned, and a resend cooldown (anti-spam).
   MFA_CODE_TTL_MINUTES: z.coerce.number().min(1).default(10),

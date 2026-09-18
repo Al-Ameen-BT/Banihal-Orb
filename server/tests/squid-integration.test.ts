@@ -155,6 +155,58 @@ describe('Squid org API + agent protocol', () => {
       .set('X-Proxy-Id', proxy.id).set('X-Proxy-Timestamp', ts4).set('Authorization', `Bearer ${hmacSig(key, 'GET', pollUrl, ts4, Buffer.alloc(0))}`);
     expect(poll3.body.pending).toBeNull();
   });
+
+  it('agent poll auto-suspends an expired service: locks the proxy, pushes deny-all', async () => {
+    const { org, cookies } = await orgFixture('Suspend Org', 'suspend@test.dev');
+    const proxy = (await request(app).post('/api/squid').set('Cookie', cookies).send({ name: 'managed' })).body;
+    // Key first (an unlinked proxy is not locked), then attach an expired service.
+    const key = (await request(app).post(`/api/squid/${proxy.id}/rotate-key`).set('Cookie', cookies)).body.raw;
+    const svc = await prisma.customerService.create({
+      data: { customerId: org.id, name: 'Squid License', monthlyPrice: 0, endDate: new Date(Date.now() - 1000) },
+    });
+    await prisma.squidProxy.update({ where: { id: proxy.id }, data: { customerServiceId: svc.id, status: 'PENDING' } });
+
+    const pollUrl = '/api/proxy-agent/poll';
+    const ts = String(Date.now());
+    const poll = await request(app).get(pollUrl)
+      .set('X-Proxy-Id', proxy.id).set('X-Proxy-Timestamp', ts).set('Authorization', `Bearer ${hmacSig(key, 'GET', pollUrl, ts, Buffer.alloc(0))}`);
+    expect(poll.status).toBe(200);
+    expect(poll.body.pending).not.toBeNull();
+    const lockConf = poll.body.pending.files.find((f: { path: string }) => f.path.includes('webgui_generated.conf'))?.content ?? '';
+    expect(lockConf).not.toContain('http_access allow');
+    expect(lockConf).not.toContain('acl br');
+
+    const after = await prisma.squidProxy.findUnique({ where: { id: proxy.id }, select: { locked: true, status: true } });
+    expect(after?.locked).toBe(true);
+    expect(after?.status).toBe('CONNECTED');
+    expect(await prisma.auditLog.count({ where: { action: 'SQUID_CONFIG_LOCKED', targetId: proxy.id } })).toBe(1);
+
+    // Renewing the service lifts only the expiry lock.
+    const platform = await createTestOrg('Platform');
+    await createTestUser(platform.id, 'provider@example.com', 'ADMINISTRATOR', 'administration');
+    const sadmin = await loginAs('provider@example.com');
+    const renew = await request(app).post(`/api/saas-admin/services/${svc.id}/renew`).set('Cookie', sadmin).send({ months: 1 });
+    expect(renew.status).toBe(200);
+    const unlocked = await prisma.squidProxy.findUnique({ where: { id: proxy.id }, select: { locked: true } });
+    expect(unlocked?.locked).toBe(false);
+  });
+
+  it('records every requested config change as a ticket-style change request', async () => {
+    const { cookies } = await orgFixture('History Org', 'hist@test.dev');
+    const proxy = (await request(app).post('/api/squid').set('Cookie', cookies).send({ name: 'recorded' })).body;
+    const br = await request(app).post(`/api/squid/${proxy.id}/branches`).set('Cookie', cookies).send({ name: 'sales', mode: 'ADDITIVE' });
+    expect(br.status).toBe(201);
+    await request(app).put(`/api/squid/${proxy.id}/branches/${br.body.id}/lists`).set('Cookie', cookies).send({
+      sources: ['10.0.0.5'], whitelist: [{ value: 'example.com', subdomain: false }], blacklist: [],
+    });
+    await request(app).put(`/api/squid/${proxy.id}/ports`).set('Cookie', cookies).send({ safePorts: ['8080'], sslPorts: [] });
+
+    const history = await request(app).get(`/api/squid/${proxy.id}/change-requests`).set('Cookie', cookies);
+    expect(history.status).toBe(200);
+    expect(history.body.changeRequests).toHaveLength(3);
+    expect(history.body.changeRequests.map((c: { action: string }) => c.action).sort())
+      .toEqual(['CREATE_BRANCH', 'SET_LISTS', 'SET_PORTS']);
+  });
 });
 
 describe('Squid catalog provisioning (ADMINISTRATOR)', () => {

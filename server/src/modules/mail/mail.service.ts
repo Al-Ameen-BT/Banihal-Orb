@@ -716,3 +716,96 @@ export async function sendOrgDeletedEmail(to: string, opts: { name: string; orgN
     console.error('Error sending org deletion email:', error);
   }
 }
+
+// ─── Service expiry reminder ─────────────────────────────────────────────────
+// Sent ahead of (and on) a service's end date by the daily expiry-reminder job.
+// daysLeft mirrors customerServices.endDate: positive days remaining, or a
+// negative value meaning "expired N days ago" (one final notice sent once).
+export function buildServiceExpiryEmail(
+  to: string,
+  opts: { orgName: string; serviceName: string; endDate: Date; daysLeft: number },
+): { subject: string; html: string; text: string } {
+  const date = opts.endDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  const expired = opts.daysLeft < 0;
+  const callout: string =
+    expired
+      ? `access to <strong>${opts.serviceName}</strong> was suspended on ${date}; renew to restore it.`
+      : `${opts.serviceName} expires on <strong>${date}</strong> (${opts.daysLeft} day${opts.daysLeft === 1 ? '' : 's'} left).`;
+
+  const bodyHtml = `
+    <h1 style="margin:0 0 8px;font-size:20px;font-weight:700;color:${INK};">
+      ${expired ? 'Service expired' : 'Service expiring soon'}
+    </h1>
+    <p style="margin:0 0 22px;font-size:14px;line-height:1.6;color:${MUTED};">
+      Hi, this is a reminder for <strong>${opts.orgName}</strong>. ${callout}
+    </p>
+
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 22px;border-collapse:collapse;">
+      <tr>
+        <td style="padding:6px 0;font-size:13px;color:${FAINT};width:130px;">Service</td>
+        <td style="padding:6px 0;font-size:13px;color:${INK};font-weight:600;">${opts.serviceName}</td>
+      </tr>
+      <tr>
+        <td style="padding:6px 0;font-size:13px;color:${FAINT};width:130px;">Expires</td>
+        <td style="padding:6px 0;font-size:13px;color:${INK};font-weight:600;">${date}</td>
+      </tr>
+    </table>
+
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 16px;">
+      <tr><td align="center">
+        <a href="${appUrl()}/services" style="display:inline-block;padding:13px 30px;background:${BRAND_COLOR};color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;border-radius:10px;">Manage services</a>
+      </td></tr>
+    </table>
+
+    ${noticeBox([
+      expired
+        ? `<strong>Access is suspended until renewed.</strong> Once the service is renewed the proxy unlocks automatically.`
+        : `Renew within the next ${opts.daysLeft} days if you need more time.`,
+      `This reminder is informational — it does not change anything about your service.`,
+      `If you have questions, contact the ${BRAND_NAME} team.`,
+    ], expired ? 'What this means' : 'What to do')}`;
+
+  const text = [
+    `${BRAND_NAME} — ${expired ? 'your service has expired' : 'your service is expiring soon'}`,
+    ``,
+    `This is a reminder for ${opts.orgName}.`,
+    expired
+      ? `${opts.serviceName} expired on ${date}; access has been suspended until renewed.`
+      : `${opts.serviceName} expires on ${date} (${opts.daysLeft} day(s) left). Renew within ${opts.daysLeft} days to keep it running.`,
+    ``,
+    `Manage services at: ${appUrl()}/services`,
+    ``,
+    expired
+      ? `Access stays suspended until the service is renewed; renewal unlocks it automatically.`
+      : `This reminder is informational — it never changes your service.`,
+    textFooter(to),
+  ].join('\n');
+
+  return {
+    subject: expired
+      ? `[${opts.orgName}] ${opts.serviceName} has expired — access suspended`
+      : `[${opts.orgName}] ${opts.serviceName} expires in ${opts.daysLeft} day${opts.daysLeft === 1 ? '' : 's'}`,
+    html: emailShell({ bodyHtml, to }),
+    text,
+  };
+}
+
+export async function sendServiceExpiryEmail(to: string, opts: { orgName: string; serviceName: string; endDate: Date; daysLeft: number }): Promise<void> {
+  const isConfigured = isSmtpConfigured();
+  const { subject, html, text } = buildServiceExpiryEmail(to, opts);
+
+  if (!isConfigured) {
+    console.log(`\n=============================================`);
+    console.log(`[Email Mock - SMTP Not Configured] Service expiry reminder for ${to}:`);
+    console.log(`   ${opts.serviceName} — ${opts.daysLeft >= 0 ? `expires in ${opts.daysLeft}d` : `expired ${-opts.daysLeft}d ago`}`);
+    console.log(`=============================================\n`);
+    return;
+  }
+
+  try {
+    await transporter.sendMail({ from: `"${BRAND_NAME}" <${env.MAIL_FROM}>`, to, subject, html, text });
+    console.log(`Service expiry reminder sent to ${to}`);
+  } catch (error) {
+    console.error('Error sending service expiry reminder:', error);
+  }
+}

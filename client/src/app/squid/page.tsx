@@ -22,7 +22,16 @@ interface ProxySummary {
   appliedSeq: number;
   locked: boolean;
   createdAt: string;
+  customerService: { id: string; name: string; endDate: string } | null;
   _count: { branches: number };
+}
+
+interface ChangeRequest {
+  id: string;
+  source: string;
+  action: string;
+  summary: string;
+  createdAt: string;
 }
 
 interface SiteEntry { value: string; subdomain: boolean }
@@ -55,6 +64,16 @@ function ago(iso: string | null): string {
   if (s < 60) return 'just now';
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
   return `${Math.floor(s / 3600)}h ago`;
+}
+
+// Subscription status for a service-backed proxy: past/30-day windows get a
+// badge so the dashboard shows the expiry state at a glance.
+function expiryBadge(service: { endDate: string } | null): { cls: string; label: string } | null {
+  if (!service) return null;
+  const days = Math.ceil((new Date(service.endDate).getTime() - Date.now()) / 86400_000);
+  if (days < 0) return { cls: 'text-red-700 bg-red-50 border-red-100', label: 'Expired · suspended' };
+  if (days <= 30) return { cls: 'text-amber-700 bg-amber-50 border-amber-100', label: `Expires in ${days}d` };
+  return null;
 }
 
 // ─── Create proxy ────────────────────────────────────────────────────────────
@@ -191,7 +210,7 @@ function ProxyDetailModal({ proxySummary, onClose }: { proxySummary: ProxySummar
   const qc = useQueryClient();
   const { user } = useAuth();
   const canEdit = user?.role === 'ORG_ADMIN';
-  const [tab, setTab] = useState<'branches' | 'ports' | 'setup'>('branches');
+  const [tab, setTab] = useState<'branches' | 'ports' | 'history' | 'setup'>('branches');
   const [editingBranch, setEditingBranch] = useState<BranchView | null>(null);
   const [addBranch, setAddBranch] = useState(false);
   const [branchName, setBranchName] = useState('');
@@ -213,6 +232,12 @@ function ProxyDetailModal({ proxySummary, onClose }: { proxySummary: ProxySummar
     queryKey: ['squid-bundle-key'],
     queryFn: () => squidApi.bundlePublicKey().then((r) => r.data as { publicKey: string }),
     staleTime: Infinity,
+  });
+
+  const { data: changes } = useQuery<{ changeRequests: ChangeRequest[] }>({
+    queryKey: ['squid-change-requests', proxySummary.id],
+    queryFn: () => squidApi.listChangeRequests(proxySummary.id).then((r) => r.data as { changeRequests: ChangeRequest[] }),
+    refetchInterval: 15_000,
   });
 
   const addBranchMut = useMutation({
@@ -266,7 +291,7 @@ function ProxyDetailModal({ proxySummary, onClose }: { proxySummary: ProxySummar
             <div className="flex items-center gap-2 flex-wrap">
               <h2 className="text-base font-semibold text-slate-900">{detail.name}</h2>
               <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold border ${cfg.cls}`}>{cfg.label}</span>
-              {detail.locked && <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold border text-red-700 bg-red-50 border-red-100">Locked</span>}
+              {detail.locked && <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold border text-red-700 bg-red-50 border-red-100">{detail.customerService && new Date(detail.customerService.endDate).getTime() < Date.now() ? 'Auto-suspended · expired' : 'Locked'}</span>}
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
               {detail.customerService
@@ -281,7 +306,7 @@ function ProxyDetailModal({ proxySummary, onClose }: { proxySummary: ProxySummar
         </div>
 
         <div className="px-6 pt-3 flex items-center gap-1 border-b border-slate-100 flex-shrink-0">
-          {([['branches', 'Branches'], ['ports', 'Ports & access'], ['setup', 'Install & keys']] as const).map(([key, label]) => (
+          {([['branches', 'Branches'], ['ports', 'Ports & access'], ['history', 'Change log'], ['setup', 'Install & keys']] as const).map(([key, label]) => (
             <button key={key} onClick={() => setTab(key)} className={`px-3 py-2 text-sm font-medium rounded-t-lg -mb-px border-b-2 transition-colors cursor-pointer ${tab === key ? 'border-brand text-brand-700' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>
               {label}
             </button>
@@ -374,6 +399,30 @@ function ProxyDetailModal({ proxySummary, onClose }: { proxySummary: ProxySummar
             </div>
           )}
 
+          {tab === 'history' && (
+            <div className="space-y-3">
+              <p className="text-sm text-slate-500">Every requested config change is recorded as a ticket-style entry — from the Slack bot, the dashboard, or an API client.</p>
+              {(changes?.changeRequests?.length ?? 0) === 0 ? (
+                <div className="card p-8 text-center">
+                  <p className="text-sm font-medium text-slate-700 mb-1">No change requests yet</p>
+                  <p className="text-xs text-slate-400">Requests appear here the moment a branch, list, port, or access rule changes.</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {changes!.changeRequests.map((c) => (
+                    <div key={c.id} className="card p-3 flex items-start gap-3">
+                      <span className={`mt-0.5 shrink-0 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${c.source === 'WEB' ? 'text-blue-700 bg-blue-50' : 'text-slate-600 bg-slate-100'}`}>{c.source}</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-slate-800 truncate">{c.summary}</p>
+                        <p className="text-[11px] text-slate-400 mt-0.5 font-mono">{c.action} · {new Date(c.createdAt).toLocaleString()}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {tab === 'setup' && (
             <div className="space-y-4 text-sm">
               <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-4 space-y-1.5">
@@ -452,8 +501,10 @@ export default function SquidPage() {
                           <p className="text-sm font-semibold text-slate-900">{p.name}</p>
                           <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold border ${cfg.cls}`}>{cfg.label}</span>
                           {p.locked && <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold border text-red-700 bg-red-50 border-red-100">Locked</span>}
+                          {(() => { const eb = expiryBadge(p.customerService); return eb ? <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold border ${eb.cls}`}>{eb.label}</span> : null; })()}
                         </div>
                         {p.description && <p className="text-xs text-slate-400 mt-0.5 truncate">{p.description}</p>}
+                        {p.customerService && <p className="text-[11px] text-slate-400 mt-1">via {p.customerService.name} · expires {new Date(p.customerService.endDate).toLocaleDateString()}</p>}
                         <p className="text-[11px] text-slate-400 mt-1">{p._count.branches} branch{p._count.branches === 1 ? '' : 'es'} · last seen {ago(p.lastSeenAt)}</p>
                       </div>
                       <div className="text-right flex-shrink-0">

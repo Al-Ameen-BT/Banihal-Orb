@@ -7,6 +7,7 @@ import { chatPrisma } from './config/chatDatabase';
 import { ticketingPrisma } from './config/ticketingDatabase';
 import { slackManager } from './modules/slack-bots/slackManager';
 import { isPushConfigured } from './lib/webpush';
+import { startExpiryReminders } from './services/expiryReminders';
 
 const PORT = env.PORT;
 
@@ -32,6 +33,9 @@ async function main() {
 
   // Connect enabled Slack bots + start the live-status poll loop (non-fatal).
   slackManager.init().catch((err) => console.error('⚠️  Slack manager init failed:', err));
+
+  // Daily service-expiry reminder emails (non-fatal; SMTP unconfigured → mock print).
+  startExpiryReminders();
 }
 
 main().catch((err) => {

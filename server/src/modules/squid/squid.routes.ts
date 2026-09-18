@@ -19,6 +19,7 @@ const manage = [requireRole('ORG_ADMIN', 'ADMINISTRATOR'), requirePermissionIfPl
 router.get('/', ...view, c.listProxies);
 router.get('/bundle-key', ...view, c.getBundleKey);
 router.get('/:proxyId', ...view, c.getProxy);
+router.get('/:proxyId/change-requests', ...view, c.listChangeRequests);
 router.post('/', ...manage, c.createProxy);
 router.patch('/:proxyId', ...manage, c.updateProxy);
 router.delete('/:proxyId', ...manage, c.deleteProxy);

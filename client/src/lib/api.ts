@@ -204,6 +204,7 @@ export const squidApi = {
     api.put(`/squid/${id}/branches/${branchId}/lists`, data),
   setPorts: (id: string, data: { safePorts?: string[]; sslPorts?: string[]; fullAccess?: unknown[] }) => api.put(`/squid/${id}/ports`, data),
   setFullAccess: (id: string, data: unknown) => api.put(`/squid/${id}/full-access`, data),
+  listChangeRequests: (id: string) => api.get(`/squid/${id}/change-requests`),
 };
 
 // Squid proxies — STAFF console (cross-tenant read/manage).

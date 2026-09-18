@@ -395,10 +395,15 @@ export async function updateService(serviceId: string, adminUserId: string, inpu
     },
   });
 
-  return prisma.customerService.update({
+  const updated = await prisma.customerService.update({
     where: { id: serviceId }, data,
     include: { customer: { select: { id: true, name: true } } },
   });
+
+  // Extending the end date reopens an expired-but-not-disabled proxy: the staff
+  // decision to DISABLE stays, the subscription lapse lifts.
+  if (data['endDate']) await unlockSquidProxyOnRenewal(serviceId, data['endDate'] as Date);
+  return updated;
 }
 
 export async function renewService(serviceId: string, adminUserId: string, input: RenewServiceInput) {
@@ -417,10 +422,27 @@ export async function renewService(serviceId: string, adminUserId: string, input
     },
   });
 
-  return prisma.customerService.update({
+  const updated = await prisma.customerService.update({
     where: { id: serviceId }, data: { endDate: newEndDate },
     include: { customer: { select: { id: true, name: true } } },
   });
+
+  // A renewal is a subscription extension: lift an expiry auto-suspend (but never
+  // an explicit staff DISABLE).
+  await unlockSquidProxyOnRenewal(serviceId, newEndDate);
+  return updated;
+}
+
+// Extending a service's end date reopens an auto-suspended proxy. Guarded: an
+// explicitly DISABLED proxy (staff decision through disableSquidProxy) is never
+// silently re-enabled by a renewal — only the subscription-lapse lock lifts.
+async function unlockSquidProxyOnRenewal(customerServiceId: string, endDate: Date): Promise<void> {
+  if (endDate.getTime() <= Date.now()) return;
+  const proxy = await prisma.squidProxy.findUnique({ where: { customerServiceId }, select: { id: true, status: true, locked: true } });
+  if (proxy && !proxy.locked) return;
+  if (proxy && proxy.status !== 'DISABLED') {
+    await prisma.squidProxy.update({ where: { id: proxy.id }, data: { locked: false } });
+  }
 }
 
 // ─── Add / remove a service for a customer (each org's own catalog) ──────────
@@ -441,23 +463,29 @@ export async function assignCustomerService(customerId: string, adminUserId: str
     include: { customer: { select: { id: true, name: true } } },
   });
 
-  // Zero-config infrastructure provisioning: assigning a catalog service marked
-  // kind=SQUID_PROXY spawns the org's SquidProxy row + an agent registration key
-  // (returned once, shown to the admin, hashed for storage). Every other kind is
-  // just a billable line item.
+  // Registry of service-kind → provisioning hook. Assigning a catalog service
+  // whose kind is in this map spawns that function's resources (today: a squid
+  // proxy + agent registration key); any other kind is just a billable line
+  // item. New service-based bots plug in by adding a kind + a hook here.
+  const PROVISIONERS: Record<string, (customerId: string, serviceId: string, name: string, adminUserId: string) => Promise<{ proxyId: string; rawKey: string; hint: string }>> = {
+    SQUID_PROXY: async (customerId, serviceId, name, adminUserId) => {
+      const { proxy, key, hint } = await provisionSquidProxy(customerId, serviceId, name, adminUserId);
+      return { proxyId: proxy.id, rawKey: key, hint };
+    },
+  };
+
+  const kind = input.catalogServiceId
+    ? ((await prisma.serviceCatalog.findUnique({ where: { id: input.catalogServiceId }, select: { kind: true } }))?.kind ?? 'standard')
+    : 'standard';
   let provisioned: { proxyId: string; rawKey: string; hint: string } | null = null;
-    if (input.catalogServiceId) {
-      const catalog = await prisma.serviceCatalog.findUnique({ where: { id: input.catalogServiceId }, select: { kind: true } });
-      if (catalog?.kind === 'SQUID_PROXY') {
-        const { proxy, key, hint } = await provisionSquidProxy(customerId, created.id, input.name, adminUserId);
-        provisioned = { proxyId: proxy.id, rawKey: key, hint };
-      }
-    }
+  const provision = PROVISIONERS[kind];
+  if (provision) provisioned = await provision(customerId, created.id, input.name, adminUserId);
+
   await prisma.auditLog.create({
     data: {
       action: 'SERVICE_ASSIGNED', performedById: adminUserId, targetId: created.id,
       customerId,
-      metadata: { service: input.name, customer: customer.name, endDate: input.endDate, kind: provisioned ? 'SQUID_PROXY' : 'standard' },
+      metadata: { service: input.name, customer: customer.name, endDate: input.endDate, kind },
     },
   });
 
