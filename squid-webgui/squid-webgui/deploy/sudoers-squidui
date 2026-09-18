@@ -1,7 +1,0 @@
-# /etc/sudoers.d/squidui  (chmod 440)
-# Allows ONLY squid control, GUI self-restart, and the squid-package wrapper.
-# No blanket apt/dnf or systemctl rights are granted.
-# NOTE: sudoers matches the exact argument list - the --no-block variants are
-# required by BT Proxy v1.9.1+ (blocking restarts time out on Squid's
-# 30-second shutdown_lifetime).
-squidui ALL=(root) NOPASSWD: /usr/sbin/squid -k reconfigure, /usr/sbin/squid -k parse, /usr/bin/systemctl --no-block restart squid, /usr/bin/systemctl --no-block restart squid-webgui, /usr/bin/systemctl restart squid, /usr/bin/systemctl restart squid-webgui, /usr/local/sbin/btproxy-squid-update check, /usr/local/sbin/btproxy-squid-update apply
