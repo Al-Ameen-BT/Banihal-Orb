@@ -96,6 +96,9 @@ const EnvSchema = z.object({
   MFA_CODE_TTL_MINUTES: z.coerce.number().min(1).default(10),
   MFA_MAX_ATTEMPTS: z.coerce.number().min(1).default(5),
   MFA_RESEND_COOLDOWN_SECONDS: z.coerce.number().min(0).default(30),
+  // Webhook HMAC secret for ticket approval callbacks (from external ticketing system).
+  // Must be set in production; falls back to JWT_ACCESS_SECRET in dev.
+  WEBHOOK_HMAC_SECRET: z.string().optional(),
   // Organization approval: the code a staff member reads to a new org's admin.
   // The TTL is short by design — it is handed over during a live conversation, and
   // the org admin can request a fresh one (subject to the cooldown) if the call runs
@@ -156,7 +159,7 @@ if (!result.success) {
  * value of JWT_ACCESS_SECRET, or already-encrypted Slack tokens will not decrypt.
  */
 if (result.data.NODE_ENV === 'production') {
-  const missing = (['SLACK_TOKEN_SECRET', 'PASSWORD_PEPPER'] as const).filter((k) => !result.data[k]);
+  const missing = (['SLACK_TOKEN_SECRET', 'PASSWORD_PEPPER', 'WEBHOOK_HMAC_SECRET'] as const).filter((k) => !result.data[k]);
   if (missing.length) {
     console.error(
       `❌ ${missing.join(' and ')} must be set in production — they must not fall back to JWT_ACCESS_SECRET.\n` +
@@ -177,4 +180,6 @@ export const env = {
   ...result.data,
   /** Refresh-token lifetime in ms — drives both the DB row and the cookie Max-Age. */
   JWT_REFRESH_EXPIRES_MS: durationMs(result.data.JWT_REFRESH_EXPIRES_IN),
+  /** HMAC secret for webhook signature verification. Falls back to JWT_ACCESS_SECRET in dev. */
+  WEBHOOK_HMAC_SECRET: result.data.WEBHOOK_HMAC_SECRET ?? result.data.JWT_ACCESS_SECRET,
 };

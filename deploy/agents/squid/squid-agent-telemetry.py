@@ -15,6 +15,9 @@ Stdlib only (squid hosts already run the Python bot). Env:
     SQUID_MANAGER_PID     squid master pid (pgrep -o squid) (default auto)
     SQUID_TELEMETRY_STATE state file                        (default /var/lib/squid-agent/telemetry.state)
     SQUID_HOME_DIR        disk metric target                (default /var/spool/squid)
+    SQUID_BOT_SERVICE     slack bot systemd unit to monitor (default slack-squid-proxy)
+    SQUID_MAIN_CONF       main squid config to snapshot     (default /etc/squid/squid.conf)
+    SQUID_CONF_DIR        generated conf dir to snapshot    (default /etc/squid/acls)
 """
 import hashlib
 import hmac
@@ -42,6 +45,9 @@ KEY_FILE = env("SQUID_KEY_FILE", "/etc/squid-agent/key")
 ACCESS_LOG = env("SQUID_ACCESS_LOG", "/var/log/squid/access.log")
 STATE_FILE = env("SQUID_TELEMETRY_STATE", "/var/lib/squid-agent/telemetry.state")
 HOME_DIR = env("SQUID_HOME_DIR", "/var/spool/squid")
+BOT_SERVICE = env("SQUID_BOT_SERVICE", "slack-squid-proxy")
+MAIN_CONF = env("SQUID_MAIN_CONF", "/etc/squid/squid.conf")
+CONF_DIR = env("SQUID_CONF_DIR", "/etc/squid/acls")
 
 
 def fail(msg):
@@ -53,6 +59,57 @@ if not PLATFORM or not PROXY_ID:
     fail("SQUID_PLATFORM and SQUID_PROXY_ID are required")
 with open(KEY_FILE, "r") as f:
     KEY = f.read().strip().encode()
+
+
+def slack_bot_status():
+    """systemd state of the Slack bot companion service. Returns None when absent."""
+    import subprocess
+    out = subprocess.run(["systemctl", "is-active", BOT_SERVICE], capture_output=True, text=True, timeout=10)
+    state = out.stdout.strip()
+    if state not in ("active", "inactive", "failed"):
+        return None
+    last_error = None
+    try:
+        show = subprocess.run(["systemctl", "show", BOT_SERVICE, "-p", "ExecMainStatus"], capture_output=True, text=True, timeout=10)
+        for line in show.stdout.splitlines():
+            if line.startswith("ExecMainStatus="):
+                code = line.split("=", 1)[1].strip()
+                if code not in ("", "0"):
+                    last_error = f"exit code {code}"
+    except Exception:
+        pass
+    return {"table": BOT_SERVICE, "state": state, "lastError": last_error}
+
+
+def read_conf_snapshot():
+    """Read-only snapshot of the host squid config for the org/platform view.
+
+    Ships the MAIN squid.conf plus each generated `include` file, but only the
+    main conf when the acls dir is empty. Returns None if nothing readable —
+    the caller compares a hash so unchanged config pushes nothing.
+    """
+    main = ""
+    try:
+        with open(MAIN_CONF) as f:
+            main = f.read()[:200_000]
+    except OSError:
+        return None
+    files = [{"path": MAIN_CONF, "content": main}]
+    try:
+        if os.path.isdir(CONF_DIR):
+            for name in sorted(os.listdir(CONF_DIR)):
+                if not name.endswith(".conf"):
+                    continue
+                p = os.path.join(CONF_DIR, name)
+                try:
+                    with open(p) as f:
+                        files.append({"path": p, "content": f.read()[:200_000]})
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    h = hashlib.sha256("\n".join(f["path"] + f["content"] for f in files).encode()).hexdigest()
+    return {"hash": h, "capturedAt": int(time.time() * 1000), "files": files}
 
 
 def log_vfs(dirpath):
@@ -187,7 +244,7 @@ def read_log(state):
     return entries
 
 
-def send_snapshot(state, caller, peers, disk):
+def send_snapshot(state, caller, peers, disk, conf=None):
     body = {
         "seq": state["seq"] + 1,
         "observedAt": int(time.time() * 1000),
@@ -195,6 +252,8 @@ def send_snapshot(state, caller, peers, disk):
         "sessions": peers,
         "logLines": state["window"][-MAX_LINES:],
     }
+    if conf:
+        body["confSnapshot"] = conf
     if caller["version"]:
         body["squidVersion"] = caller["version"]
     if caller["uptime"] is not None:
@@ -205,6 +264,13 @@ def send_snapshot(state, caller, peers, disk):
         body["memPercent"] = caller["mem"]
     if disk is not None:
         body["diskPercent"] = disk
+
+    bot = slack_bot_status()
+    if bot:
+        body["slackBot"] = bot
+
+    if state.get("conf_hash"):
+        body["confHash"] = state["conf_hash"]
 
     raw = json.dumps(body, separators=(",", ":"), default=lambda _: None).encode()
     ts = int(time.time() * 1000)
@@ -257,7 +323,12 @@ def main():
     disk = log_vfs(HOME_DIR)
 
     caller = {"cpu": cpu, "mem": mem, "uptime": uptime, "version": version}
-    send_snapshot(state, caller, peers, disk)
+    conf = read_conf_snapshot()
+    if conf and state.get("conf_hash") != conf["hash"]:
+        send_snapshot(state, caller, peers, disk, conf)   # config changed — ship the files
+        state["conf_hash"] = conf["hash"]
+    else:
+        send_snapshot(state, caller, peers, disk)          # unchanged — hash only (conf_hash in body below)
     save_state(state)
     print(f"telemetry: pushed seq={state['seq']} lines={len(entries)} sessions={len(peers)}")
 

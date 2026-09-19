@@ -103,6 +103,16 @@ export const AUDIT_ACTIONS = [
   { key: 'SQUID_PROXY_ENABLED',                                                         defaultScope: true,  sadminFeed: true  },
   { key: 'SQUID_AGENT_AUTH_FAILED',                                                     defaultScope: false, sadminFeed: true  },
 
+  // ── Squid config change approvals (ticket-gated flow).
+  { key: 'SQUID_CHANGE_APPROVED',                                                       defaultScope: false, sadminFeed: false },
+  { key: 'SQUID_CHANGE_REJECTED',                                                       defaultScope: false, sadminFeed: false },
+  { key: 'SQUID_CHANGE_APPLIED',                                                        defaultScope: true,  sadminFeed: true  },
+  { key: 'SQUID_CHANGE_FAILED',                                                         defaultScope: true,  sadminFeed: true  },
+
+  // ── Squid external API key linking for ticketing integration.
+  { key: 'SQUID_EXTERNAL_API_KEY_LINKED',                                               defaultScope: true,  sadminFeed: true  },
+  { key: 'SQUID_EXTERNAL_API_KEY_UNLINKED',                                             defaultScope: true,  sadminFeed: true  },
+
   // ── Slack identity linking (Phase C). Issuing a link code is a low-volume,
   //    user-initiated event; binding a Slack member id is a security-relevant
   //    authorization decision that needs a paper trail — both feed-worthy.

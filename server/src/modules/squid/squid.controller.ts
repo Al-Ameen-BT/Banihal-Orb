@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { prisma } from '../../config/database';
 import {
   CreateProxySchema, UpdateProxySchema, ListProxiesSchema, VerifyTokenSchema,
   CreateBranchSchema, UpdateBranchSchema, SetBranchListsSchema, SetPortsSchema, SetFullAccessSchema,
@@ -19,6 +20,39 @@ export async function getProxy(req: Request, res: Response, next: NextFunction):
 
 export async function listChangeRequests(req: Request, res: Response, next: NextFunction): Promise<void> {
   try { res.json(await service.listChangeRequests(req.params['proxyId']!)); } catch (e) { next(e); }
+}
+
+export async function streamChangeRequests(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const proxyId = req.params['proxyId']!;
+    const customerId = req.user.customerId!;
+    
+    // Verify proxy belongs to customer
+    const proxy = await prisma.squidProxy.findUnique({ where: { id: proxyId }, select: { customerId: true } });
+    if (!proxy || proxy.customerId !== customerId) {
+      res.status(404).json({ error: 'Proxy not found', code: 'NOT_FOUND' });
+      return;
+    }
+
+    // Set SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    // Send initial connection event
+    res.write(`event: connected\ndata: ${JSON.stringify({ proxyId, timestamp: Date.now() })}\n\n`);
+
+    // Track active connections for this proxy
+    const clients = service.getChangeRequestClients(proxyId);
+    clients.add(res);
+
+    // Cleanup on disconnect
+    req.on('close', () => {
+      clients.delete(res);
+    });
+
+  } catch (e) { next(e); }
 }
 
 export async function createProxy(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -51,6 +85,23 @@ export async function verifyToken(req: Request, res: Response, next: NextFunctio
   try {
     const input = VerifyTokenSchema.parse(req.body);
     res.json(await service.verifyRegistrationToken(req.params['proxyId']!, req.user.userId, req.user.customerId!, input.token));
+  } catch (e) { next(e); }
+}
+
+export async function linkExternalApiKey(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { externalApiKeyId } = req.body;
+    if (!externalApiKeyId) {
+      res.status(400).json({ error: 'externalApiKeyId is required', code: 'VALIDATION_ERROR' });
+      return;
+    }
+    res.json(await service.linkExternalApiKey(req.params['proxyId']!, req.user.userId, req.user.customerId!, externalApiKeyId));
+  } catch (e) { next(e); }
+}
+
+export async function unlinkExternalApiKey(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    res.json(await service.unlinkExternalApiKey(req.params['proxyId']!, req.user.userId, req.user.customerId!));
   } catch (e) { next(e); }
 }
 
@@ -110,6 +161,10 @@ export async function getTelemetry(req: Request, res: Response, next: NextFuncti
 
 export async function listActivity(req: Request, res: Response, next: NextFunction): Promise<void> {
   try { res.json(await service.listActivity(req.params['proxyId']!, ActivityQuerySchema.parse(req.query))); } catch (e) { next(e); }
+}
+
+export async function getHostConfig(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try { res.json(await service.getHostConfig(req.params['proxyId']!)); } catch (e) { next(e); }
 }
 
 export async function report(req: Request, res: Response, next: NextFunction): Promise<void> {

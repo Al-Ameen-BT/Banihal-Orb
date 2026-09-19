@@ -15,3 +15,5 @@ server/uploads/
 backup/
 .claude
 .agents
+squid
+squid/

@@ -20,7 +20,12 @@ router.get('/', ...view, c.listProxies);
 router.get('/bundle-key', ...view, c.getBundleKey);
 router.get('/:proxyId', ...view, c.getProxy);
 router.get('/:proxyId/change-requests', ...view, c.listChangeRequests);
+
+// SSE endpoint for real-time change request status updates
+router.get('/:proxyId/change-requests/stream', ...view, c.streamChangeRequests);
+
 router.get('/:proxyId/telemetry', ...view, c.getTelemetry);
+router.get('/:proxyId/host-config', ...view, c.getHostConfig);
 router.get('/:proxyId/activity', ...view, c.listActivity);
 router.get('/:proxyId/report.csv', ...view, c.report);
 router.post('/:proxyId/dependency-scan', ...manage, c.runDependencyScan);
@@ -38,5 +43,9 @@ router.put('/:proxyId/branches/:branchId/lists', ...manage, c.setBranchLists);
 
 router.put('/:proxyId/ports', ...manage, c.setPorts);
 router.put('/:proxyId/full-access', ...manage, c.setFullAccess);
+
+// Link/unlink external API key for ticketing integration
+router.post('/:proxyId/external-api-key', ...manage, c.linkExternalApiKey);
+router.delete('/:proxyId/external-api-key', ...manage, c.unlinkExternalApiKey);
 
 export default router;

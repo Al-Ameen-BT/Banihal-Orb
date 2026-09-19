@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { squidApi } from '@/lib/api';
@@ -24,6 +24,7 @@ interface ProxySummary {
   createdAt: string;
   customerService: { id: string; name: string; endDate: string } | null;
   _count: { branches: number };
+  slackBot?: { table?: string; state?: string; lastError?: string } | null;
 }
 
 interface ChangeRequest {
@@ -32,6 +33,13 @@ interface ChangeRequest {
   action: string;
   summary: string;
   createdAt: string;
+  // New fields for ticket-gated flow
+  status?: string;
+  ticketId?: string | null;
+  ticketUrl?: string | null;
+  appliedSeq?: number | null;
+  error?: string | null;
+  updatedAt?: string;
 }
 
 interface TelemetrySummary {
@@ -40,6 +48,7 @@ interface TelemetrySummary {
     squidVersion: string | null; uptimeSeconds: number | null;
     cpuPercent: number | null; memPercent: number | null; diskPercent: number | null;
     sessions: string[];
+    slackBot?: { table?: string; state?: string; lastError?: string } | null;
   } | null;
   hour: { requests: number; denied: number; bytes: number; clients: number };
   sessions: { clientIp: string; lastSeenAt: string }[];
@@ -62,6 +71,55 @@ interface ProxyDetail {
   fullAccess: { src: string; description?: string | null; until?: string | null }[];
   customerService: { id: string; name: string; endDate: string } | null;
   branches: BranchView[];
+}
+
+// SSE hook for real-time change request updates
+function useChangeRequestStream(proxyId: string, enabled: boolean) {
+  const [eventSource, setEventSource] = useState<EventSource | null>(null);
+  const [latestUpdate, setLatestUpdate] = useState<ChangeRequest | null>(null);
+
+  useEffect(() => {
+    if (!enabled || !proxyId) return;
+
+    const es = new EventSource(`/api/squid/${proxyId}/change-requests/stream`);
+    setEventSource(es);
+
+    es.addEventListener('connected', () => {
+      console.log('SSE connected for proxy', proxyId);
+    });
+
+    es.addEventListener('change-request-update', (event) => {
+      const data = JSON.parse(event.data);
+      if (data.changeRequest) {
+        setLatestUpdate(data.changeRequest);
+      }
+    });
+
+    es.onerror = () => {
+      console.warn('SSE error, reconnecting...');
+      es.close();
+    };
+
+    return () => {
+      es.close();
+      setEventSource(null);
+    };
+  }, [proxyId, enabled]);
+
+  return { latestUpdate, eventSource };
+}
+
+// Status badge component
+function StatusBadge({ status }: { status: string }) {
+  const config: Record<string, { cls: string; label: string }> = {
+    PENDING_APPROVAL: { cls: 'text-amber-700 bg-amber-50 border-amber-100', label: 'Pending Approval' },
+    APPROVED: { cls: 'text-blue-700 bg-blue-50 border-blue-100', label: 'Approved' },
+    REJECTED: { cls: 'text-red-700 bg-red-50 border-red-100', label: 'Rejected' },
+    APPLIED: { cls: 'text-emerald-700 bg-emerald-50 border-emerald-100', label: 'Applied' },
+    FAILED: { cls: 'text-red-700 bg-red-50 border-red-100', label: 'Failed' },
+  };
+  const c = config[status] ?? { cls: 'text-slate-700 bg-slate-100 border-slate-200', label: status };
+  return <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold border ${c.cls}`}>{c.label}</span>;
 }
 
 const STATUS_CFG: Record<string, { cls: string; label: string }> = {
@@ -95,6 +153,22 @@ function fmtDuration(s: number | null): string {
   if (s < 60) return `${s}s`;
   if (s < 3600) return `${Math.floor(s / 60)}m`;
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
+// Slack bot service status → chip. active=green, failed=red, inactive=amber,
+// unknown/missing=slate (no telemetry yet or service not installed).
+function botChip(bot: { table?: string; state?: string; lastError?: string } | null | undefined):
+  { cls: string; label: string; title: string } {
+  const state = bot?.state ?? 'unknown';
+  const table = bot?.table || 'slack-squid-proxy';
+  const map: Record<string, { cls: string; label: string }> = {
+    active: { cls: 'text-emerald-700 bg-emerald-50 border-emerald-100', label: 'Bot active' },
+    failed: { cls: 'text-red-700 bg-red-50 border-red-100', label: 'Bot failed' },
+    inactive: { cls: 'text-amber-700 bg-amber-50 border-amber-100', label: 'Bot stopped' },
+    unknown: { cls: 'text-slate-600 bg-slate-100 border-slate-200', label: 'Bot unknown' },
+  };
+  const m = map[state] ?? map['unknown']!;
+  return { ...m, title: `${table} · ${state}${bot?.lastError ? ' — ' + bot.lastError : ''}` };
 }
 
 // Subscription status for a service-backed proxy: past/30-day windows get a
@@ -271,6 +345,21 @@ function OpsView({ proxyId }: { proxyId: string }) {
         <Meter label="CPU" pct={l.cpuPercent} />
         <Meter label="Memory" pct={l.memPercent} />
         <Meter label="Disk" pct={l.diskPercent} />
+      </div>
+      <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-4 space-y-2 text-sm">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Add-on services</p>
+          {(() => { const c = botChip(l.slackBot); return (
+            <span title={c.title} className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-semibold border ${c.cls}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${l.slackBot?.state === 'active' ? 'bg-emerald-500' : l.slackBot?.state === 'failed' ? 'bg-red-500' : 'bg-slate-400'}`} />
+              {c.label}
+            </span>
+          ); })()}
+        </div>
+        <p className="text-slate-500 flex items-center gap-1.5">
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+          Slack bot <span className="font-mono text-xs text-slate-500">{l.slackBot?.table || 'slack-squid-proxy'}</span>{l.slackBot?.lastError ? <span className="text-red-600 font-mono text-xs">{l.slackBot.lastError}</span> : null}
+        </p>
       </div>
       <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-4 space-y-1.5 text-sm">
         <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Agent host</p>
@@ -597,11 +686,19 @@ function BranchEditor({ proxyId, branch, onDone }: { proxyId: string; branch: Br
 }
 
 // ─── Detail modal ────────────────────────────────────────────────────────────
+// Tab groups keep the detail modal scannable: Monitor = live view, Configure =
+// rules, Manage = maintenance. The dashboard starts on Live ops.
+const TAB_GROUPS: { group: string; tabs: { key: 'branches' | 'ports' | 'ops' | 'activity' | 'reports' | 'history' | 'setup'; label: string }[] }[] = [
+  { group: 'Monitor', tabs: [{ key: 'ops', label: 'Live ops' }, { key: 'activity', label: 'Activity' }, { key: 'reports', label: 'Reports' }] },
+  { group: 'Configure', tabs: [{ key: 'branches', label: 'Branches' }, { key: 'ports', label: 'Ports & access' }, { key: 'setup', label: 'Install & keys' }] },
+  { group: 'Manage', tabs: [{ key: 'history', label: 'Change log' }] },
+];
+
 function ProxyDetailModal({ proxySummary, onClose }: { proxySummary: ProxySummary; onClose: () => void }) {
   const qc = useQueryClient();
   const { user } = useAuth();
   const canEdit = user?.role === 'ORG_ADMIN';
-  const [tab, setTab] = useState<'branches' | 'ports' | 'ops' | 'activity' | 'reports' | 'history' | 'setup'>('branches');
+  const [tab, setTab] = useState<'branches' | 'ports' | 'ops' | 'activity' | 'reports' | 'history' | 'setup'>('ops');
   const [branchFilter, setBranchFilter] = useState('');
   const [editingBranch, setEditingBranch] = useState<BranchView | null>(null);
   const [addBranch, setAddBranch] = useState(false);
@@ -631,6 +728,9 @@ function ProxyDetailModal({ proxySummary, onClose }: { proxySummary: ProxySummar
     queryFn: () => squidApi.listChangeRequests(proxySummary.id).then((r) => r.data as { changeRequests: ChangeRequest[] }),
     refetchInterval: 15_000,
   });
+
+  // SSE for real-time change request updates
+  const { latestUpdate } = useChangeRequestStream(proxySummary.id, tab === 'history');
 
   const addBranchMut = useMutation({
     mutationFn: () => squidApi.createBranch(proxySummary.id, { name: branchName.trim(), mode: newBranchMode }),
@@ -709,12 +809,19 @@ function ProxyDetailModal({ proxySummary, onClose }: { proxySummary: ProxySummar
           </button>
         </div>
 
-        <div className="px-6 pt-3 flex items-center gap-1 border-b border-slate-100 flex-shrink-0">
-          {([['branches', 'Branches'], ['ports', 'Ports & access'], ['ops', 'Live ops'], ['activity', 'Activity'], ['reports', 'Reports'], ['history', 'Change log'], ['setup', 'Install & keys']] as const).map(([key, label]) => (
-            <button key={key} onClick={() => setTab(key)} className={`px-3 py-2 text-sm font-medium rounded-t-lg -mb-px border-b-2 transition-colors cursor-pointer ${tab === key ? 'border-brand text-brand-700' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>
-              {label}
-            </button>
-          ))}
+        <div className="px-6 pt-3 border-b border-slate-100 flex-shrink-0">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            {TAB_GROUPS.map(({ group, tabs: groupTabs }) => (
+              <div key={group} className="flex items-center gap-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-300 pr-1">{group}</span>
+                {groupTabs.map(({ key, label }) => (
+                  <button key={key} onClick={() => setTab(key)} className={`px-3 py-2 text-sm font-medium rounded-t-lg -mb-px border-b-2 transition-colors cursor-pointer ${tab === key ? 'border-brand text-brand-700' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-6">
@@ -825,7 +932,15 @@ function ProxyDetailModal({ proxySummary, onClose }: { proxySummary: ProxySummar
 
           {tab === 'history' && (
             <div className="space-y-3">
-              <p className="text-sm text-slate-500">Every requested config change is recorded as a ticket-style entry — from the Slack bot, the dashboard, or an API client.</p>
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-slate-500">Every requested config change is recorded as a ticket-style entry — from the Slack bot, the dashboard, or an API client.</p>
+                {latestUpdate && (
+                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100 animate-pulse">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    Live update received
+                  </span>
+                )}
+              </div>
               {(changes?.changeRequests?.length ?? 0) === 0 ? (
                 <div className="card p-8 text-center">
                   <p className="text-sm font-medium text-slate-700 mb-1">No change requests yet</p>
@@ -833,15 +948,30 @@ function ProxyDetailModal({ proxySummary, onClose }: { proxySummary: ProxySummar
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {changes!.changeRequests.map((c) => (
-                    <div key={c.id} className="card p-3 flex items-start gap-3">
-                      <span className={`mt-0.5 shrink-0 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${c.source === 'WEB' ? 'text-blue-700 bg-blue-50' : 'text-slate-600 bg-slate-100'}`}>{c.source}</span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-slate-800 truncate">{c.summary}</p>
-                        <p className="text-[11px] text-slate-400 mt-0.5 font-mono">{c.action} · {new Date(c.createdAt).toLocaleString()}</p>
+                  {changes!.changeRequests.map((c) => {
+                    // Use live update if it matches this change request
+                    const live = latestUpdate && latestUpdate.id === c.id ? latestUpdate : c;
+                    const status = live.status ?? 'PENDING_APPROVAL';
+                    return (
+                      <div key={c.id} className="card p-3 flex items-start gap-3">
+                        <span className={`mt-0.5 shrink-0 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${c.source === 'WEB' ? 'text-blue-700 bg-blue-50' : 'text-slate-600 bg-slate-100'}`}>{c.source}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-slate-800 truncate">{c.summary}</p>
+                          <div className="flex items-center gap-3 mt-1 flex-wrap">
+                            <p className="text-[11px] text-slate-400 font-mono">{c.action} · {new Date(c.createdAt).toLocaleString()}</p>
+                            <StatusBadge status={status} />
+                            {live.ticketId && live.ticketUrl && (
+                              <a href={live.ticketUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] text-brand-700 hover:text-brand-800 font-mono underline">
+                                Ticket: {live.ticketId}
+                              </a>
+                            )}
+                            {live.appliedSeq != null && <span className="text-[11px] text-slate-400">applied seq: {live.appliedSeq}</span>}
+                          </div>
+                          {live.error && <p className="text-[11px] text-red-600 mt-1">Error: {live.error}</p>}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -927,6 +1057,7 @@ export default function SquidPage() {
                           <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold border ${cfg.cls}`}>{cfg.label}</span>
                           {p.locked && <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold border text-red-700 bg-red-50 border-red-100">Locked</span>}
                           {(() => { const eb = expiryBadge(p.customerService); return eb ? <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold border ${eb.cls}`}>{eb.label}</span> : null; })()}
+                          {(() => { const c = botChip(p.slackBot); return <span title={c.title} className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold border ${c.cls}`}>{c.label}</span>; })()}
                         </div>
                         {p.description && <p className="text-xs text-slate-400 mt-0.5 truncate">{p.description}</p>}
                         {p.customerService && <p className="text-[11px] text-slate-400 mt-1">via {p.customerService.name} · expires {new Date(p.customerService.endDate).toLocaleDateString()}</p>}

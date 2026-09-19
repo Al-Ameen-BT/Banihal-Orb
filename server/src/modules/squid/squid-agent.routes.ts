@@ -122,4 +122,57 @@ router.post('/telemetry', agentAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Bot fetches its ticketing API credentials using the same HMAC auth.
+// Returns the decrypted external API key secret for the bot to use.
+router.get('/ticketing-config', agentAuth, async (req, res, next) => {
+  try {
+    const proxy = (req as Request & { proxy: AuthedProxy }).proxy;
+    
+    // Get the external API key linked to this proxy
+    const proxyWithKey = await prisma.squidProxy.findUnique({
+      where: { id: proxy.id },
+      include: { externalApiKey: true },
+    });
+    
+    if (!proxyWithKey?.externalApiKey) {
+      res.status(404).json({ error: 'No ticketing API key configured for this proxy', code: 'NOT_CONFIGURED' });
+      return;
+    }
+    
+    const extKey = proxyWithKey.externalApiKey;
+    if (!extKey.enabled) {
+      res.status(403).json({ error: 'Ticketing API key is disabled', code: 'KEY_DISABLED' });
+      return;
+    }
+    
+    // Decrypt the secret from secretEnc (stored encrypted in the database)
+    if (!extKey.secretEnc) {
+      res.status(500).json({ error: 'Ticketing API key secret not available (key created before secret storage was added)', code: 'SECRET_UNAVAILABLE' });
+      return;
+    }
+    
+    let secret: string;
+    try {
+      secret = decryptSecret(extKey.secretEnc);
+    } catch {
+      res.status(500).json({ error: 'Unable to decrypt API key secret', code: 'SECRET_DECRYPT_FAILED' });
+      return;
+    }
+    
+    // customerIds is Json — cast to string array
+    const customerIds = (extKey.customerIds as string[]) ?? [];
+    
+    res.json({
+      baseUrl: process.env.TICKET_API_BASE_URL ?? '',
+      clientId: extKey.clientId,
+      clientSecret: secret,
+      projectId: '', // Bot will need to know the project ID
+      assigneeId: '', // Bot will need to know the assignee ID
+      orgCustomerId: customerIds.length === 1 ? customerIds[0] : '',
+      scopes: extKey.scopes,
+      ticketStore: extKey.ticketStore,
+    });
+  } catch (e) { next(e); }
+});
+
 export default router;

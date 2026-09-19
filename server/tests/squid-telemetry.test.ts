@@ -50,6 +50,7 @@ describe('Squid telemetry + live ops', () => {
       observedAt: Date.now(),
       seq: 2,
       counters: { requests: 110, denied: 5, bytes: 40960, clients: 2 },
+      slackBot: { table: 'slack-squid-proxy', state: 'active' },
       sessions: ['10.1.1.5', '10.1.1.6'],
       logLines: [
         { ts: Math.floor(Date.now() / 1000), ip: '10.1.1.6', method: 'GET', action: 'allowed', url: 'http://site.b/cdn.js' },
@@ -64,6 +65,7 @@ describe('Squid telemetry + live ops', () => {
     expect(sum.body.hour).toEqual({ requests: 100, denied: 4, bytes: 38912, clients: 1 });
     expect(sum.body.sessions.map((s: { clientIp: string }) => s.clientIp).sort()).toEqual(['10.1.1.5', '10.1.1.6', '10.1.1.7']);
     expect(sum.body.latest.sessions).toContain('10.1.1.6');
+    expect(sum.body.latest.slackBot).toEqual({ table: 'slack-squid-proxy', state: 'active' });
 
     // Activity feed with filters.
     const act = await request(app).get(`/api/squid/${proxy.id}/activity?denied=true`).set('Cookie', cookies);

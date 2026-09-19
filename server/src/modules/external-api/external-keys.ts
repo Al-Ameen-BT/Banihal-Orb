@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { prisma } from '../../config/database';
 import { audit } from '../../lib/audit';
-import { hashApiKey, maskToken } from '../../config/slackCrypto';
+import { hashApiKey, maskToken, encryptSecret } from '../../config/slackCrypto';
 
 // ─── External ticketing API: key lifecycle ──────────────────────────────────
 // V1 entry point is a platform-staff CLI (scripts/external-api-keys.ts); the
@@ -66,6 +66,7 @@ export async function createKey(input: CreateKeyInput, actor: { userId: string; 
       name: input.name.trim(),
       clientId,
       secretHash: hashApiKey(secret),
+      secretEnc: encryptSecret(secret),
       secretHint,
       scopes: [...input.scopes],
       ticketStore: input.ticketStore,

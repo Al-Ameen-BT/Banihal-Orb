@@ -652,6 +652,9 @@ model SquidProxy {
   sslPorts             Json             @default("[]")
   // Full-access rules: [{src, description?, until?, window?{days,from,to} }]
   fullAccess           Json             @default("[]")
+  // Optional: link to an external API key for ticketing integration
+  externalApiKeyId     String?
+  externalApiKey       ExternalApiKey?  @relation(fields: [externalApiKeyId], references: [id], onDelete: SetNull)
   createdAt            DateTime         @default(now())
   updatedAt            DateTime         @updatedAt
   customer             Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
@@ -661,6 +664,7 @@ model SquidProxy {
   changeRequests       SquidChangeRequest[]
   telemetry            SquidTelemetry[]
   logEntries           SquidLogEntry[]
+  hostConfig           SquidHostConfig?
 
   @@index([customerId])
   @@index([status])
@@ -715,20 +719,36 @@ enum SquidChangeSource {
 }
 
 model SquidChangeRequest {
-  id         String             @id @default(cuid())
-  proxyId    String
-  customerId String
-  actorId    String?
-  source     SquidChangeSource  @default(WEB)
-  action     String
-  summary    String
-  details    Json
-  createdAt  DateTime           @default(now())
-  proxy      SquidProxy         @relation(fields: [proxyId], references: [id], onDelete: Cascade)
+  id            String              @id @default(cuid())
+  proxyId       String
+  customerId    String
+  actorId       String?
+  source        SquidChangeSource   @default(WEB)
+  action        String
+  summary       String
+  details       Json
+  ticketId      String?
+  ticketUrl     String?
+  status        SquidChangeStatus   @default(PENDING_APPROVAL)
+  appliedSeq    Int?
+  error         String?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  proxy         SquidProxy          @relation(fields: [proxyId], references: [id], onDelete: Cascade)
 
   @@index([customerId])
   @@index([proxyId])
+  @@index([status])
+  @@index([ticketId])
   @@map("squidChangeRequests")
+}
+
+enum SquidChangeStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  APPLIED
+  FAILED
 }
 
 // One telemetry snapshot per agent report window. Counters are CUMULATIVE
@@ -747,6 +767,8 @@ model SquidTelemetry {
   diskPercent   Float?
   sessions      Json       @default("[]")
   counters      Json       @default("{}")
+  // Slack bot service state reported by the agent (e.g. {table,state}). null = not reported/installed.
+  slackBot      Json?
   proxy         SquidProxy @relation(fields: [proxyId], references: [id], onDelete: Cascade)
 
   @@index([customerId])
@@ -771,6 +793,21 @@ model SquidLogEntry {
   @@index([customerId])
   @@index([proxyId, observedAt])
   @@map("squidLogEntries")
+}
+
+// Latest host-config snapshot reported by the agent (one row per proxy, upserted).
+model SquidHostConfig {
+  proxyId    String   @id
+  customerId String
+  hash       String
+  capturedAt DateTime
+  files      Json     // [{path, content}]
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  proxy      SquidProxy @relation(fields: [proxyId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@map("squidHostConfigs")
 }
 
 enum SlackBotStatus {
@@ -844,6 +881,11 @@ model ExternalApiKey {
   clientId     String   @unique
   // SHA-256 of the plaintext secret (never stored). The system lookup key.
   secretHash   String
+  // AES-256-GCM encrypted copy of the raw secret — returned to authorized callers
+  // (e.g., the Squid Slack bot) so it can authenticate to the ticketing API.
+  // Only shown once at creation, but decryptable by the platform for authorized
+  // machine-to-machine config fetches. Nullable for keys created before this field.
+  secretEnc    String?
   // Last 4 of the raw secret for the management list — the raw secret is shown
   // ONCE at issuance and is not recoverable afterwards.
   secretHint   String
@@ -861,6 +903,7 @@ model ExternalApiKey {
   updatedAt    DateTime @updatedAt
   createdBy    User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
   webhooks     ExternalWebhook[]
+  squidProxies SquidProxy[]
 
   @@index([clientId])
   @@map("externalApiKeys")

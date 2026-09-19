@@ -42,12 +42,14 @@ export const CreateBranchSchema = z.object({
   name: z.string().regex(BRANCH_NAME_RE, 'Names: 2-32 chars, letters/digits/_/- only'),
   description: z.string().trim().max(500).optional(),
   mode: z.enum(['ADDITIVE', 'EXCLUSIVE']).default('ADDITIVE'),
+  bypassApproval: z.boolean().default(false).optional(),
 });
 
 export const UpdateBranchSchema = z.object({
   name: z.string().regex(BRANCH_NAME_RE, 'Names: 2-32 chars, letters/digits/_/- only').optional(),
   description: z.string().trim().max(500).nullable().optional(),
   mode: z.enum(['ADDITIVE', 'EXCLUSIVE']).optional(),
+  bypassApproval: z.boolean().default(false).optional(),
 }).refine((d) => Object.keys(d).length > 0, { message: 'At least one field required' });
 
 // The traffic-heavy edits. Distinct endpoints so the client posts one concern at
@@ -56,15 +58,18 @@ export const SetBranchListsSchema = z.object({
   sources: z.array(z.string().trim().min(1).max(64)).max(100).default([]),
   whitelist: z.array(SiteEntrySchema).max(2000).default([]),
   blacklist: z.array(SiteEntrySchema).max(2000).default([]),
+  bypassApproval: z.boolean().default(false).optional(),
 });
 
 export const SetPortsSchema = z.object({
   safePorts: z.array(z.string().trim().min(1).max(16)).max(64).default([]),
   sslPorts: z.array(z.string().trim().min(1).max(16)).max(64).default([]),
+  bypassApproval: z.boolean().default(false).optional(),
 });
 
 export const SetFullAccessSchema = z.object({
   fullAccess: z.array(FullAccessSchema).max(500).default([]),
+  bypassApproval: z.boolean().default(false).optional(),
 });
 
 export const VerifyTokenSchema = z.object({
@@ -86,6 +91,15 @@ export const TelemetryLogLineSchema = z.object({
   url: z.string().trim().max(2048).default(''),
 });
 
+export const ConfSnapshotSchema = z.object({
+  hash: z.string().trim().min(1).max(128),
+  capturedAt: z.coerce.number().int().min(0),
+  files: z.array(z.object({
+    path: z.string().trim().min(1).max(500),
+    content: z.string().max(200_000),
+  })).max(64),
+});
+
 export const TelemetryIngestSchema = z.object({
   seq: z.coerce.number().int().min(0),
   observedAt: z.coerce.number().int().min(0).optional(), // epoch ms; server clock when omitted
@@ -95,6 +109,13 @@ export const TelemetryIngestSchema = z.object({
   memPercent: z.coerce.number().min(0).max(100).optional(),
   diskPercent: z.coerce.number().min(0).max(100).optional(),
   sessions: z.array(z.string().trim().min(1).max(64)).max(5000).default([]),
+  // Slack bot companion service state on the squid host (systemd status). Loose
+  // shape so the agent can report whatever the host exposes.
+  slackBot: z.object({
+    table: z.string().trim().max(80).optional().default('slack-squid-proxy'),
+    state: z.enum(['active', 'inactive', 'failed', 'unknown']).default('unknown'),
+    lastError: z.string().trim().max(200).optional(),
+  }).optional(),
   counters: z.object({
     requests: z.coerce.number().int().min(0).default(0),
     denied: z.coerce.number().int().min(0).default(0),
@@ -102,6 +123,8 @@ export const TelemetryIngestSchema = z.object({
     clients: z.coerce.number().int().min(0).default(0),
   }).default({}),
   logLines: z.array(TelemetryLogLineSchema).max(500).default([]),
+  confHash: z.string().trim().max(128).optional(),
+  confSnapshot: ConfSnapshotSchema.optional(),
 });
 
 export const ActivityQuerySchema = z.object({

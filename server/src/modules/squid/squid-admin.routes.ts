@@ -56,6 +56,16 @@ router.get('/:proxyId', requirePermission('squid.view'), async (req: Request, re
   } catch (e) { next(e); }
 });
 
+// Read-only host config mirror (the squid config actually applied on the bot
+// host). Cross-tenant — no tenant scope on this mount, just squid.view.
+router.get('/:proxyId/host-config', requirePermission('squid.view'), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const cfg = await customerContext.exit(() => prisma.squidHostConfig.findUnique({ where: { proxyId: req.params['proxyId']! } }));
+    if (!cfg) { res.status(404).json({ error: 'No host config reported yet', code: 'NOT_FOUND' }); return; }
+    res.json({ hash: cfg.hash, capturedAt: cfg.capturedAt.toISOString(), files: cfg.files });
+  } catch (e) { next(e); }
+});
+
 // ─── Mutations (squid.manage) ────────────────────────────────────────────────
 router.post('/:proxyId/rotate-key', requirePermission('squid.manage'), async (req: Request, res: Response, next: NextFunction) => {
   try {

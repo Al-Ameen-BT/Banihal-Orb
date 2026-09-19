@@ -25,8 +25,10 @@ CREATE TABLE IF NOT EXISTS "squidTelemetry" (
   "memPercent"    DOUBLE PRECISION,
   "diskPercent"   DOUBLE PRECISION,
   "sessions"      JSONB NOT NULL DEFAULT '[]',
-  "counters"      JSONB NOT NULL DEFAULT '{}'
+  "counters"      JSONB NOT NULL DEFAULT '{}',
+  "slackBot"      JSONB
 );
+ALTER TABLE "squidTelemetry" ADD COLUMN IF NOT EXISTS "slackBot" JSONB;
 CREATE INDEX IF NOT EXISTS "squidTelemetry_customerId_idx"       ON "squidTelemetry" ("customerId");
 CREATE INDEX IF NOT EXISTS "squidTelemetry_proxyId_observedAt_idx" ON "squidTelemetry" ("proxyId", "observedAt");
 
