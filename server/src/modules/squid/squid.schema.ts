@@ -158,3 +158,63 @@ export type TelemetryIngestInput = z.infer<typeof TelemetryIngestSchema>;
 export type ActivityQueryInput = z.infer<typeof ActivityQuerySchema>;
 export type ReportQueryInput = z.infer<typeof ReportQuerySchema>;
 export type DependencyScanInput = z.infer<typeof DependencyScanSchema>;
+
+// ─── New schemas for missing features ─────────────────────────────────────────
+export const ReloadProxySchema = z.object({}).strict();
+export type ReloadProxyInput = z.infer<typeof ReloadProxySchema>;
+
+export const RestartProxySchema = z.object({}).strict();
+export type RestartProxyInput = z.infer<typeof RestartProxySchema>;
+
+export const RescanProxySchema = z.object({}).strict();
+export type RescanProxyInput = z.infer<typeof RescanProxySchema>;
+
+export const BandwidthQuerySchema = z.object({
+  minutes: z.coerce.number().int().min(1).max(1440).default(60),
+}).strict();
+export type BandwidthQueryInput = z.infer<typeof BandwidthQuerySchema>;
+
+export const CertificateStatusSchema = z.object({}).strict();
+export type CertificateStatusInput = z.infer<typeof CertificateStatusSchema>;
+
+export const GenerateCaSchema = z.object({
+  san: z.array(z.string().trim().max(255)).max(50).default([]),
+  validityYears: z.coerce.number().int().min(1).max(10).default(2),
+}).strict();
+export type GenerateCaInput = z.infer<typeof GenerateCaSchema>;
+
+export const ImportCertificateSchema = z.object({
+  cert: z.string().min(1),
+  key: z.string().min(1),
+  keyPassphrase: z.string().max(500).optional(),
+  chain: z.string().optional(),
+}).strict();
+export type ImportCertificateInput = z.infer<typeof ImportCertificateSchema>;
+
+export const GenerateCsrSchema = z.object({
+  commonName: z.string().trim().min(1).max(255),
+  organization: z.string().trim().max(255).optional(),
+  locality: z.string().trim().max(255).optional(),
+  state: z.string().trim().max(255).optional(),
+  country: z.string().trim().length(2).optional(),
+  san: z.array(z.string().trim().max(255)).max(50).default([]),
+}).strict();
+export type GenerateCsrInput = z.infer<typeof GenerateCsrSchema>;
+
+export const CreateBackupSchema = z.object({
+  description: z.string().trim().max(500).optional(),
+  emailResults: z.boolean().default(false),
+}).strict();
+export type CreateBackupInput = z.infer<typeof CreateBackupSchema>;
+
+export const RestoreBackupSchema = z.object({
+  backupId: z.string().trim().min(1),
+  validateOnly: z.boolean().default(false),
+}).strict();
+export type RestoreBackupInput = z.infer<typeof RestoreBackupSchema>;
+
+export const FactoryResetSchema = z.object({}).strict();
+export type FactoryResetInput = z.infer<typeof FactoryResetSchema>;
+
+export const PackageStatusSchema = z.object({}).strict();
+export type PackageStatusInput = z.infer<typeof PackageStatusSchema>;

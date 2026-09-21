@@ -4,6 +4,8 @@ import {
   CreateProxySchema, UpdateProxySchema, ListProxiesSchema, VerifyTokenSchema,
   CreateBranchSchema, UpdateBranchSchema, SetBranchListsSchema, SetPortsSchema, SetFullAccessSchema,
   ActivityQuerySchema, ReportQuerySchema, DependencyScanSchema,
+  BandwidthQuerySchema, GenerateCaSchema, ImportCertificateSchema, GenerateCsrSchema,
+  CreateBackupSchema, RestoreBackupSchema,
 } from './squid.schema';
 import * as service from './squid.service';
 
@@ -180,5 +182,103 @@ export async function runDependencyScan(req: Request, res: Response, next: NextF
   try {
     const input = DependencyScanSchema.parse(req.body);
     res.json(await service.dependencyScan(req.params['proxyId']!, req.user.userId, req.user.customerId!, input));
+  } catch (e) { next(e); }
+}
+
+// ─── Service Lifecycle Controls ──────────────────────────────────────────────
+export async function reloadProxyConfig(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    res.json(await service.reloadProxyConfig(req.params['proxyId']!, req.user.userId, req.user.customerId!));
+  } catch (e) { next(e); }
+}
+
+export async function restartProxy(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    res.json(await service.restartProxy(req.params['proxyId']!, req.user.userId, req.user.customerId!));
+  } catch (e) { next(e); }
+}
+
+export async function rescanProxyAcl(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    res.json(await service.rescanProxyAcl(req.params['proxyId']!, req.user.userId, req.user.customerId!));
+  } catch (e) { next(e); }
+}
+
+// ─── Bandwidth Metrics ───────────────────────────────────────────────────────
+export async function getBandwidthMetrics(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { minutes } = BandwidthQuerySchema.parse(req.query);
+    res.json(await service.getBandwidthMetrics(req.params['proxyId']!, minutes));
+  } catch (e) { next(e); }
+}
+
+// ─── Certificate Management ──────────────────────────────────────────────────
+export async function getCertificateStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    res.json(await service.getCertificateStatus(req.params['proxyId']!));
+  } catch (e) { next(e); }
+}
+
+export async function generateCa(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = GenerateCaSchema.parse(req.body);
+    res.json(await service.generateCa(req.params['proxyId']!, req.user.userId, req.user.customerId!, input));
+  } catch (e) { next(e); }
+}
+
+export async function importCertificate(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = ImportCertificateSchema.parse(req.body);
+    res.json(await service.importCertificate(req.params['proxyId']!, req.user.userId, req.user.customerId!, input));
+  } catch (e) { next(e); }
+}
+
+export async function generateCsr(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = GenerateCsrSchema.parse(req.body);
+    // Ensure optional fields are passed as strings or undefined
+    const serviceInput = {
+      commonName: input.commonName,
+      organization: input.organization ?? '',
+      locality: input.locality ?? '',
+      state: input.state ?? '',
+      country: input.country ?? '',
+      san: input.san,
+    };
+    res.json(await service.generateCsr(req.params['proxyId']!, req.user.userId, req.user.customerId!, serviceInput));
+  } catch (e) { next(e); }
+}
+
+// ─── Backup & Restore ────────────────────────────────────────────────────────
+export async function createBackup(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = CreateBackupSchema.parse(req.body);
+    res.json(await service.createBackup(req.params['proxyId']!, req.user.userId, req.user.customerId!, input));
+  } catch (e) { next(e); }
+}
+
+export async function listBackups(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    res.json(await service.listBackups(req.params['proxyId']!));
+  } catch (e) { next(e); }
+}
+
+export async function restoreBackup(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = RestoreBackupSchema.parse(req.body);
+    res.json(await service.restoreBackup(req.params['proxyId']!, req.user.userId, req.user.customerId!, input));
+  } catch (e) { next(e); }
+}
+
+export async function factoryReset(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    res.json(await service.factoryReset(req.params['proxyId']!, req.user.userId, req.user.customerId!));
+  } catch (e) { next(e); }
+}
+
+// ─── Package Status ──────────────────────────────────────────────────────────
+export async function getPackageStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    res.json(await service.getPackageStatus(req.params['proxyId']!));
   } catch (e) { next(e); }
 }

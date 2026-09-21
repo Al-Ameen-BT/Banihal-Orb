@@ -154,6 +154,18 @@ export const AUDIT_ACTIONS = [
   { key: 'TICKET_APPROVED',                                                             defaultScope: false, sadminFeed: false },
   { key: 'TICKET_DECLINED',                                                             defaultScope: false, sadminFeed: false },
 
+  // ── Squid Service Lifecycle & Certificate Management
+  { key: 'SQUID_RELOAD_REQUESTED',                                                      defaultScope: true,  sadminFeed: true  },
+  { key: 'SQUID_RESTART_REQUESTED',                                                     defaultScope: true,  sadminFeed: true  },
+  { key: 'SQUID_RESCAN_REQUESTED',                                                      defaultScope: true,  sadminFeed: true  },
+  { key: 'SQUID_CA_GENERATED',                                                          defaultScope: true,  sadminFeed: true  },
+  { key: 'SQUID_CERT_IMPORTED',                                                         defaultScope: true,  sadminFeed: true  },
+  { key: 'SQUID_CSR_GENERATED',                                                         defaultScope: true,  sadminFeed: true  },
+  { key: 'SQUID_BACKUP_CREATED',                                                        defaultScope: true,  sadminFeed: true  },
+  { key: 'SQUID_BACKUP_VALIDATED',                                                      defaultScope: true,  sadminFeed: true  },
+  { key: 'SQUID_BACKUP_RESTORED',                                                       defaultScope: true,  sadminFeed: true  },
+  { key: 'SQUID_FACTORY_RESET',                                                         defaultScope: true,  sadminFeed: true  },
+
   // ── Configuration.
   { key: 'ANNOUNCEMENT_CREATED',                                                        defaultScope: false, sadminFeed: false },
   { key: 'ANNOUNCEMENT_DELETED',                                                        defaultScope: false, sadminFeed: false },

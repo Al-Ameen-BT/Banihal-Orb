@@ -48,4 +48,27 @@ router.put('/:proxyId/full-access', ...manage, c.setFullAccess);
 router.post('/:proxyId/external-api-key', ...manage, c.linkExternalApiKey);
 router.delete('/:proxyId/external-api-key', ...manage, c.unlinkExternalApiKey);
 
+// ─── Service Lifecycle Controls ──────────────────────────────────────────────
+router.post('/:proxyId/reload', ...manage, c.reloadProxyConfig);
+router.post('/:proxyId/restart', ...manage, c.restartProxy);
+router.post('/:proxyId/rescan', ...manage, c.rescanProxyAcl);
+
+// ─── Bandwidth Metrics ───────────────────────────────────────────────────────
+router.get('/:proxyId/bandwidth', ...view, c.getBandwidthMetrics);
+
+// ─── Certificate Management ──────────────────────────────────────────────────
+router.get('/:proxyId/certificates', ...view, c.getCertificateStatus);
+router.post('/:proxyId/certificates/ca', ...manage, c.generateCa);
+router.post('/:proxyId/certificates/import', ...manage, c.importCertificate);
+router.post('/:proxyId/certificates/csr', ...manage, c.generateCsr);
+
+// ─── Backup & Restore ────────────────────────────────────────────────────────
+router.post('/:proxyId/backups', ...manage, c.createBackup);
+router.get('/:proxyId/backups', ...view, c.listBackups);
+router.post('/:proxyId/backups/:backupId/restore', ...manage, c.restoreBackup);
+router.post('/:proxyId/factory-reset', ...manage, c.factoryReset);
+
+// ─── Package Status ──────────────────────────────────────────────────────────
+router.get('/:proxyId/package-status', ...view, c.getPackageStatus);
+
 export default router;
