@@ -118,7 +118,30 @@ export default function Sidebar() {
         )}
         {showServices && <NavItem href="/services" label="Services" icon={icons.services} active={path === '/services'} />}
         {(isOrgAdmin || (isStaff && can('squid.view'))) && (
-          <NavItem href="/squid" label="Squid Proxy" icon={icons.squid} active={path === '/squid'} />
+          <>
+            <NavItem 
+              href="/squid" 
+              label="Squid Proxy" 
+              icon={icons.squid} 
+              active={path === '/squid' || (path.startsWith('/squid/') && path.split('/').length < 3)} 
+            />
+            {path.startsWith('/squid/') && (() => {
+              const parts = path.split('/');
+              if (parts.length >= 3) {
+                const proxyId = parts[2];
+                return (
+                  <div className="ml-9 border-l-2 border-slate-100 pl-2 py-0.5 space-y-0.5 my-1 mr-2">
+                    <Link href={`/squid/${proxyId}/dashboard`} className={`block text-[13px] py-1.5 px-3 rounded-lg transition-colors ${path.includes('/dashboard') ? 'bg-brand-50 text-brand-700 font-semibold' : 'text-slate-500 font-medium hover:text-slate-900 hover:bg-slate-100'}`}>Dashboard</Link>
+                    <Link href={`/squid/${proxyId}/branches`} className={`block text-[13px] py-1.5 px-3 rounded-lg transition-colors ${path.includes('/branches') ? 'bg-brand-50 text-brand-700 font-semibold' : 'text-slate-500 font-medium hover:text-slate-900 hover:bg-slate-100'}`}>Branches (ACL)</Link>
+                    <Link href={`/squid/${proxyId}/ports`} className={`block text-[13px] py-1.5 px-3 rounded-lg transition-colors ${path.includes('/ports') ? 'bg-brand-50 text-brand-700 font-semibold' : 'text-slate-500 font-medium hover:text-slate-900 hover:bg-slate-100'}`}>Ports & Access</Link>
+                    <Link href={`/squid/${proxyId}/history`} className={`block text-[13px] py-1.5 px-3 rounded-lg transition-colors ${path.includes('/history') ? 'bg-brand-50 text-brand-700 font-semibold' : 'text-slate-500 font-medium hover:text-slate-900 hover:bg-slate-100'}`}>Change Log</Link>
+                    <Link href={`/squid/${proxyId}/settings`} className={`block text-[13px] py-1.5 px-3 rounded-lg transition-colors ${path.includes('/settings') ? 'bg-brand-50 text-brand-700 font-semibold' : 'text-slate-500 font-medium hover:text-slate-900 hover:bg-slate-100'}`}>Settings</Link>
+                  </div>
+                );
+              }
+              return null;
+            })()}
+          </>
         )}
         {showUsers && <NavItem href="/users" label="Users" icon={icons.users} active={path === '/users'} />}
 

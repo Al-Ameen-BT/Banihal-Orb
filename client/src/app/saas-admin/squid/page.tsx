@@ -89,6 +89,21 @@ export default function SquidAdminPage() {
     onError: (e: unknown) => setActionError((e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Action failed.'),
   });
 
+  const [deleteStep, setDeleteStep] = useState<0 | 1 | 2>(0);
+  const deleteMut = useMutation({
+    mutationFn: () => squidAdminApi.delete(open!.id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['squid-admin'] });
+      notify('Proxy deleted permanently', 'success');
+      setOpen(null);
+      setDeleteStep(0);
+    },
+    onError: (e: unknown) => {
+      setActionError((e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Failed to delete proxy.');
+      setDeleteStep(0);
+    }
+  });
+
   const row = open;
 
   return (
@@ -155,7 +170,7 @@ export default function SquidAdminPage() {
       <AnimatePresence>
         {open && (
           <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => { setOpen(null); setNewKey(null); setActionError(''); }} />
+            <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => { setOpen(null); setNewKey(null); setActionError(''); setDeleteStep(0); }} />
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="relative bg-white rounded-2xl shadow-xl w-full max-w-xl flex flex-col max-h-[86vh]">
               <div className="px-6 py-4 border-b border-slate-100 flex items-start justify-between flex-shrink-0">
                 <div>
@@ -173,7 +188,7 @@ export default function SquidAdminPage() {
                     {detail?.customer?.name ? ` · ${detail.customer.name}` : ''}
                   </p>
                 </div>
-                <button onClick={() => { setOpen(null); setNewKey(null); setActionError(''); }} className="text-slate-400 hover:text-slate-600 transition-colors cursor-pointer ml-4 flex-shrink-0" aria-label="Close">
+                <button onClick={() => { setOpen(null); setNewKey(null); setActionError(''); setDeleteStep(0); }} className="text-slate-400 hover:text-slate-600 transition-colors cursor-pointer ml-4 flex-shrink-0" aria-label="Close">
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                 </button>
               </div>
@@ -244,6 +259,35 @@ export default function SquidAdminPage() {
                   <GlowButton variant="primary" onClick={() => act.mutate({ action: 'enable' })} disabled={act.isPending} loading={act.isPending}>Enable proxy</GlowButton>
                 )}
                 <GlowButton variant="secondary" onClick={() => act.mutate({ action: 'rotate' })} disabled={act.isPending} loading={act.isPending}>{newKey ? 'Rotate again' : 'Rotate agent key'}</GlowButton>
+                
+                <div className="ml-auto flex items-center gap-2">
+                  {deleteStep === 0 && (
+                    <button onClick={() => setDeleteStep(1)} className="px-3 py-1.5 text-xs font-medium text-slate-500 hover:text-red-600 transition-colors cursor-pointer">
+                      Delete...
+                    </button>
+                  )}
+                  {deleteStep === 1 && (
+                    <>
+                      <span className="text-xs text-red-600 font-medium">Are you sure?</span>
+                      <button onClick={() => setDeleteStep(2)} className="px-3 py-1.5 text-xs font-medium bg-red-100 text-red-700 hover:bg-red-200 rounded-md transition-colors cursor-pointer">
+                        Yes
+                      </button>
+                      <button onClick={() => setDeleteStep(0)} className="px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-100 rounded-md transition-colors cursor-pointer">
+                        Cancel
+                      </button>
+                    </>
+                  )}
+                  {deleteStep === 2 && (
+                    <>
+                      <button onClick={() => deleteMut.mutate()} disabled={deleteMut.isPending} className="px-3 py-1.5 text-xs font-medium bg-red-600 text-white hover:bg-red-700 rounded-md transition-colors cursor-pointer">
+                        {deleteMut.isPending ? 'Deleting...' : 'Confirm Delete'}
+                      </button>
+                      <button onClick={() => setDeleteStep(0)} disabled={deleteMut.isPending} className="px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-100 rounded-md transition-colors cursor-pointer">
+                        Cancel
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
             </motion.div>
           </div>
