@@ -10,6 +10,9 @@ import { requireRole, requirePermissionIfPlatform } from '../../middleware/rbac.
 // Customers: only ORG_ADMIN may reach this surface — plain USERs have no squid
 // options. Platform staff pass through the role guard and are then gated on
 // squid.view (read) / squid.manage (write) — the shared-surface pattern.
+//
+// NOTE: Organizations CANNOT create their own proxies. Platform admin provisions
+// proxies via /api/saas-admin/squid and assigns them to organizations.
 
 const router = Router();
 
@@ -29,7 +32,7 @@ router.get('/:proxyId/host-config', ...view, c.getHostConfig);
 router.get('/:proxyId/activity', ...view, c.listActivity);
 router.get('/:proxyId/report.csv', ...view, c.report);
 router.post('/:proxyId/dependency-scan', ...manage, c.runDependencyScan);
-router.post('/', ...manage, c.createProxy);
+// REMOVED: router.post('/', ...manage, c.createProxy);  // Organizations cannot create proxies
 router.patch('/:proxyId', ...manage, c.updateProxy);
 router.delete('/:proxyId', ...manage, c.deleteProxy);
 router.post('/:proxyId/rotate-key', ...manage, c.rotateKey);

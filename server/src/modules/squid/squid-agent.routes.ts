@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { prisma } from '../../config/database';
 import { decryptSecret } from '../../config/slackCrypto';
 import { audit } from '../../lib/audit';
-import { agentPoll, agentResult, agentBundlePublicKey, ingestTelemetry } from './squid.service';
+import { agentPoll, agentResult, agentBundlePublicKey, ingestTelemetry, getOrCreateSquidProject, getOrCreateSquidBotUser } from './squid.service';
 import { AgentResultSchema, TelemetryIngestSchema } from './squid.schema';
 import { notify } from '../notifications/notifications.service';
 
@@ -162,12 +162,16 @@ router.get('/ticketing-config', agentAuth, async (req, res, next) => {
     // customerIds is Json — cast to string array
     const customerIds = (extKey.customerIds as string[]) ?? [];
     
+    // Resolve project and assignee IDs so the bot can fetch its tickets
+    const project = await getOrCreateSquidProject();
+    const assigneeId = await getOrCreateSquidBotUser();
+
     res.json({
       baseUrl: process.env.TICKET_API_BASE_URL ?? '',
       clientId: extKey.clientId,
       clientSecret: secret,
-      projectId: '', // Bot will need to know the project ID
-      assigneeId: '', // Bot will need to know the assignee ID
+      projectId: project.id,
+      assigneeId: assigneeId,
       orgCustomerId: customerIds.length === 1 ? customerIds[0] : '',
       scopes: extKey.scopes,
       ticketStore: extKey.ticketStore,

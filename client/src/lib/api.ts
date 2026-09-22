@@ -220,6 +220,17 @@ export const squidAdminApi = {
   rotateKey: (id: string) => api.post(`/saas-admin/squid/${id}/rotate-key`),
   lock: (id: string) => api.post(`/saas-admin/squid/${id}/lock`),
   enable: (id: string) => api.post(`/saas-admin/squid/${id}/enable`),
+  provision: (data: { customerId: string; name: string; customerServiceId?: string }) => api.post('/saas-admin/squid/provision', data),
+  reassign: (id: string, customerId: string) => api.post(`/saas-admin/squid/${id}/reassign`, { customerId }),
+  disable: (id: string, reason?: string) => api.post(`/saas-admin/squid/${id}/disable`, { reason }),
+  delete: (id: string) => api.delete(`/saas-admin/squid/${id}`),
+  reload: (id: string) => api.post(`/saas-admin/squid/${id}/reload`),
+  restart: (id: string) => api.post(`/saas-admin/squid/${id}/restart`),
+  rescan: (id: string) => api.post(`/saas-admin/squid/${id}/rescan`),
+  telemetry: (id: string) => api.get(`/saas-admin/squid/${id}/telemetry`),
+  changeRequests: (id: string) => api.get(`/saas-admin/squid/${id}/change-requests`),
+  bandwidth: (id: string, minutes?: number) => api.get(`/saas-admin/squid/${id}/bandwidth`, { params: { minutes } }),
+  certificates: (id: string) => api.get(`/saas-admin/squid/${id}/certificates`),
 };
 
 // External ticketing API — ADMINISTRATOR registry: machine keys + delivery webhooks.

@@ -370,7 +370,7 @@ async function createSquidApprovalTicket(
 }
 
 /** Get or create a project for squid tickets. */
-async function getOrCreateSquidProject() {
+export async function getOrCreateSquidProject() {
   // Use the ticketing database client for Project model
   const ticketingPrisma = getTicketDb() as any;
   let project = await ticketingPrisma.project.findFirst({ where: { key: 'squid-config' } });
@@ -388,7 +388,7 @@ async function getOrCreateSquidProject() {
 }
 
 /** Get or create a system user for squid bot. */
-async function getOrCreateSquidBotUser() {
+export async function getOrCreateSquidBotUser() {
   const ticketingPrisma = getTicketDb() as any;
   let user = await ticketingPrisma.users.findFirst({ where: { email: 'squid-bot@banihal.local' } });
   if (!user) {

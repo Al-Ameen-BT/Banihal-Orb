@@ -110,6 +110,35 @@ export async function updateTicket(req: Request, id: string, input: ExternalUpda
       const org = req.external!.store === 'default' ? await resolveTicketOrg(id) : null;
       if (org) void emitOrgTicketEvent({ customerId: org, type: 'ticket.status_changed', ticket: dto }).catch(() => undefined);
       else void emitTicketEvent({ keyId: req.external!.keyId, type: 'ticket.status_changed', ticket: dto }).catch(() => undefined);
+      
+      // Feedback loop for Squid Proxy Bot: if the bot changed the ticket status
+      // (e.g. approved/done), we apply the corresponding SquidChangeRequest.
+      if (dto.labels.includes('squid-proxy') && (dto.status === 'in_progress' || dto.status === 'done' || dto.status === 'resolved')) {
+        const { prisma } = require('../../config/database');
+        const { applyChangeRequest, broadcastChangeRequestUpdate } = require('../squid/squid.service');
+        const cr = await prisma.squidChangeRequest.findFirst({ where: { ticketId: id } });
+        if (cr && cr.status === 'PENDING_APPROVAL') {
+          await prisma.squidChangeRequest.update({ where: { id: cr.id }, data: { status: 'APPROVED' } });
+          await applyChangeRequest(cr.id, 'bot-execution').catch((e: Error) => {
+            prisma.squidChangeRequest.update({ where: { id: cr.id }, data: { status: 'FAILED', error: e.message } }).catch(() => {});
+          });
+          
+          const updatedCr = await prisma.squidChangeRequest.findUnique({ where: { id: cr.id } });
+          if (updatedCr) {
+             broadcastChangeRequestUpdate(updatedCr.proxyId, {
+               id: updatedCr.id,
+               status: updatedCr.status,
+               action: updatedCr.action,
+               summary: updatedCr.summary,
+               ticketId: updatedCr.ticketId,
+               ticketUrl: updatedCr.ticketUrl,
+               appliedSeq: updatedCr.appliedSeq,
+               error: updatedCr.error,
+               updatedAt: updatedCr.updatedAt,
+             });
+          }
+        }
+      }
     }
     return dto;
   });

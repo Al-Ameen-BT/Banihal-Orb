@@ -1012,7 +1012,9 @@ function ProxyDetailModal({ proxySummary, onClose }: { proxySummary: ProxySummar
 
 export default function SquidPage() {
   const { user } = useAuth();
-  const canEdit = user?.role === 'ORG_ADMIN';
+  const isPlatformAdmin = user?.role === 'ADMINISTRATOR';
+  const isOrgAdmin = user?.role === 'ORG_ADMIN';
+  const canEdit = isOrgAdmin || isPlatformAdmin;
   const [creating, setCreating] = useState(false);
   const [open, setOpen] = useState<ProxySummary | null>(null);
 
@@ -1034,15 +1036,23 @@ export default function SquidPage() {
 
             <div className="flex items-center justify-between">
               <p className="text-xs text-slate-400">{proxies.length} proxy{proxies.length === 1 ? '' : 'es'} configured</p>
-              {canEdit && <GlowButton onClick={() => setCreating(true)}>New proxy</GlowButton>}
+              {/* Platform admin creates proxies via /saas-admin/squid; org admins manage assigned proxies only */}
+              {isPlatformAdmin && <GlowButton onClick={() => setCreating(true)}>New proxy</GlowButton>}
             </div>
 
             {isLoading ? (
               <div className="space-y-3">{[...Array(2)].map((_, i) => <Shimmer key={i} className="h-20 rounded-xl" />)}</div>
             ) : proxies.length === 0 ? (
               <div className="card p-12 text-center">
-                <p className="text-sm font-medium text-slate-700 mb-1">{canEdit ? 'No proxies yet' : 'No proxies configured'}</p>
-                <p className="text-xs text-slate-400">Add a proxy, define its branches, and pair it with the agent package on the target host.</p>
+                <p className="text-sm font-medium text-slate-700 mb-1">
+                  {isPlatformAdmin ? 'No proxies yet — click "New proxy" to provision one for an organization' : 'No proxies assigned to your organization'}
+                </p>
+                <p className="text-xs text-slate-400">
+                  {isPlatformAdmin 
+                    ? 'Provision a proxy, assign it to an organization, and pair it with the agent package on the target host.'
+                    : 'Contact your platform administrator to provision a squid proxy for your organization.'
+                  }
+                </p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -1078,7 +1088,7 @@ export default function SquidPage() {
         </main>
       </div>
       <AnimatePresence>
-        {creating && <CreateProxyModal onClose={() => setCreating(false)} />}
+        {isPlatformAdmin && creating && <CreateProxyModal onClose={() => setCreating(false)} />}
         {open && <ProxyDetailModal proxySummary={open} onClose={() => setOpen(null)} />}
       </AnimatePresence>
     </RoleGuard>

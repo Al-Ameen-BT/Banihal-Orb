@@ -49,12 +49,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refresh = useCallback(async () => {
     try {
       let res = await api.get('/users/me', {
-        validateStatus: (s) => s < 500, // treat 401 as a normal response, not an error
+        validateStatus: (s) => s < 500,
       });
 
-      // The access cookie only lives 15 minutes; the refresh cookie lives 7 days.
-      // On 401, rotate tokens once and retry — otherwise a user with a live
-      // session gets bounced to /login and blocked by single-session enforcement.
       if (res.status === 401) {
         const refreshed = await api.post('/auth/refresh', undefined, {
           validateStatus: (s) => s < 500,
@@ -62,13 +59,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (refreshed.status === 200) {
           res = await api.get('/users/me', { validateStatus: (s) => s < 500 });
         } else if ((res.data as { code?: string } | undefined)?.code === 'SESSION_REVOKED') {
-          // The dialog is raised from the axios error interceptor — but
-          // `validateStatus` above makes a 401 a SUCCESS, so that interceptor
-          // never sees this one. This is the commonest path by far (every page
-          // load and refresh goes through AuthContext first), so without raising
-          // it here an administrator changing someone's role produced a silent
-          // bounce to /login instead of the explanation.
-          sessionEnded();
+          // On the login page we don't need the dialog — the page already shows
+          // the "session ended" banner via ?reason=session-ended. Only raise it
+          // when the user is on a protected page so they see the explanation
+          // before being redirected.
+          if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+            sessionEnded();
+          }
         }
       }
 
