@@ -357,22 +357,18 @@ router.get('/:proxyId/certificates', requirePermission('squid.view'), async (req
 // Certificate management
 router.post('/:proxyId/certificates/ca', requirePermission('squid.manage'), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { generateCa } = await import('./squid.controller');
-    // Delegate to org controller which has the implementation
     res.json({ message: 'Use org-facing endpoint for CA generation' });
   } catch (e) { next(e); }
 });
 
 router.post('/:proxyId/certificates/import', requirePermission('squid.manage'), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { importCertificate } = await import('./squid.controller');
     res.json({ message: 'Use org-facing endpoint for certificate import' });
   } catch (e) { next(e); }
 });
 
 router.post('/:proxyId/certificates/csr', requirePermission('squid.manage'), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { generateCsr } = await import('./squid.controller');
     res.json({ message: 'Use org-facing endpoint for CSR generation' });
   } catch (e) { next(e); }
 });
@@ -380,28 +376,24 @@ router.post('/:proxyId/certificates/csr', requirePermission('squid.manage'), asy
 // Backup & Restore
 router.post('/:proxyId/backups', requirePermission('squid.manage'), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { createBackup } = await import('./squid.controller');
     res.json({ message: 'Use org-facing endpoint for backup creation' });
   } catch (e) { next(e); }
 });
 
 router.get('/:proxyId/backups', requirePermission('squid.view'), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { listBackups } = await import('./squid.controller');
     res.json({ message: 'Use org-facing endpoint for backup listing' });
   } catch (e) { next(e); }
 });
 
 router.post('/:proxyId/backups/:backupId/restore', requirePermission('squid.manage'), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { restoreBackup } = await import('./squid.controller');
     res.json({ message: 'Use org-facing endpoint for backup restore' });
   } catch (e) { next(e); }
 });
 
 router.post('/:proxyId/factory-reset', requirePermission('squid.manage'), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { factoryReset } = await import('./squid.controller');
     res.json({ message: 'Use org-facing endpoint for factory reset' });
   } catch (e) { next(e); }
 });
@@ -409,7 +401,6 @@ router.post('/:proxyId/factory-reset', requirePermission('squid.manage'), async 
 // Package status
 router.get('/:proxyId/package-status', requirePermission('squid.view'), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { getPackageStatus } = await import('./squid.controller');
     res.json({ message: 'Use org-facing endpoint for package status' });
   } catch (e) { next(e); }
 });

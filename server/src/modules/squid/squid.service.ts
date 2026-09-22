@@ -277,7 +277,7 @@ async function loadProxy(proxyId: string) {
 }
 
 /** Bump revision (orchestrating config change). Returns the bump result. */
-async function bumpRevision(proxyId: string) {
+export async function bumpRevision(proxyId: string) {
   return prisma.squidProxy.update({ where: { id: proxyId }, data: { revision: { increment: 1 } }, select: { id: true } });
 }
 

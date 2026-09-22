@@ -99,6 +99,9 @@ export const AUDIT_ACTIONS = [
   { key: 'SQUID_RELOAD_REQUESTED',                                                      defaultScope: true,  sadminFeed: true  },
   { key: 'SQUID_APPLY_RESULT',                                                          defaultScope: false, sadminFeed: false },
   { key: 'SQUID_CONFIG_LOCKED',                                                         defaultScope: true,  sadminFeed: true  },
+  { key: 'SQUID_PROXY_PROVISIONED',                                                     defaultScope: true,  sadminFeed: true  },
+  { key: 'SQUID_PROXY_REASSIGNED',                                                      defaultScope: true,  sadminFeed: true  },
+  { key: 'SQUID_PROXY_DELETED',                                                         defaultScope: true,  sadminFeed: true  },
   { key: 'SQUID_PROXY_DISABLED',                                                        defaultScope: true,  sadminFeed: true  },
   { key: 'SQUID_PROXY_ENABLED',                                                         defaultScope: true,  sadminFeed: true  },
   { key: 'SQUID_AGENT_AUTH_FAILED',                                                     defaultScope: false, sadminFeed: true  },
@@ -155,7 +158,6 @@ export const AUDIT_ACTIONS = [
   { key: 'TICKET_DECLINED',                                                             defaultScope: false, sadminFeed: false },
 
   // ── Squid Service Lifecycle & Certificate Management
-  { key: 'SQUID_RELOAD_REQUESTED',                                                      defaultScope: true,  sadminFeed: true  },
   { key: 'SQUID_RESTART_REQUESTED',                                                     defaultScope: true,  sadminFeed: true  },
   { key: 'SQUID_RESCAN_REQUESTED',                                                      defaultScope: true,  sadminFeed: true  },
   { key: 'SQUID_CA_GENERATED',                                                          defaultScope: true,  sadminFeed: true  },

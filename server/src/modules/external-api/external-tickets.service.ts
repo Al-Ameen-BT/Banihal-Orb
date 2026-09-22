@@ -9,6 +9,9 @@ import { runExternalStore, assertTicketInScope, ticketActor, allowedCustomerIds,
 import { notifyApprovalForExternalTicket } from '../slack-bots/slackApprovals';
 import { emitTicketEvent, emitOrgTicketEvent } from './external-webhooks';
 
+import { prisma } from '../../config/database';
+import { applyChangeRequest, broadcastChangeRequestUpdate } from '../squid/squid.service';
+
 // ─── External resource operations ────────────────────────────────────────────
 // Thin wrappers over the existing ticketing service, adding the two things the
 // platform UI never needed: per-key store binding (runExternalStore) and the
@@ -113,9 +116,7 @@ export async function updateTicket(req: Request, id: string, input: ExternalUpda
       
       // Feedback loop for Squid Proxy Bot: if the bot changed the ticket status
       // (e.g. approved/done), we apply the corresponding SquidChangeRequest.
-      if (dto.labels.includes('squid-proxy') && (dto.status === 'in_progress' || dto.status === 'done' || dto.status === 'resolved')) {
-        const { prisma } = require('../../config/database');
-        const { applyChangeRequest, broadcastChangeRequestUpdate } = require('../squid/squid.service');
+      if (dto.labels.includes('squid-proxy') && (dto.status === 'in_progress' || dto.status === 'completed')) {
         const cr = await prisma.squidChangeRequest.findFirst({ where: { ticketId: id } });
         if (cr && cr.status === 'PENDING_APPROVAL') {
           await prisma.squidChangeRequest.update({ where: { id: cr.id }, data: { status: 'APPROVED' } });
