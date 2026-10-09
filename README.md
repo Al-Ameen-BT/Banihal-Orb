@@ -137,19 +137,7 @@ Ensure you have **Node.js (v18+)** and **npm** installed, plus a running **Postg
 
 ---
 
-## 🧪 Seeding & Demo Credentials
 
-`npm run db:seed` **wipes and rebuilds** the demo data: an internal provider org plus several client organizations with services and tickets.
-
-| Role | Example accounts | Password |
-|---|---|---|
-| `ADMINISTRATOR` | `superadmin@platform.com`, `admin@platform.com` | `SuperAdmin1!` / `SaasAdmin1!` |
-| `ORG_ADMIN` | `jwhitfield@datavault.com`, `dfoster@pinnaclelaw.com` | `Admin1234!` |
-| `USER` | `it1@pinnaclelaw.com`, `kokafor@datavault.com`, `ot1@citygrid.io` | `User1234!` |
-
-> **Admin login note:** the `ADMINISTRATOR` role can only log in from a domain listed in `ADMIN_DOMAINS` (`.env.example` ships `platform.com`); otherwise these accounts get `403 ADMIN_DOMAIN_FORBIDDEN`. Because **every** login sends an emailed MFA code, admin/demo accounts must use an inbox you can actually receive mail at (the seed points the primary admin at a real address for this reason).
-
----
 
 ## 🔒 Security & Exclusions
 
