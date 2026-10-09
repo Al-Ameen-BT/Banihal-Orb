@@ -1,0 +1,1099 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Customer {
+  id            String                @id @default(cuid())
+  name          String
+  slug          String                @unique
+  plan          Plan                  @default(FREE)
+  suspended     Boolean               @default(false)
+  // Platform admission. `suspended` is opt-OUT (default false, revokes an org that
+  // already works); this is opt-IN — a self-registered org cannot sign in until a
+  // staff member holding `orgs.approve` hands its admin a code out of band.
+  // Orgs on an ADMIN_DOMAINS address are created already approved, and every org
+  // that predates this column was backfilled to true (see db/b2b.sql).
+  approved      Boolean               @default(false)
+  approvedAt    DateTime?
+  ssoEnabled    Boolean               @default(false)
+  mfaRequired   Boolean               @default(false)
+  creditLimit   Int                   @default(1000)
+  // ─── Primary contact details ──────────────────────────────────
+  mailId        String
+  contactPerson String
+  contactNumber String
+  domain        String?               @unique // derived from mailId (null for gmail.com); one org per domain
+  // Short code embedded in ticket numbers when the format includes the org
+  // (e.g. "DVB" → TKT-DVB-001). Auto-defaulted from the name; editable by an
+  // ADMINISTRATOR. Unique so per-org ticket sequences never collide.
+  orgCode       String?               @unique
+  // ─── B2B / Cybersecurity fields ───────────────────────────────
+  industry      String?
+  contractValue Int                   @default(0)
+  healthScore   Int                   @default(100)
+  csm           String?
+  // ──────────────────────────────────────────────────────────────
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  featureFlags  OrgFeatureFlag[]
+  users         User[]
+  requests      ServiceRequest[]
+  services      CustomerService[]
+  announcements Announcement[]
+  escalations   TicketEscalation[]
+  approvalChallenge OrgApprovalChallenge?
+  squidProxies  SquidProxy[]
+
+  @@index([slug])
+  @@map("customers")
+}
+
+// Short-lived code that admits a newly-registered organization to the platform.
+// Issued when the org admin confirms their email; the plaintext code is emailed to
+// the individual mailboxes of every staff user holding `orgs.approve` (Administration
+// + HR Admin), who read it to the org admin human-to-human.
+//
+// Deliberately shaped like EmailMfaChallenge: bcrypt-hashed so a database read cannot
+// be replayed, attempt-counted so the 6 digits cannot be walked, and short-lived. The
+// raw code is returned by no endpoint and set in no cookie — the browser only ever
+// holds `id`, which is useless without the code.
+//
+// NOT added to the tenant extension's globalModels in config/database.ts: it carries a
+// customerId, and the two paths that touch it (pre-auth approval, control plane) run
+// with no tenant context, so nothing is injected. Leaving it scoped is the fail-safe
+// default should it ever be read from inside a tenant-scoped request.
+model OrgApprovalChallenge {
+  id         String   @id @default(cuid())
+  // One live challenge per organization: re-issuing replaces the previous code.
+  customerId String   @unique
+  codeHash   String
+  attempts   Int      @default(0)
+  expiresAt  DateTime
+  lastSentAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+}
+
+// Global, platform-wide ticket-number format — a single row (id = "default"),
+// editable only by an ADMINISTRATOR. Consumed by the ticketing module when it
+// allocates a ticket number. Absent row ⇒ built-in defaults (TKT-001).
+model TicketNumberSetting {
+  id             String   @id @default("default")
+  prefix         String   @default("TKT")
+  includeOrgCode Boolean  @default(false)
+  separator      String   @default("-")
+  padWidth       Int      @default(3)
+  updatedById    String?
+  updatedAt      DateTime @updatedAt
+}
+
+model User {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  passwordHash  String
+  // Keyed fingerprint of the password: HMAC-SHA256(PASSWORD_PEPPER, password).
+  // bcrypt salts randomly, so identical passwords produce different hashes and reuse
+  // is undetectable from passwordHash alone. This deterministic value lets us block
+  // cross-account reuse and report it, without ever storing anything reversible.
+  // Written ONLY when the plaintext passes through (register / change / reset), so it
+  // is null for accounts that haven't set a password since this shipped.
+  passwordFingerprint String?
+  name          String
+  role          Role           @default(USER)
+  // Fine-grained platform-staff role. Set ONLY when role = ADMINISTRATOR, which is
+  // now the coarse "this account works for the vendor" marker; this says which kind.
+  // A DB CHECK constraint (db/b2b.sql) enforces that pairing — `role=ADMINISTRATOR`
+  // with no platformRoleId is an invalid state, and can() fails closed on it anyway.
+  platformRoleId String?
+  // ⚠ INERT. Intended as "null until the mailbox is proven", but nothing writes it
+  // and initiateLogin does not read it — no code creates, sends or redeems an
+  // EmailVerificationToken, so every account is effectively unverified and logs in
+  // regardless. The column and that model are dead until the flow is built; do not
+  // rely on this as a gate.
+  emailVerifiedAt DateTime?
+  mfaEnabled    Boolean        @default(false)
+  lastLoginAt   DateTime?
+  // Verified Slack identity binding (Phase C Slack hardening). Set once through
+  // the one-time link-code flow; approvals and the assistant resolve the Slack
+  // clicker through THIS id, never by per-event email discovery.
+  slackId       String?        @unique
+  // One-time link-code fields (cleared after redemption). Issued via the
+  // profile; redeemed from a Slack DM ("link LINK-XXXX"); never stored raw.
+  slackLinkCodeHash  String?
+  slackLinkExpiresAt DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  customerId    String
+  platformRole        PlatformRole?  @relation(fields: [platformRoleId], references: [id])
+  auditLogs           AuditLog[]
+  refreshTokens       RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
+  emailVerificationTokens EmailVerificationToken[]
+  emailMfaChallenges  EmailMfaChallenge[]
+  trustedDevices      TrustedDevice[]
+  requests            ServiceRequest[] @relation("UserRequests")
+  announcements       Announcement[] @relation("UserAnnouncements")
+  escalations         TicketEscalation[] @relation("UserEscalations")
+  pushSubscriptions   PushSubscription[]
+  notifications       Notification[]
+  externalApiKeys     ExternalApiKey[]
+  customer            Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([email])
+  @@index([passwordFingerprint])
+  @@index([platformRoleId])
+}
+
+// ─── Platform staff roles (IAM) ──────────────────────────────────────────────
+// The vendor's own staff: Administration / HR Admin / Employee / Intern, plus any
+// custom role an administrator creates. Which FEATURES a role can reach is data
+// (`permissions`), so it is editable from the roles matrix at runtime; which KEYS
+// exist is code (src/config/permissions.ts) and is validated on write.
+//
+// `permissions` is a jsonb string[] rather than a join table on purpose: the set is
+// always read whole for one role, and the only "which roles hold key X" query is the
+// matrix UI, which loads all ≤10 rows anyway. One column, no join, no cascade.
+//
+// The `administration` role's permissions are NEVER read from this column — the
+// service returns the whole registry for it. That is what makes it impossible to
+// strip, and what makes a newly-shipped key automatically held by administrators.
+model PlatformRole {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  name        String
+  description String?
+  // The four seeded roles. Blocks deletion; the matrix UI may still edit the
+  // permissions of hr_admin / employee / intern (but never administration).
+  system      Boolean  @default(false)
+  permissions Json     @default("[]")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  users       User[]
+
+  @@index([key])
+}
+
+// Proof-of-ownership token emailed at signup. SHA-256, not bcrypt: the token is
+// 32 CSPRNG bytes, so a KDF buys nothing and bcrypt would force the same O(n)
+// scan-and-compare loop PasswordResetToken needs. Hashed so a database read
+// cannot be replayed into an account takeover.
+model EmailVerificationToken {
+  id         String   @id @default(cuid())
+  tokenHash  String   @unique
+  userId     String
+  expiresAt  DateTime
+  // Resend cooldown, same mechanism as EmailMfaChallenge.lastSentAt.
+  lastSentAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// Web Push (RFC 8030 / VAPID) subscription endpoints, one row per browser/device.
+// tenantId mirrors the owner's customerId (multi-tenant scoping). Excluded from the
+// tenant Prisma extension in config/database.ts because that extension injects a
+// `customerId` filter this model does not have.
+model PushSubscription {
+  id         String   @id @default(cuid())
+  endpoint   String   @unique
+  p256dh     String
+  auth       String
+  userId     String
+  tenantId   String
+  userAgent  String?
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tenantId])
+}
+
+/// Durable, per-user notifications with read state.
+///
+/// Lives in the MAIN database on purpose. The obvious home looked like the ticket
+/// store's Activities table, but those rows are ON DELETE CASCADE on the ticket —
+/// so a mention would silently vanish if the ticket were deleted. Push
+/// subscriptions are keyed to main-DB users too.
+///
+/// `entityId` is a LOOSE reference (e.g. a ticket id) with no foreign key: the
+/// ticket lives in a different database entirely. Same shape as
+/// TicketEscalation.ticketId.
+model Notification {
+  id         String    @id @default(cuid())
+  userId     String
+  /// The RECIPIENT's org, not the actor's. The tenant extension injects this on
+  /// reads, so setting the actor's org here would write a row its recipient could
+  /// never read back. resolveB2bIdentity() returns exactly this pair.
+  customerId String
+  /// 'ticket_mention' today. This column is why the next notification kind needs
+  /// no migration.
+  kind       String
+  title      String
+  body       String?
+  /// Deep link, e.g. /ticketing?ticket=<id>
+  url        String?
+  actorId    String?
+  entityId   String?
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@index([customerId])
+  @@index([createdAt])
+}
+
+model RefreshToken {
+  id         String   @id @default(cuid())
+  tokenHash  String   @unique
+  userId     String
+  // Stable session identity: survives token rotation, carried in the access JWT
+  // as `sid`. One active session per user is enforced at login.
+  sessionId  String
+  lastUsedAt DateTime @default(now())
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@index([sessionId])
+}
+
+model PasswordResetToken {
+  id         String   @id @default(cuid())
+  tokenHash  String   @unique
+  userId     String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+}
+
+// Short-lived email MFA challenge. Issued after a password check at login; the
+// emailed 6-digit code is stored hashed (never in plaintext). Verifying the code
+// is what actually issues session tokens. One live challenge per user at a time.
+model EmailMfaChallenge {
+  id         String    @id @default(cuid())
+  userId     String
+  codeHash   String
+  attempts   Int       @default(0)
+  expiresAt  DateTime
+  lastSentAt DateTime  @default(now())
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// "Remember this device" — set after a successful MFA verify; a valid device
+// cookie lets the SAME browser skip the email code on subsequent logins until
+// it expires. The random token is stored hashed (SHA-256); the cookie carries
+// `id.rawToken`. Revoked on password reset.
+model TrustedDevice {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model AuditLog {
+  id            String   @id @default(cuid())
+  action        String
+  performedById String?
+  targetId      String?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  customerId    String
+  performedBy   User?    @relation(fields: [performedById], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([performedById])
+  @@index([createdAt])
+}
+
+model FeatureFlag {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       Boolean  @default(false)
+  description String?
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  @@index([key])
+}
+
+model OrgFeatureFlag {
+  id         String   @id @default(cuid())
+  customerId String
+  key        String
+  value      Boolean  @default(false)
+  updatedAt  DateTime @updatedAt
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, key])
+  @@index([customerId])
+}
+
+model ServiceRequest {
+  id            String        @id @default(cuid())
+  customerId    String
+  createdById   String?
+  type          RequestType   @default(SUPPORT)
+  status        RequestStatus @default(OPEN)
+  priority      Priority      @default(MEDIUM)
+  subject       String
+  description   String?
+  service       String?
+  assignedTo    String?
+  // Platform-admin working notes — never returned on org-facing endpoints.
+  internalNotes String?
+  // External ticketing system reference (mirror + sync). Local rows stay the
+  // app's source of truth; these track the mirrored ticket and last sync state.
+  externalId        String?
+  externalSyncedAt  DateTime?
+  externalSyncError String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  resolvedAt    DateTime?
+  customer      Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  createdBy     User?         @relation("UserRequests", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([createdById])
+  @@index([status])
+  @@index([priority])
+  @@index([createdAt])
+}
+
+// NOTE: Chat history (ChatSession/ChatMessage) moved to the dedicated chat
+// database — see prisma/chat.prisma. Ticketing-tool tickets/projects live in
+// the dedicated ticketing database — see prisma/ticketing.prisma. Both link
+// back to this DB via customerId/userId in the service layer.
+
+// ─── Ticket escalations (org admin → platform Administrators) ─────────────────
+// Snapshot of a ticketing-tool ticket at the moment an ORG_ADMIN forwards it to
+// the platform. Lives in our DB (not the external ticketing system) so it is
+// cross-org queryable, survives restarts, and powers Administrator notifications.
+model TicketEscalation {
+  id            String           @id @default(cuid())
+  customerId    String
+  ticketId      String
+  subject       String
+  issueType     String
+  priority      Priority         @default(MEDIUM)
+  note          String?
+  status        EscalationStatus @default(OPEN)
+  escalatedById String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  customer      Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  escalatedBy   User?            @relation("UserEscalations", fields: [escalatedById], references: [id], onDelete: SetNull)
+
+  @@unique([customerId, ticketId])
+  @@index([customerId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+enum EscalationStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+// ─── Platform announcements (broadcast by ADMINISTRATOR) ──────────────────────
+// customerId null = visible to ALL organizations; set = targeted to one org.
+// Listed in the tenant extension's globalModels — visibility is scoped manually
+// in the announcements service (auto-injection would hide global rows).
+model Announcement {
+  id          String            @id @default(cuid())
+  title       String
+  message     String
+  level       AnnouncementLevel @default(INFO)
+  customerId  String?
+  active      Boolean           @default(true)
+  expiresAt   DateTime?
+  createdById String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  customer    Customer?         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  createdBy   User?             @relation("UserAnnouncements", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([active])
+}
+
+// ─── Platform service catalog (global; managed by ADMINISTRATOR) ─────────────
+model ServiceCatalog {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  category    String?
+  basePrice   Int      @default(0)
+  // Service kind. null = standard catalog item. 'SQUID_PROXY' marks an
+  // infrastructure offering: assigning it to an org auto-provisions a SquidProxy
+  // record and the subscription governs that proxy's lifecycle.
+  kind        String?
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([enabled])
+  @@map("serviceCatalog")
+}
+
+// ─── Per-customer service (each org defines/manages its own services) ─────────
+// endDate drives expiry status (ACTIVE / EXPIRING / EXPIRED), derived in code.
+// Managed by the platform ADMINISTRATOR; customer-scoped for org members.
+model CustomerService {
+  id           String   @id @default(cuid())
+  customerId   String
+  name         String
+  description  String?
+  monthlyPrice Int      @default(0)
+  purchaseDate DateTime @default(now())
+  endDate      DateTime
+  notes        String?
+  // Expiry-reminder watermark: the last date a reminder email was sent for this
+  // service. A reminder fires again only on a later day, and only when the
+  // remaining days cross one of the configured windows — so each threshold
+  // mails exactly once.
+  lastRemindedAt DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  customer       Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  squidProxy     SquidProxy?
+
+  @@index([customerId])
+  @@index([endDate])
+  @@map("customerServices")
+}
+
+enum Role {
+  USER
+  ORG_ADMIN
+  ADMINISTRATOR
+}
+
+enum Plan {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+enum ServiceStatus {
+  ACTIVE
+  EXPIRING
+  EXPIRED
+  SUSPENDED
+}
+
+enum RequestType {
+  SUPPORT
+  INCIDENT
+  FEATURE_REQUEST
+  ONBOARDING
+  BILLING
+}
+
+enum RequestStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+  ESCALATED
+}
+
+enum Priority {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum AnnouncementLevel {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+// ─── Slack bots (global; managed by ADMINISTRATOR) ───────────────────────────
+// Each bot is a distinct "function" registered by an administrator. Tokens are
+// stored ENCRYPTED (AES-256-GCM) and never returned to the client. `ticketUserId`
+// is the bridged Users.id in the external b2b_ticket DB so the bot can be a ticket
+// assignee. Live status is refreshed by the Slack manager's poll loop.
+model SlackBot {
+  id            String         @id @default(cuid())
+  name          String
+  slug          String         @unique
+  description   String?
+  botTokenEnc   String
+  appTokenEnc   String?
+  webhookUrlEnc String?
+  apiKeyHash    String?
+  apiKeyHint    String?
+  // Remote host-worker (ADR-002) credential pair: wrk_ raw key's SHA-256 for
+  // constant-time lookup plus its AES-256-GCM ciphertext so each request's HMAC
+  // signature can be verified. Minted by an Administrator, shown ONCE, and
+  // cleared only by rotation/revocation.
+  workerKeyHash  String?
+  workerKeyEnc   String?
+  workerKeyHint  String?
+  // First time a host worker successfully fetched this bot's Slack tokens. The
+  // one-time gate: after this, re-provision is only allowed for the SAME worker
+  // instanceId (network-loss recovery), never a second host.
+  workerProvisionedAt DateTime?
+  // The worker instance currently leasing this bot (heartbeat-written; a
+  // different instanceId gets a `disable` command back — never two Socket Mode
+  // connections for one bot).
+  activeInstance String?
+  // Where the live Slack connection runs. PLATFORM = the API process's
+  // SlackManager; HOST_WORKER = a worker on client infrastructure that calls
+  // /api/bot-worker. Only HOST_WORKER bots may provision/run a worker.
+  executionOwner SlackBotExecutionOwner @default(PLATFORM)
+  // Set when this bot's Slack tokens are rotated; the next host heartbeat
+  // receives the `rotated` command telling the worker to re-provision. Cleared
+  // by the re-provision itself.
+  workerRotationPending Boolean @default(false)
+  // Which control-plane dialect this bot speaks on /api/bot-worker:
+  // SLACK_THIN = ADR-002 message-forwarding worker (provision/heartbeat/message);
+  // SQUID_BOT  = the Squid host bot (request/state/command-result — it never
+  // provisions tokens, it already holds its own Slack tokens on the host).
+  workerMode SlackBotWorkerMode @default(SLACK_THIN)
+  botUserId     String?
+  teamName      String?
+  status        SlackBotStatus @default(DISCONNECTED)
+  lastError     String?
+  lastCheckedAt DateTime?
+  ticketUserId  String?
+  enabled       Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  formFields    SlackBotFormField[]
+  orgs          SlackBotOrg[]
+  botState      SquidBotState?
+  botCommands   SquidBotCommand[]
+  botRules      SquidBotRule[]
+
+  @@map("slackBots")
+}
+
+// Admin-maintained dynamic ticket-form schema for a bot.
+model SlackBotFormField {
+  id          String       @id @default(cuid())
+  botId       String
+  key         String
+  label       String
+  type        BotFieldType @default(TEXT)
+  required    Boolean      @default(false)
+  options     Json?
+  placeholder String?
+  helpText    String?
+  order       Int          @default(0)
+  bot         SlackBot     @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@unique([botId, key])
+  @@index([botId])
+  @@map("slackBotFormFields")
+}
+
+// Which organizations may use a bot (per-org assignment). Tenant-scoped for org reads.
+model SlackBotOrg {
+  id         String   @id @default(cuid())
+  botId      String
+  customerId String
+  // Channel the bot posts approval cards to for this org (external-created
+  // tickets). Null = no Slack approval delivery; the platform UI still works.
+  approvalChannelId String?
+  // Squid host bot (D10): which SquidProxy this bot's host executes for. Null
+  // is legal while the org owns exactly one proxy (resolved at runtime); an
+  // explicit link disambiguates multi-proxy orgs.
+  squidProxyId String?
+  createdAt  DateTime @default(now())
+  bot        SlackBot @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@unique([botId, customerId])
+  @@index([customerId])
+  @@index([squidProxyId])
+  @@map("slackBotOrgs")
+}
+
+// Submitted dynamic-form values for a bot-assigned ticket (ticket lives in b2b_ticket).
+model BotTicketSubmission {
+  id           String   @id @default(cuid())
+  botId        String
+  customerId   String
+  ticketId     String
+  ticketNumber String
+  values       Json
+  createdById  String
+  createdAt    DateTime @default(now())
+
+  @@index([customerId])
+  @@index([botId])
+  @@map("botTicketSubmissions")
+}
+
+// ─── Squid proxy management (per-organization, tenant-scoped) ──────────────
+// One SquidProxy per managed Squid instance (an org can own several, e.g. one
+// per branch office). Provisioned automatically when an ADMINISTRATOR assigns a
+// kind=SQUID_PROXY catalog service to the org; the CustomerService row is the
+// life-cycle contract (expiry locks the proxy read-only, removal disables it).
+//
+// Config is PLATFORM-side single source of truth: branch/network data lives here
+// and the ACL engine renders the include file + .txt contents, which the per-host
+// agent applies (atomic write → squid -k parse → squid -k reconfigure). The agent
+// authenticates per-request with its per-proxy `pk_` registration key: regKeyHash
+// is the SHA-256 constant-time lookup index, regKeyEncrypted holds the raw key
+// (AES-256-GCM) so each request's HMAC signature can be verified; appliedSeq is
+// the agent's monotonic ack watermark.
+model SquidProxy {
+  id                   String           @id @default(cuid())
+  customerId           String
+  name                 String
+  description          String?
+  transport            String           @default("agent")
+  regKeyHash           String?          @unique
+  regKeyEncrypted      String?
+  registrationHint     String?
+  status               SquidProxyStatus @default(UNPROVISIONED)
+  lastSeenAt           DateTime?
+  lastError            String?
+  // Monotonic config revision. Every rule/network edit bumps it — the rendered
+  // bundle is keyed to it. appliedSeq is the last revision the agent either
+  // acked or applied; a gap triggers a full-snapshot re-sync.
+  revision             Int              @default(0)
+  appliedSeq           Int              @default(0)
+  // Write-guard set when the governing subscription expires (read-only, like the
+  // BT Proxy license lock) or when the proxy is disabled. Central service check.
+  locked               Boolean          @default(false)
+  safePorts            Json             @default("[]")
+  sslPorts             Json             @default("[]")
+  // Full-access rules: [{src, description?, until?, window?{days,from,to} }]
+  fullAccess           Json             @default("[]")
+  // Optional: link to an external API key for ticketing integration
+  externalApiKeyId     String?
+  externalApiKey       ExternalApiKey?  @relation(fields: [externalApiKeyId], references: [id], onDelete: SetNull)
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+  customer             Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerService      CustomerService? @relation(fields: [customerServiceId], references: [id])
+  customerServiceId    String?          @unique
+  branches             SquidBranch[]
+  changeRequests       SquidChangeRequest[]
+  telemetry            SquidTelemetry[]
+  logEntries           SquidLogEntry[]
+  hostConfig           SquidHostConfig?
+  botCommands          SquidBotCommand[]
+  botStates            SquidBotState[]
+  botRules             SquidBotRule[]
+
+  @@index([customerId])
+  @@index([status])
+  @@map("squidProxies")
+}
+
+// A named access-rule group for one proxy (e.g. "Calicut_BR03"). Mirrors the BT
+// Proxy domain: sources are the IPs/subnets the rule applies to, mode decides
+// additive (whitelist + broader access) vs exclusive (whitelist-only, everything
+// else denied), and whitelist/blacklist hold site entries {
+// value: string; subdomain: boolean (+ type: 'domain'|'ip' resolved on render) }.
+model SquidBranch {
+  id          String          @id @default(cuid())
+  proxyId     String
+  customerId  String
+  name        String
+  description String?
+  mode        SquidBranchMode @default(ADDITIVE)
+  sources     Json            @default("[]")
+  whitelist   Json            @default("[]")
+  blacklist   Json            @default("[]")
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  proxy       SquidProxy      @relation(fields: [proxyId], references: [id], onDelete: Cascade)
+
+  @@unique([proxyId, name])
+  @@index([customerId])
+  @@map("squidBranches")
+}
+
+enum SquidProxyStatus {
+  UNPROVISIONED
+  PENDING
+  CONNECTED
+  OFFLINE
+  DISABLED
+  ERROR
+}
+
+enum SquidBranchMode {
+  ADDITIVE
+  EXCLUSIVE
+}
+
+// Every requested config change to a proxy — from the web dashboard (WEB) with
+// the SLACK/API channels reserved for bot-driven requests. One row per change:
+// the "auto ticket" left behind so each requested change is attributable.
+enum SquidChangeSource {
+  WEB
+  SLACK
+  API
+}
+
+model SquidChangeRequest {
+  id            String              @id @default(cuid())
+  proxyId       String
+  customerId    String
+  actorId       String?
+  source        SquidChangeSource   @default(WEB)
+  action        String
+  summary       String
+  details       Json
+  ticketId      String?
+  ticketUrl     String?
+  status        SquidChangeStatus   @default(PENDING_APPROVAL)
+  appliedSeq    Int?
+  error         String?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  proxy         SquidProxy          @relation(fields: [proxyId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([proxyId])
+  @@index([status])
+  @@index([ticketId])
+  @@map("squidChangeRequests")
+}
+
+enum SquidChangeStatus {
+  PENDING_APPROVAL
+  APPROVED
+  // Created into a SquidBotCommand and waiting on the host's /command-result
+  // ack. APPROVED → DISPATCHED is the exactly-once claim for bot execution.
+  DISPATCHED
+  REJECTED
+  APPLIED
+  FAILED
+}
+
+// ─── Squid host bot (workerMode = SQUID_BOT) ────────────────────────────────
+// The Python bot on the client host is the executor for the per-IP rule layer
+// (/etc/squid/conf.d + lists). These three models are the platform's view of it:
+// latest state (health), the exactly-once command ledger, and the active-rules
+// mirror the dashboard reads. Expiry itself stays host-side (D11).
+
+// Latest snapshot per bot — UPSERTED on every /state poll (one row per bot by
+// design; history lives in the audit log and SquidBotCommand, D12).
+model SquidBotState {
+  botId             String         @id
+  customerId        String
+  proxyId           String?
+  instanceId        String?
+  version           String?
+  status            SlackBotStatus @default(DISCONNECTED)
+  socketConnected   Boolean        @default(false)
+  lastEventAt       DateTime?
+  msgCount          Int            @default(0)
+  // Host squid service as the bot sees it: active (running), last parse ok,
+  // last successful reload epoch.
+  squidActive       Boolean        @default(false)
+  squidParseOk      Boolean?
+  squidLastReloadAt DateTime?
+  domainCount       Int            @default(0)
+  // Last Playwright deep-scan result: { domain, deps[], at }.
+  discovery         Json?
+  lastError         String?
+  // The full raw snapshot as sent, for ops debugging.
+  raw               Json           @default("{}")
+  observedAt        DateTime       @default(now())
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  bot               SlackBot       @relation(fields: [botId], references: [id], onDelete: Cascade)
+  proxy             SquidProxy?    @relation(fields: [proxyId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([proxyId])
+  @@map("squidBotStates")
+}
+
+enum SquidBotCommandStatus {
+  PENDING     // created by approval sync; not yet handed to the bot
+  DISPATCHED  // delivered in a /state response (redelivered until acked)
+  ACKED       // bot reported ok
+  FAILED      // bot reported failure
+  TIMED_OUT   // dispatched but never acked within the window
+}
+
+enum SquidBotCommandType {
+  ALLOW
+  DENY
+  EXTEND
+  FULL_NET
+  LOCK_NET
+}
+
+// Exactly-once execution record: one row per approved change request, created
+// atomically (unique changeRequestId — a concurrent second door cannot dupe),
+// delivered by /state, finalized by /command-result. Append-only; D12 trims at
+// 90 days.
+model SquidBotCommand {
+  id              String                @id @default(cuid())
+  botId           String
+  customerId      String
+  proxyId         String
+  changeRequestId String                @unique
+  type            SquidBotCommandType
+  payload         Json                  @default("{}")
+  status          SquidBotCommandStatus @default(PENDING)
+  // How many /state responses have carried this command (redelivery counter).
+  attempts        Int                   @default(0)
+  // The bot's reported detail ("squid reloaded", error text).
+  result          String?
+  createdAt       DateTime              @default(now())
+  dispatchedAt    DateTime?
+  ackedAt         DateTime?
+  bot             SlackBot              @relation(fields: [botId], references: [id], onDelete: Cascade)
+  proxy           SquidProxy            @relation(fields: [proxyId], references: [id], onDelete: Cascade)
+
+  @@index([botId, status])
+  @@index([customerId])
+  @@index([createdAt])
+  @@map("squidBotCommands")
+}
+
+// Mirror of the bot's active per-IP rules (its domains.json), upserted from the
+// `rules` snapshot or `rulesDelta` ops each /state carries — the dashboard's
+// "active rules + expiry countdown" view. Expiry enforcement and the expiry
+// worker stay host-side (D11); expired rows simply leave on the next snapshot.
+// D12: rows unseen for 90 days are trimmed.
+model SquidBotRule {
+  id         String    @id @default(cuid())
+  botId      String
+  customerId String
+  proxyId    String?
+  ip         String
+  domain     String
+  // True when `domain` is really a destination IP (bot's is_dest_ip).
+  isDestIp   Boolean   @default(false)
+  app        String?
+  expiresAt  DateTime?
+  lastSeenAt DateTime  @default(now())
+  bot        SlackBot  @relation(fields: [botId], references: [id], onDelete: Cascade)
+  proxy      SquidProxy? @relation(fields: [proxyId], references: [id], onDelete: SetNull)
+
+  @@unique([botId, ip, domain])
+  @@index([customerId])
+  @@index([proxyId])
+  @@index([lastSeenAt])
+  @@map("squidBotRules")
+}
+
+// One telemetry snapshot per agent report window. Counters are CUMULATIVE
+// (requests/denied/bytes/clients since start) so deltas are derived on read;
+// sessions is the set of client IPs the agent saw active. Kept ~7 days.
+model SquidTelemetry {
+  id            String     @id @default(cuid())
+  proxyId       String
+  customerId    String
+  observedAt    DateTime   @default(now())
+  seq           Int
+  squidVersion  String?
+  uptimeSeconds Int?
+  cpuPercent    Float?
+  memPercent    Float?
+  diskPercent   Float?
+  sessions      Json       @default("[]")
+  counters      Json       @default("{}")
+  // Slack bot service state reported by the agent (e.g. {table,state}). null = not reported/installed.
+  slackBot      Json?
+  proxy         SquidProxy @relation(fields: [proxyId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([proxyId, observedAt])
+  @@map("squidTelemetry")
+}
+
+// Recent access.log lines shipped by the agent log tail (retained ~48h) —
+// the live Activity viewer and the Sessions list (unique clients in the last
+// 10 minutes) both read from here. No long-term log analytics storage.
+model SquidLogEntry {
+  id         String     @id @default(cuid())
+  proxyId    String
+  customerId String
+  observedAt DateTime   @default(now())
+  clientIp   String     @default("")
+  method     String     @default("")
+  action     String     @default("") // allowed | denied
+  url        String     @default("")
+  proxy      SquidProxy @relation(fields: [proxyId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([proxyId, observedAt])
+  @@map("squidLogEntries")
+}
+
+// Latest host-config snapshot reported by the agent (one row per proxy, upserted).
+model SquidHostConfig {
+  proxyId    String   @id
+  customerId String
+  hash       String
+  capturedAt DateTime
+  files      Json     // [{path, content}]
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  proxy      SquidProxy @relation(fields: [proxyId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@map("squidHostConfigs")
+}
+
+enum SlackBotExecutionOwner {
+  PLATFORM
+  HOST_WORKER
+}
+
+enum SlackBotWorkerMode {
+  SLACK_THIN
+  SQUID_BOT
+}
+
+enum SlackBotStatus {
+  CONNECTED
+  DISCONNECTED
+  ERROR
+}
+
+enum BotFieldType {
+  TEXT
+  TEXTAREA
+  NUMBER
+  SELECT
+  CHECKBOX
+  USER_EMAIL
+}
+
+enum AdSecretStatus {
+  PENDING
+  DELIVERED
+  VIEWED
+  EXPIRED
+}
+
+// A temporary AD password delivered from a bot's AD automation for a specific
+// bot ticket. The secret is AES-256-GCM encrypted at rest and revealable ONCE by
+// each of the target user and the requesting org-admin; `secretEnc` is nulled the
+// moment it is fully consumed or expires (24h). Tenant-scoped via customerId.
+model AdCredentialDelivery {
+  id               String         @id @default(cuid())
+  botId            String
+  customerId       String
+  ticketId         String
+  ticketNumber     String
+  targetUserId     String?
+  targetEmail      String
+  requestedById    String
+  secretEnc        String?
+  status           AdSecretStatus @default(DELIVERED)
+  viewedByTarget   Boolean        @default(false)
+  viewedByRequester Boolean       @default(false)
+  expiresAt        DateTime
+  deliveredAt      DateTime       @default(now())
+  viewedAt         DateTime?
+  createdAt        DateTime       @default(now())
+
+  @@index([customerId])
+  @@index([targetUserId])
+  @@index([requestedById])
+  @@unique([botId, ticketNumber])
+  @@map("adCredentialDeliveries")
+}
+
+// ─── External ticketing API credentials (platform-global) ────────────────────
+// Standing credential for a MACHINE caller (a Slack bot program today) that
+// books tickets into the shared/admin ticket store. Issued by platform staff
+// (key CLI, later a small admin UI) — a key is not a session: it only trades a
+// secret for a short-lived access JWT via POST /oauth/external/token.
+//
+// Cross-tenant boundary: a default-store key lists the orgs (main-DB customer
+// ids) it may act for in `customerIds` — every ticket it touches must belong to
+// one of them. An admin-store key has no org axis (the admin store is already
+// platform-internal) and leaves `customerIds` empty.
+//
+// No customerId column by design: same rule as SlackBot — platform-managed,
+// cross-tenant. Kept out of the tenant auto-injection via globalModels.
+model ExternalApiKey {
+  id           String   @id @default(cuid())
+  name         String
+  // ext_ck_<random> — public identifier in the token request.
+  clientId     String   @unique
+  // SHA-256 of the plaintext secret (never stored). The system lookup key.
+  secretHash   String
+  // AES-256-GCM encrypted copy of the raw secret — returned to authorized callers
+  // (e.g., the Squid Slack bot) so it can authenticate to the ticketing API.
+  // Only shown once at creation, but decryptable by the platform for authorized
+  // machine-to-machine config fetches. Nullable for keys created before this field.
+  secretEnc    String?
+  // Last 4 of the raw secret for the management list — the raw secret is shown
+  // ONCE at issuance and is not recoverable afterwards.
+  secretHint   String
+  // ExternalScope[]: 'tickets.view' | 'tickets.write' | 'api_keys.manage'
+  scopes       Json     @default("[]")
+  // Which ticketing store the key routes to: 'default' | 'admin'
+  ticketStore  String   @default("default")
+  // Allowed orgs (main-DB customerIds) for default-store access. Empty = none.
+  customerIds  Json     @default("[]")
+  enabled      Boolean  @default(true)
+  expiresAt    DateTime?
+  lastUsedAt   DateTime?
+  createdById  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  createdBy    User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  webhooks     ExternalWebhook[]
+  squidProxies SquidProxy[]
+
+  @@index([clientId])
+  @@map("externalApiKeys")
+}
+
+// Delivery endpoint for event notifications from the external ticketing API
+// (ticket created / approved / declined). The shared HMAC secret is generated,
+// stored AES-256-GCM encrypted and returned in plaintext exactly once at
+// creation for the caller to sign outgoing requests with — it is never readable
+// again. `events` = the ExternalWebhookEvent[] this webhook subscribes to.
+model ExternalWebhook {
+  id              String          @id @default(cuid())
+  keyId           String
+  url             String
+  secretEnc       String
+  secretHint      String
+  events          Json            @default("[]")
+  enabled         Boolean         @default(true)
+  lastTriggeredAt DateTime?
+  lastDeliveryOk  Boolean?
+  failureCount    Int             @default(0)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  apiKey          ExternalApiKey  @relation(fields: [keyId], references: [id], onDelete: Cascade)
+
+  @@index([keyId])
+  @@index([enabled])
+  @@map("externalWebhooks")
+}

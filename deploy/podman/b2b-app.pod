@@ -1,0 +1,21 @@
+[Unit]
+Description=B2B-Site application pod (API + web)
+
+[Pod]
+PodName=b2b-app
+Network=b2b.network
+IP=10.89.10.4
+AddHost=host.containers.internal:host-gateway
+
+# The API and the Next server share this pod, and therefore a network namespace.
+# That is deliberate: Next's server-side rewrite (client/next.config.js) and the
+# SSE bypass in the nginx config both assume the API is reachable on localhost:3001,
+# exactly as under the systemd deploy. Split them into separate pods and both
+# break — quietly, in the case of the rewrite.
+#
+# No PublishPort in the final topology: nginx reaches both over the b2b network.
+# During the parallel-run step (see the plan), publish 127.0.0.1:3010:3000 and
+# 127.0.0.1:3011:3001 here to smoke-test alongside the running systemd deploy.
+
+[Install]
+WantedBy=default.target

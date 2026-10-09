@@ -1,0 +1,89 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+    --brand:        #2563EB;
+    --brand-700:    #1D4ED8;
+    --canvas:       #F8FAFC;
+    --surface:      #FFFFFF;
+    --line:         #E2E8F0;
+    --ink:          #0F172A;
+  }
+
+  html, body {
+    color: var(--ink);
+    font-feature-settings: 'ss01', 'cv11', 'tnum';
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    background-color: var(--canvas);
+    min-height: 100vh;
+  }
+
+  /* Light, unobtrusive scrollbars */
+  ::-webkit-scrollbar         { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track   { background: transparent; }
+  ::-webkit-scrollbar-thumb   { background: #CBD5E1; border-radius: 8px; border: 3px solid var(--canvas); }
+  ::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+
+  ::selection { background: rgba(59, 130, 246, 0.25); color: var(--ink); }
+
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus {
+    -webkit-text-fill-color: var(--ink);
+    -webkit-box-shadow: 0 0 0 1000px var(--surface) inset;
+    transition: background-color 9999s ease-in-out 0s;
+  }
+}
+
+@layer components {
+  /* ─── Card ─────────────────────────────────────────────────────── */
+  .card {
+    @apply bg-white border border-slate-200 rounded-xl shadow-card;
+  }
+
+  /* ─── Input ─────────────────────────────────────────────────────── */
+  .input {
+    @apply w-full px-3.5 py-2.5 text-sm text-slate-900
+           placeholder:text-slate-400
+           bg-white border border-slate-300 rounded-lg
+           focus:outline-none focus:border-brand
+           transition-colors duration-150;
+  }
+  .input:focus {
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+  }
+  select.input option { background: var(--surface); color: var(--ink); }
+
+  /* ─── Skeleton shimmer ──────────────────────────────────────────── */
+  .shimmer {
+    background: linear-gradient(90deg, #F1F5F9 0%, #E2E8F0 50%, #F1F5F9 100%);
+    background-size: 800px 100%;
+    @apply animate-shimmer;
+  }
+  /* ─── KBD ───────────────────────────────────────────────────────── */
+  .kbd {
+    @apply inline-flex items-center justify-center min-w-[20px] h-5 px-1.5
+           bg-slate-100 border border-slate-200 rounded
+           text-[10px] font-medium text-slate-500;
+  }
+
+  /* ─── Eyebrow label ─────────────────────────────────────────────── */
+  .eyebrow {
+    @apply text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

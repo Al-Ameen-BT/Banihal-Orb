@@ -1,0 +1,16 @@
+[Unit]
+Description=B2B-Site nginx pod
+
+[Pod]
+PodName=b2b-nginx
+Network=b2b.network
+IP=10.89.10.5
+
+# The only pod exposed to the LAN. Rootful Podman binds these directly; under
+# rootless they are below the privileged-port threshold and need
+# net.ipv4.ip_unprivileged_port_start=80.
+PublishPort=80:80
+PublishPort=443:443
+
+[Install]
+WantedBy=default.target

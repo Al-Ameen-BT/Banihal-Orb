@@ -1,0 +1,264 @@
+'use client';
+
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import clsx from 'clsx';
+
+// ─── Reusable confirmation dialog ─────────────────────────────────────────────
+// Replaces native window.confirm() with an on-brand, accessible modal. Usage:
+//
+//   const confirm = useConfirm();
+//   if (await confirm({ title: 'Delete project', message: '…', variant: 'danger',
+//                       confirmText: 'Delete' })) mutation.mutate();
+//
+// The promise resolves true (confirmed) or false (cancelled / dismissed).
+//
+// Pass `rememberKey` to offer a "Don't ask me again" checkbox. Once ticked and
+// confirmed, every later confirm() with that same key resolves true immediately
+// without opening the dialog. The choice is per-browser (localStorage), per key —
+// so skipping chat deletions never silently skips a different destructive action.
+
+type ConfirmVariant = 'default' | 'danger';
+
+export interface ConfirmOptions {
+  title: string;
+  message?: React.ReactNode;
+  confirmText?: string;
+  cancelText?: string;
+  variant?: ConfirmVariant;
+  /** Enables the "Don't ask me again" checkbox, remembered under this key. */
+  rememberKey?: string;
+  /** Checkbox wording; defaults to "Don't ask me again". */
+  rememberLabel?: string;
+  /**
+   * Second verification for the genuinely irreversible: the confirm button stays
+   * disabled until the user types this string back exactly. Use it for actions that
+   * destroy data a click cannot undo — the server must re-check the same value, or
+   * this is theatre rather than a guard.
+   *
+   * Mutually exclusive with `rememberKey` in practice: nothing that warrants typing
+   * a name back should ever be skippable.
+   */
+  requireText?: string;
+  /** Prompt above the input; defaults to "Type <requireText> to confirm". */
+  requireLabel?: string;
+}
+
+type ConfirmFn = (options: ConfirmOptions) => Promise<boolean>;
+
+const ConfirmContext = createContext<ConfirmFn | null>(null);
+
+export function useConfirm(): ConfirmFn {
+  const ctx = useContext(ConfirmContext);
+  if (!ctx) throw new Error('useConfirm must be used within <ConfirmProvider>');
+  return ctx;
+}
+
+const DangerIcon = () => (
+  <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
+      d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+  </svg>
+);
+const QuestionIcon = () => (
+  <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
+      d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z" />
+  </svg>
+);
+
+// localStorage throws in some privacy modes, and a storage failure must never
+// block a confirmation — a missed "don't ask again" just means asking again.
+const skipStorageKey = (key: string) => `confirm-skip:${key}`;
+function isSkipped(key: string): boolean {
+  try { return window.localStorage.getItem(skipStorageKey(key)) === '1'; } catch { return false; }
+}
+function rememberSkip(key: string): void {
+  try { window.localStorage.setItem(skipStorageKey(key), '1'); } catch { /* ignore */ }
+}
+
+export function ConfirmProvider({ children }: { children: React.ReactNode }) {
+  const [options, setOptions] = useState<ConfirmOptions | null>(null);
+  const [remember, setRemember] = useState(false);
+  const [typed, setTyped] = useState('');
+  // Mirrored in refs so `close` stays referentially stable — it is a dependency of
+  // the focus/scroll-lock effect, and re-running that on every checkbox tick would
+  // yank focus off the checkbox and back onto Cancel.
+  const rememberRef = useRef(false);
+  const rememberKeyRef = useRef<string | undefined>(undefined);
+  const resolverRef = useRef<((ok: boolean) => void) | null>(null);
+  const confirmBtnRef = useRef<HTMLButtonElement>(null);
+  const cancelBtnRef = useRef<HTMLButtonElement>(null);
+  const requireInputRef = useRef<HTMLInputElement>(null);
+  const reduce = useReducedMotion();
+
+  const confirm = useCallback<ConfirmFn>((opts) => {
+    // Already told us not to ask for this action: proceed without a dialog.
+    if (opts.rememberKey && isSkipped(opts.rememberKey)) return Promise.resolve(true);
+    rememberKeyRef.current = opts.rememberKey;
+    rememberRef.current = false;
+    setRemember(false);
+    setTyped('');
+    setOptions(opts);
+    return new Promise<boolean>((resolve) => { resolverRef.current = resolve; });
+  }, []);
+
+  const close = useCallback((result: boolean) => {
+    // Only a confirmed action can arm the skip — cancelling with the box ticked
+    // must not silently authorise the next deletion.
+    if (result && rememberRef.current && rememberKeyRef.current) rememberSkip(rememberKeyRef.current);
+    resolverRef.current?.(result);
+    resolverRef.current = null;
+    setTyped('');
+    setOptions(null);
+  }, []);
+
+  const open = options !== null;
+  const isDanger = options?.variant === 'danger';
+  // Trimmed on both sides: the user is retyping a name that may itself carry spaces,
+  // and failing them over a trailing one teaches nothing.
+  const confirmBlocked = !!options?.requireText && typed.trim() !== options.requireText.trim();
+
+  // Focus management, Escape to cancel, a focus trap, and scroll lock.
+  useEffect(() => {
+    if (!open) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    // With a confirmation to type, the input is the only useful landing spot — the
+    // confirm button is disabled until it is filled in. Otherwise: Cancel on
+    // destructive prompts (safer default), Confirm elsewhere.
+    const focusTimer = window.setTimeout(() => {
+      const target = requireInputRef.current ?? (isDanger ? cancelBtnRef : confirmBtnRef).current;
+      target?.focus();
+    }, 20);
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); close(false); return; }
+      if (e.key === 'Tab') {
+        // The trap preventDefaults Tab, so anything focusable inside the dialog has to
+        // be listed here or it becomes unreachable by keyboard.
+        const els = [requireInputRef.current, cancelBtnRef.current, confirmBtnRef.current].filter(Boolean) as HTMLElement[];
+        if (els.length < 2) return;
+        e.preventDefault();
+        const idx = els.indexOf(document.activeElement as HTMLElement);
+        const next = e.shiftKey
+          ? (idx <= 0 ? els.length - 1 : idx - 1)
+          : (idx >= els.length - 1 ? 0 : idx + 1);
+        els[next].focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = prevOverflow;
+      window.clearTimeout(focusTimer);
+    };
+  }, [open, isDanger, close]);
+
+  const btnBase =
+    'inline-flex flex-1 items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold ' +
+    'transition-colors duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 ' +
+    'focus-visible:ring-offset-2 focus-visible:ring-offset-white';
+
+  return (
+    <ConfirmContext.Provider value={confirm}>
+      {children}
+      <AnimatePresence>
+        {open && options && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            transition={{ duration: reduce ? 0 : 0.15 }}
+          >
+            <div
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+              onClick={() => close(false)}
+              aria-hidden="true"
+            />
+            <motion.div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="confirm-title"
+              aria-describedby={options.message ? 'confirm-desc' : undefined}
+              initial={{ opacity: 0, scale: reduce ? 1 : 0.96, y: reduce ? 0 : 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: reduce ? 1 : 0.98, y: reduce ? 0 : 4 }}
+              transition={{ duration: reduce ? 0 : 0.18, ease: [0.4, 0, 0.2, 1] }}
+              className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-xl ring-1 ring-slate-900/5"
+            >
+              <div className={clsx(
+                'mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full',
+                isDanger ? 'bg-red-50 text-red-600' : 'bg-brand-50 text-brand',
+              )}>
+                {isDanger ? <DangerIcon /> : <QuestionIcon />}
+              </div>
+
+              <h2 id="confirm-title" className="text-center text-lg font-semibold tracking-tight text-slate-900">
+                {options.title}
+              </h2>
+              {options.message && (
+                <div id="confirm-desc" className="mx-auto mt-1.5 max-w-sm text-center text-sm leading-relaxed text-slate-600">
+                  {options.message}
+                </div>
+              )}
+
+              {options.requireText && (
+                <div className="mt-5">
+                  <label htmlFor="confirm-require" className="block text-xs font-medium text-slate-600">
+                    {options.requireLabel ?? <>Type <span className="font-semibold text-slate-800">{options.requireText}</span> to confirm</>}
+                  </label>
+                  <input
+                    id="confirm-require"
+                    ref={requireInputRef}
+                    type="text"
+                    value={typed}
+                    onChange={(e) => setTyped(e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30"
+                  />
+                </div>
+              )}
+
+              {options.rememberKey && (
+                <label className="mt-5 flex cursor-pointer items-center justify-center gap-2 text-sm text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={remember}
+                    onChange={(e) => { rememberRef.current = e.target.checked; setRemember(e.target.checked); }}
+                    className="h-4 w-4 cursor-pointer rounded border-slate-300 text-brand focus-visible:ring-2 focus-visible:ring-brand/50"
+                  />
+                  {options.rememberLabel ?? "Don't ask me again"}
+                </label>
+              )}
+
+              <div className="mt-6 flex gap-3">
+                <button
+                  ref={cancelBtnRef}
+                  type="button"
+                  onClick={() => close(false)}
+                  className={clsx(btnBase,
+                    'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-400 focus-visible:ring-slate-400/50')}
+                >
+                  {options.cancelText ?? 'Cancel'}
+                </button>
+                <button
+                  ref={confirmBtnRef}
+                  type="button"
+                  onClick={() => close(true)}
+                  disabled={confirmBlocked}
+                  className={clsx(btnBase, 'text-white disabled:cursor-not-allowed disabled:opacity-40',
+                    isDanger
+                      ? 'bg-red-600 hover:bg-red-700 focus-visible:ring-red-500/50'
+                      : 'bg-brand hover:bg-brand-700 focus-visible:ring-brand/50')}
+                >
+                  {options.confirmText ?? 'Confirm'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </ConfirmContext.Provider>
+  );
+}

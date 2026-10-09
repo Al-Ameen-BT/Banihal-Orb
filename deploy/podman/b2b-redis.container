@@ -1,0 +1,31 @@
+[Unit]
+Description=B2B-Site Redis (cache, rate-limit store, agent lock)
+Requires=b2b-redis-pod.service
+After=b2b-redis-pod.service
+
+[Container]
+ContainerName=b2b-redis
+Image=docker.io/library/redis:7-alpine
+Pod=b2b-redis.pod
+
+# No volume, no appendonly: everything Redis holds here is reconstructible — cache
+# entries recompute from PostgreSQL, rate-limit counters are safe to lose, the
+# agent lock is TTL'd. Persisting them would only add a way for the cache to come
+# back stale after a restart.
+#
+# maxmemory-policy is allkeys-lru, not the default noeviction. Under noeviction a
+# full instance starts REFUSING WRITES, which would take out the rate limiters —
+# turning "the cache is full" into "nobody can log in". Evicting the coldest key
+# is always the better failure here.
+Exec=redis-server --save "" --appendonly no --maxmemory 256mb --maxmemory-policy allkeys-lru
+
+HealthCmd=redis-cli ping
+HealthInterval=10s
+HealthRetries=3
+HealthStartPeriod=5s
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

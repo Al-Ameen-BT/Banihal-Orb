@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+
+# Build Output
+dist/
+
+# Environment Configuration & Secrets (Confidential)
+.env
+.env.local
+.env.development
+.env.test
+.env.staging
+.env.production
+.env.development.local
+.env.test.local
+.env.staging.local
+.env.production.local
+.env*.local
+
+# Security Credentials & Certificates
+*.pem
+*.key
+*.pub
+*.cert
+*.crt
+*.pfx
+
+# Prisma / Local Database journals
+/prisma/dev.db
+/prisma/dev.db-journal
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# System Files
+.DS_Store
+Thumbs.db
+
+__pycache__/
+pycache/*
+__pycache__
+
+# NOTE: a bare `tests` pattern used to live here, alongside these Python artifact
+# rules. It matched server/tests/ and quietly kept four of the suite's files out of
+# version control — which meant CI checked out a repo missing most of its tests and
+# reported green. Do not reintroduce it: server/tests/ is source, not build output.

@@ -1,0 +1,32 @@
+-- ============================================================================
+-- 2026-09-07-activities-createdat-index.sql — index for the Activity Log tab
+-- ----------------------------------------------------------------------------
+-- "Activities" was only ever read one ticket at a time, so it carries indexes on
+-- ticketId and userId and nothing on createdAt. The Activity Log (ticketing tab
+-- "Activity Log", GET /api/ticketing/activity) reads it the other way round: the
+-- whole table ordered by createdAt DESC, paged. Without this index that is a
+-- sequential scan plus a sort of every row on every page — and both stores hold
+-- ~1500 tickets' worth of activity today.
+--
+-- APPLY TO BOTH TICKET STORES, and to their test databases:
+--   psql -d b2b_ticket             -f server/db/2026-09-07-activities-createdat-index.sql
+--   psql -d b2b_ticketing_admin    -f server/db/2026-09-07-activities-createdat-index.sql
+--   psql -d b2b_ticket_test        -f server/db/2026-09-07-activities-createdat-index.sql
+--   psql -d b2b_ticketing_admin_test -f server/db/2026-09-07-activities-createdat-index.sql
+--
+-- Safe to re-run, and safe to apply to a live database: CONCURRENTLY takes no
+-- write lock. It CANNOT run inside a transaction block, so invoke this file with
+-- psql directly rather than wrapping it in BEGIN/COMMIT.
+--
+-- Composite (createdAt, id) rather than createdAt alone: the feed orders by
+-- createdAt DESC, id DESC — id breaks ties so cursor pagination is deterministic
+-- and cannot skip or repeat a row when several activities share a timestamp. A
+-- single-column index would leave that tie-break to an incremental sort. B-trees
+-- scan backwards at the same cost, so no DESC modifier is needed for either.
+--
+-- Mirrored as @@index([createdAt, id]) on model Activities in prisma/ticket.prisma
+-- so a future `prisma db pull`/`migrate` does not propose dropping it.
+-- ============================================================================
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "Activities_createdAt_id_idx"
+  ON "Activities" ("createdAt", "id");

@@ -1,0 +1,32 @@
+# Shared network for all four pods. Podman's aardvark-dns resolves container and
+# pod names on a user-defined network, which is how the app reaches `b2b-postgres`
+# and `b2b-redis` by name instead of by a churning IP.
+#
+# The subnet is pinned rather than left to Podman's allocator because
+# TRUST_PROXY (server/src/config/env.ts) has to name it: Express only believes an
+# X-Forwarded-For from an address it trusts, and nginx reaches the API from its
+# address on THIS subnet. Let Podman pick the range and that value silently stops
+# matching after a network recreate — every IP-keyed rate limiter then collapses
+# into one bucket, with nothing in the logs to say so.
+#
+# Static IPs are pinned on each pod (IP= in the .pod units) so addresses survive
+# restarts, rebuilds, and full stack recreations. The allocation is:
+#   10.89.10.1  gateway (Podman-managed)
+#   10.89.10.2  b2b-postgres
+#   10.89.10.3  b2b-redis
+#   10.89.10.4  b2b-app (api + web share this address)
+#   10.89.10.5  b2b-nginx
+#
+# If you add a new pod, pick the next address (10.89.10.6) and add a matching
+# IP= line to its .pod unit.
+
+[Unit]
+Description=B2B-Site container network
+
+[Network]
+NetworkName=b2b
+Subnet=10.89.10.0/24
+Gateway=10.89.10.1
+
+[Install]
+WantedBy=default.target

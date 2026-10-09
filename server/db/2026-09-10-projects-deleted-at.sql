@@ -1,0 +1,22 @@
+-- ============================================================================
+-- 2026-09-10-projects-deleted-at.sql — soft-delete column on Projects
+-- ----------------------------------------------------------------------------
+-- Adds the soft-delete marker on Projects. The Prisma datamodel
+-- (prisma/ticket.prisma, model Projects.deletedAt) and the base schema
+-- (db/b2b_ticket.sql) both declare it, but `CREATE TABLE IF NOT EXISTS` only
+-- creates NEW tables — databases provisioned before this column was added to
+-- the schema never received it. The generated @prisma/ticket-client then
+-- SELECTs it on every project query (ticketing.client.ts filters
+-- `deletedAt: null` when listing projects), so an existing table without the
+-- column fails those queries with "column Projects.deletedAt does not exist".
+--
+-- APPLY TO BOTH TICKET STORES, and to their test databases:
+--   psql -d b2b_ticket             -f server/db/2026-09-10-projects-deleted-at.sql
+--   psql -d b2b_ticketing_admin    -f server/db/2026-09-10-projects-deleted-at.sql
+--   psql -d b2b_ticket_test        -f server/db/2026-09-10-projects-deleted-at.sql
+--   psql -d b2b_ticketing_admin_test -f server/db/2026-09-10-projects-deleted-at.sql
+--
+-- Safe to re-run: ADD COLUMN IF NOT EXISTS converges.
+-- ============================================================================
+
+ALTER TABLE "Projects" ADD COLUMN IF NOT EXISTS "deletedAt" TIMESTAMPTZ(6);

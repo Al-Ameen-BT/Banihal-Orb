@@ -1,0 +1,35 @@
+[Unit]
+Description=B2B-Site web (Next.js)
+Requires=b2b-app-pod.service
+After=b2b-app-pod.service b2b-api.service
+Wants=b2b-api.service
+
+[Container]
+ContainerName=b2b-web
+Image=localhost/b2b-web:latest
+Pod=b2b-app.pod
+
+EnvironmentFile=/etc/b2b/client.env
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=HOSTNAME=0.0.0.0
+
+# NOTE: NEXT_PUBLIC_* cannot be set here. They are inlined into the JS bundle at
+# `next build`, so they are build ARGs in Containerfile.web — passed by
+# deploy/podman/build.sh. Anything NEXT_PUBLIC_* placed in client.env is read by
+# the server process and ignored by the browser code, which is a confusing way to
+# spend an afternoon. To change one, REBUILD the image.
+
+# Here rather than in the Containerfile — Podman's default OCI format discards a
+# HEALTHCHECK directive.
+HealthCmd=curl -fsS http://b2b-app:3000/
+HealthInterval=30s
+HealthRetries=3
+HealthStartPeriod=20s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

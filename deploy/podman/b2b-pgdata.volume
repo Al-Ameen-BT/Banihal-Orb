@@ -1,0 +1,14 @@
+# PostgreSQL data directory. THE stateful volume of this deployment — everything
+# else in the stack is reconstructible, this is not.
+#
+# `podman volume rm b2b-pgdata` destroys all five databases. Back it up on the
+# same schedule the host cluster was on; see deploy/podman/migrate-db.sh.
+
+[Unit]
+Description=B2B-Site PostgreSQL data
+
+[Volume]
+VolumeName=b2b-pgdata
+
+[Install]
+WantedBy=default.target

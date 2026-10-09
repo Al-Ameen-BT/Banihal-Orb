@@ -1,0 +1,82 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# B2B-Site API (Express, :3001)
+#
+# Base is bookworm-slim (glibc), NOT alpine (musl): none of the four Prisma
+# schemas declare `binaryTargets`, so Prisma resolves a query engine for the
+# build platform and a musl/glibc mismatch fails at runtime.
+#
+# The subtler half, learned the hard way: Prisma picks the engine at GENERATE
+# time by sniffing the platform, and the openssl version is part of that. Generate
+# without openssl present and it assumes debian-openssl-1.1.x; the runtime stage
+# then has openssl 3 and Prisma dies with "could not locate the Query Engine for
+# runtime debian-openssl-3.0.x". That is why openssl is installed in the deps
+# stage below, not only in the runtime stage.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ─── deps ────────────────────────────────────────────────────────────────────
+FROM docker.io/library/node:20-bookworm-slim AS deps
+WORKDIR /app
+
+# openssl BEFORE npm ci: postinstall runs `prisma generate`, which chooses the
+# query engine from the platform it detects. Without openssl here it picks the
+# 1.1.x engine and the runtime stage cannot load it. See the header note.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# The schemas are copied BEFORE `npm ci` because package.json's `postinstall`
+# runs `db:generate`, which reads all four of them. Without this the install
+# fails on a missing schema.
+COPY server/package.json server/package-lock.json ./
+COPY server/prisma ./prisma
+RUN npm ci
+
+# ─── build ───────────────────────────────────────────────────────────────────
+FROM deps AS build
+WORKDIR /app
+COPY server/tsconfig.json ./
+COPY server/src ./src
+RUN npm run build
+
+# ─── runtime ─────────────────────────────────────────────────────────────────
+FROM docker.io/library/node:20-bookworm-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+
+# openssl is a runtime requirement of the Prisma query engine, and bookworm-slim
+# does not ship it. Missing, Prisma fails at first query, not at startup — so it
+# looks like a database problem rather than a missing package.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/*
+
+# node_modules is copied WHOLE from the builder rather than reinstalled with
+# --omit=dev. Three of the Prisma schemas generate their clients to custom paths
+# INSIDE node_modules (@prisma/chat-client, @prisma/ticketing-client,
+# @prisma/ticket-client — see server/prisma/*.prisma). A fresh production install
+# would not recreate them, and the API dies at import with "Cannot find module".
+COPY --from=deps  /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+COPY server/package.json ./
+COPY server/prisma ./prisma
+# provision.sh / verify.ts, so the image can also run the DB preflight.
+COPY server/db ./db
+# Analytics Agent self-signed TLS certificate. Node needs this at process start
+# (NODE_EXTRA_CA_CERTS) to trust the agent's HTTPS endpoint.
+COPY server/cert ./cert
+
+# Attachment storage. Declared so the directory exists and is owned by `node`
+# before the volume mounts over it; UPLOAD_DIR must point here.
+RUN mkdir -p /app/uploads && chown -R node:node /app/uploads
+ENV UPLOAD_DIR=/app/uploads
+
+USER node
+EXPOSE 3001
+
+# NOTE: no HEALTHCHECK here on purpose. Podman builds OCI images by default and
+# silently DISCARDS the directive ("HEALTHCHECK is not supported for OCI image
+# format and will be ignored") — you get a healthcheck you think exists and does
+# not. The probe lives in deploy/podman/b2b-api.container as HealthCmd=, which
+# Quadlet applies regardless of image format. curl is installed above for it.
+
+CMD ["node", "dist/server.js"]

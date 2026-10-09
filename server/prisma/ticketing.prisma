@@ -1,0 +1,73 @@
+// ─── Ticketing database (dedicated) ──────────────────────────────────────────
+// The Ticketing Tool's tickets and projects live in their own PostgreSQL
+// database (TICKETING_DATABASE_URL → b2b_ticketing). This replaces the old
+// in-memory fallback store, so tickets now SURVIVE server restarts. It remains
+// the "fallback" backend behind ticketing.client.ts.
+//
+// Connects to the main platform DB via shared customerId (tenant) — and to the
+// main DB's TicketEscalation table via ticketId — enforced in the service layer
+// (cross-database foreign keys are not possible).
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/@prisma/ticketing-client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("TICKETING_DATABASE_URL")
+}
+
+model Ticket {
+  id            String         @id @default(cuid())
+  customerId    String         // → main DB customers.id (service-layer link)
+  subject       String
+  description   String         @default("")
+  issueType     String
+  status        TicketStatus   @default(TODO)
+  priority      TicketPriority @default(MEDIUM)
+  projectId     String?
+  assignee      String?
+  raisedByName  String?
+  raisedByEmail String?
+  clientName    String?
+  clientEmail   String?
+  branch        String?
+  onSiteSupport Boolean        @default(false)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  completedAt   DateTime?
+  project       Project?       @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([customerId, status])
+  @@index([projectId])
+  @@index([createdAt])
+}
+
+model Project {
+  id         String         @id @default(cuid())
+  customerId String         // → main DB customers.id (service-layer link)
+  name       String
+  description String        @default("")
+  category   String         @default("other")
+  priority   TicketPriority @default(MEDIUM)
+  assignees  String[]       @default([])
+  createdAt  DateTime       @default(now())
+  tickets    Ticket[]
+
+  @@index([customerId])
+}
+
+enum TicketStatus {
+  TODO
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}

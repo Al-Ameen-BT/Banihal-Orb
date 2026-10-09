@@ -1,0 +1,62 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# B2B-Site web (Next.js, :3000)
+#
+# NEXT_PUBLIC_* values are INLINED INTO THE BUNDLE at `next build`, so they are
+# build ARGs, not runtime env. Setting them in the Quadlet unit instead does
+# nothing at all — the browser gets whatever was baked in here.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ─── deps ────────────────────────────────────────────────────────────────────
+FROM docker.io/library/node:20-bookworm-slim AS deps
+WORKDIR /app
+COPY client/package.json client/package-lock.json ./
+RUN npm ci
+
+# ─── build ───────────────────────────────────────────────────────────────────
+FROM deps AS build
+WORKDIR /app
+
+# Origin the BROWSER uses to reach the API. On this deployment everything is
+# served from one origin behind nginx, so it is the site's own https:// address —
+# which keeps the auth cookie first-party and CORS out of the picture. Getting
+# this wrong is not a startup error: the app builds fine and every API call from
+# the browser fails once deployed.
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
+# NOTE: the VAPID public key is deliberately NOT a build arg. It used to be, and
+# that put the public half in this image while the private half lived in
+# server.env — the two drifted and push failed as "not configured" on a server
+# that was configured. The browser now fetches it from /api/push/vapid-public-key
+# at runtime, so rotating the key needs no web rebuild.
+
+COPY client/ ./
+RUN npm run build
+
+# ─── runtime ─────────────────────────────────────────────────────────────────
+FROM docker.io/library/node:20-bookworm-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl \
+ && rm -rf /var/lib/apt/lists/*
+
+# `output: 'standalone'` (client/next.config.js) emits a server bundled with only
+# the node_modules it actually imports. static/ and public/ are NOT included in
+# it and must be copied alongside, or every asset 404s while the pages render.
+COPY --from=build /app/.next/standalone ./
+COPY --from=build /app/.next/static ./.next/static
+COPY --from=build /app/public ./public
+
+USER node
+EXPOSE 3000
+ENV PORT=3000
+# Bind all interfaces: the default (localhost) is unreachable from outside the
+# container's namespace.
+ENV HOSTNAME=0.0.0.0
+
+# No HEALTHCHECK — see the note in Containerfile.api: Podman's default OCI format
+# discards it. The probe is HealthCmd= in deploy/podman/b2b-web.container.
+
+CMD ["node", "server.js"]
