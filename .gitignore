@@ -15,5 +15,5 @@ server/uploads/
 backup/
 .claude
 .agents
-squid
-squid/
+# Only ignore the bot folder, not the server module directory
+squid/squid-bot/

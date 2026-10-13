@@ -100,7 +100,7 @@ router.post(
         }
 
         // Apply the change (async, non-blocking)
-        applyChangeRequest(changeRequestId, decidedBy || 'webhook').catch(async (e) => {
+        applyChangeRequest(changeRequestId, decidedBy || 'webhook').catch(async (e: any) => {
           await prisma.squidChangeRequest.update({
             where: { id: changeRequestId },
             data: { status: 'FAILED', error: e.message },
