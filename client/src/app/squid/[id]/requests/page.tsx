@@ -1,15 +1,13 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { squidApi } from '@/lib/api';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { icons } from '@/components/ui/Sidebar';
 import GlowButton from '@/components/ui/GlowButton';
 import { Shimmer } from '@/components/ui/Shimmer';
-import { useAuth } from '@/contexts/AuthContext';
-import { roleGuard } from '@/components/guards/RoleGuard';
+import RoleGuard from '@/components/guards/RoleGuard';
 import { notify } from '@/lib/toast-bus';
 
 type Role = 'USER' | 'ORG_ADMIN' | 'ADMINISTRATOR';
@@ -266,7 +264,7 @@ function ActionForm({ proxyId, onSuccess }: { proxyId: string; onSuccess: (recei
 }
 
 function RequestsList({ proxyId }: { proxyId: string }) {
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: ['squid-change-requests', proxyId],
     queryFn: () => squidApi.listChangeRequests(proxyId).then((r) => r.data as { changeRequests: ChangeRequest[] }),
     refetchInterval: 15_000,
@@ -337,11 +335,9 @@ function RequestsList({ proxyId }: { proxyId: string }) {
   );
 }
 
-function RequestsPageContent({ params }: { params: Promise<{ id: string }> }) {
+function RequestsPageContent({ params }: { params: { id: string } }) {
   const { id: proxyId } = params;
-  const { user } = useAuth();
   const queryClient = useQueryClient();
-  const isPlatformAdmin = user?.role === 'ADMINISTRATOR';
 
   const { data: proxyData } = useQuery({
     queryKey: ['squid-proxy', proxyId],
@@ -374,8 +370,11 @@ function RequestsPageContent({ params }: { params: Promise<{ id: string }> }) {
   );
 }
 
-export default function RequestsPage({ params }: { params: Promise<{ id: string }> }) {
-  const { user } = useAuth();
+export default function RequestsPage({ params }: { params: { id: string } }) {
   const allowedRoles: Role[] = ['ORG_ADMIN', 'ADMINISTRATOR'];
-  return roleGuard(allowedRoles, <RequestsPageContent params={params} />);
+  return (
+    <RoleGuard allowedRoles={allowedRoles}>
+      <RequestsPageContent params={params} />
+    </RoleGuard>
+  );
 }

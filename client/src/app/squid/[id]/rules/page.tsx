@@ -6,8 +6,7 @@ import { squidApi } from '@/lib/api';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { icons } from '@/components/ui/Sidebar';
 import { Shimmer } from '@/components/ui/Shimmer';
-import { useAuth } from '@/contexts/AuthContext';
-import { roleGuard } from '@/components/guards/RoleGuard';
+import RoleGuard from '@/components/guards/RoleGuard';
 import { notify } from '@/lib/toast-bus';
 
 type Role = 'USER' | 'ORG_ADMIN' | 'ADMINISTRATOR';
@@ -23,6 +22,7 @@ interface SquidBotRule {
   app: string | null;
   expiresAt: string | null;
   lastSeenAt: string;
+  details?: { discoveryDeps?: string[] };
 }
 
 interface SquidBotState {
@@ -52,8 +52,8 @@ function formatDate(iso: string | null | undefined): string {
   return new Date(iso).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
 }
 
-function formatRelativeTime(iso: string | null | undefined): string {
-  if (!iso) return 'never';
+function formatRelativeTime(iso: string | number | null | undefined): string {
+  if (iso == null || iso === '') return 'never';
   const diff = Date.now() - new Date(iso).getTime();
   if (diff < 60_000) return `${Math.round(diff / 1000)}s ago`;
   if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`;
@@ -82,7 +82,7 @@ function sourceBadge(source: 'web' | 'slack' | 'unknown'): React.ReactNode {
   return <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${c.class}`}>{c.label}</span>;
 }
 
-function RulesPageContent({ params }: { params: Promise<{ id: string }> }) {
+function RulesPageContent({ params }: { params: { id: string } }) {
   const { id: proxyId } = params;
 
   const { data: rulesData, isLoading: rulesLoading, refetch: refetchRules } = useQuery({
@@ -100,7 +100,7 @@ function RulesPageContent({ params }: { params: Promise<{ id: string }> }) {
   const [showExpired, setShowExpired] = useState(false);
 
   const rules = useMemo(() => {
-    const all = (rulesData?.data?.rules ?? []) as SquidBotRule[];
+    const all = (rulesData?.rules ?? []) as SquidBotRule[];
     return all.filter((r) => {
       if (!showExpired && r.expiresAt && new Date(r.expiresAt).getTime() <= Date.now()) return false;
       if (filterIp && !r.ip.includes(filterIp)) return false;
@@ -109,7 +109,7 @@ function RulesPageContent({ params }: { params: Promise<{ id: string }> }) {
     });
   }, [rulesData, filterIp, filterDomain, showExpired]);
 
-  const state = rulesData?.data?.state as SquidBotState | undefined;
+  const state = rulesData?.state as SquidBotState | undefined;
 
   if (rulesLoading && !rules) {
     return (
@@ -311,8 +311,11 @@ function RulesPageContent({ params }: { params: Promise<{ id: string }> }) {
   );
 }
 
-export default function RulesPage({ params }: { params: Promise<{ id: string }> }) {
-  const { user } = useAuth();
+export default function RulesPage({ params }: { params: { id: string } }) {
   const allowedRoles: Role[] = ['ORG_ADMIN', 'ADMINISTRATOR'];
-  return roleGuard(allowedRoles, <RulesPageContent params={params} />);
+  return (
+    <RoleGuard allowedRoles={allowedRoles}>
+      <RulesPageContent params={params} />
+    </RoleGuard>
+  );
 }

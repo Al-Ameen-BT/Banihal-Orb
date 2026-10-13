@@ -1,13 +1,11 @@
 'use client';
 
-import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { squidApi } from '@/lib/api';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { icons } from '@/components/ui/Sidebar';
 import { Shimmer } from '@/components/ui/Shimmer';
-import { useAuth } from '@/contexts/AuthContext';
-import { roleGuard } from '@/components/guards/RoleGuard';
+import RoleGuard from '@/components/guards/RoleGuard';
 
 type Role = 'USER' | 'ORG_ADMIN' | 'ADMINISTRATOR';
 
@@ -49,8 +47,8 @@ function formatDate(iso: string | null | undefined): string {
   return new Date(iso).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
 }
 
-function formatRelativeTime(iso: string | null | undefined): string {
-  if (!iso) return 'never';
+function formatRelativeTime(iso: string | number | null | undefined): string {
+  if (iso == null || iso === '') return 'never';
   const diff = Date.now() - new Date(iso).getTime();
   if (diff < 60_000) return `${Math.round(diff / 1000)}s ago`;
   if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`;
@@ -66,16 +64,16 @@ function statusDot(status: string, healthy: string, unhealthy: string, unknown: 
   return <span className="inline-flex items-center gap-1.5 text-slate-400"><span className="w-2 h-2 rounded-full bg-slate-300" /> {s || unknown}</span>;
 }
 
-function StatusPageContent({ params }: { params: Promise<{ id: string }> }) {
+function StatusPageContent({ params }: { params: { id: string } }) {
   const { id: proxyId } = params;
 
-  const { data: statusData, isLoading, refetch } = useQuery({
+  const { data: statusData, isLoading } = useQuery({
     queryKey: ['squid-bot-status', proxyId],
     queryFn: () => squidApi.telemetry(proxyId).then((r) => r.data as ProxyBotStatus),
     refetchInterval: 15_000,
   });
 
-  const status = statusData?.data;
+  const status = statusData;
 
   if (isLoading && !status) {
     return (
@@ -251,7 +249,7 @@ function StatusPageContent({ params }: { params: Promise<{ id: string }> }) {
               </summary>
               <div className="px-4 pb-4 pt-0 border-t border-slate-100">
                 <div className="flex flex-wrap gap-2">
-                  {state.discovery.deps.map((dep, i) => (
+                  {state.discovery.deps.map((dep: string, i: number) => (
                     <span key={i} className="text-xs font-mono bg-slate-50 text-slate-700 px-2 py-1 rounded border border-slate-100">{dep}</span>
                   ))}
                 </div>
@@ -293,8 +291,11 @@ function StatusPageContent({ params }: { params: Promise<{ id: string }> }) {
   );
 }
 
-export default function StatusPage({ params }: { params: Promise<{ id: string }> }) {
-  const { user } = useAuth();
+export default function StatusPage({ params }: { params: { id: string } }) {
   const allowedRoles: Role[] = ['ORG_ADMIN', 'ADMINISTRATOR'];
-  return roleGuard(allowedRoles, <StatusPageContent params={params} />);
+  return (
+    <RoleGuard allowedRoles={allowedRoles}>
+      <StatusPageContent params={params} />
+    </RoleGuard>
+  );
 }
