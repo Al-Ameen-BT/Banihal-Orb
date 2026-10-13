@@ -64,6 +64,10 @@ function buildSummary(action: BotChangeAction, payload: Payload, label: string):
       return `[FULL-NET] ${payload.ip} — unrestricted access — ${label}`;
     case 'lock-net':
       return `[LOCK-NET] ${payload.ip} — full-net revoked — ${label}`;
+    default: {
+      const _exhaustive: never = action;
+      throw httpErr(400, 'UNKNOWN_ACTION', `Unknown bot action: ${String(_exhaustive)}`);
+    }
   }
 }
 
