@@ -170,6 +170,13 @@ export interface MachineAuthConfig<TCtx> {
   /** 'PROXY_AUTH_FAILED' | 'WORKER_AUTH_FAILED' — the default 401 code. */
   authFailedCode: string;
   /**
+   * 401 code for "cannot even try to verify": loadActor returned null or a
+   * keyMissing-flagged actor. Defaults to authFailedCode; a router whose table
+   * distinguishes "key never provisioned" from a signature failure (botWorker
+   * pins WORKER_KEY_NOT_SET) overrides it here.
+   */
+  keyMissingCode?: string;
+  /**
    * 'SQUID_AGENT_AUTH_FAILED' | 'WORKER_AUTH_FAILED'. AuditAction rather than a
    * bare string so a typo stays a compile error — the reason lib/audit types
    * actions at all.
@@ -192,15 +199,18 @@ export function createMachineKeyAuth<TCtx>(cfg: MachineAuthConfig<TCtx>): Reques
     const sig = (req.get('Authorization') ?? '').replace(/^Bearer\s+/i, '');
 
     // The flag is set BEFORE responding so a wrapper can still audit with
-    // richer (org) context on any 401 this factory sends.
-    const res401 = (code: string) => {
-      res.locals['machAuthFailed'] = { actorId, code };
+    // richer (org) context on any 401 this factory sends. `attempts` reports
+    // the strike count as of THIS failure — the value the counter just
+    // produced for a bad signature, 0 for every other denial (a stale clock
+    // or diverged key is not a strike, so wrappers see the streak untouched).
+    const res401 = (code: string, attempts = 0) => {
+      res.locals['machAuthFailed'] = { actorId, code, attempts };
       res.status(401).json({ error: 'Authentication failed', code });
     };
 
     if (!actorId || !sig || !Number.isFinite(ts)) { res401(cfg.authFailedCode); return; }
     const actor = await cfg.loadActor(actorId);
-    if (!actor || actor.keyMissing) { res401(cfg.authFailedCode); return; }
+    if (!actor || actor.keyMissing) { res401(cfg.keyMissingCode ?? cfg.authFailedCode); return; }
 
     const verdict = verifyMachineSignature({
       tsMs: ts,
@@ -213,28 +223,31 @@ export function createMachineKeyAuth<TCtx>(cfg: MachineAuthConfig<TCtx>): Reques
     });
 
     if (!verdict.ok) {
+      // The failure flag reports the strike count the counter produced for
+      // THIS request (bad signature), 0 for any other denial.
+      let attempts = 0;
       if (verdict.code === 'BAD_SIGNATURE') {
         // Count only signature mismatches — a stale clock is not an attack
         // signal. The generic row is written only when the actor carries an
         // org, because audit() cannot write one without a customerId (schema
         // NOT NULL); routers auditing on machAuthFailed keep their own richer,
         // org-aware row regardless.
-        const n = await badAuthCounter.bump(actorId);
+        attempts = await badAuthCounter.bump(actorId);
         if (actor.customerId) {
           await audit({
             action: cfg.auditAction,
             performedById: null,
             customerId: actor.customerId,
             targetId: actorId,
-            metadata: { reason: 'signature mismatch', ip: req.ip, attempts: n },
+            metadata: { reason: 'signature mismatch', ip: req.ip, attempts },
           }).catch(() => undefined);
         }
-        if (n >= MAX_BAD_AUTH) {
+        if (attempts >= MAX_BAD_AUTH) {
           await badAuthCounter.reset(actorId);
           await cfg.onBruteForceDisable(actorId);
         }
       }
-      res401(verdict.code);
+      res401(verdict.code, attempts);
       return;
     }
 
