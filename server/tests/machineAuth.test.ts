@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { vi, describe, it, expect } from 'vitest';
+import { vi, describe, it, beforeEach, expect } from 'vitest';
 import type { Request, Response, NextFunction } from 'express';
 import {
   MAX_BAD_AUTH,
@@ -12,6 +12,7 @@ import {
   type MachineAuthConfig,
 } from '../src/lib/machineAuth';
 import { redis } from '../src/lib/redis';
+import { audit } from '../src/lib/audit';
 
 /**
  * Pure-function unit test for the shared machine-key auth module. No database,
@@ -36,7 +37,8 @@ vi.hoisted(() => {
 });
 
 // The factory's bad-signature branch talks to the audit writer (prisma). The
-// counter is exercised for REAL; only the DB side-effect is stubbed.
+// counter is exercised for REAL; only the DB side-effect is stubbed (and
+// inspected for the R2 gating assertions below).
 vi.mock('../src/lib/audit', () => ({ audit: vi.fn(async () => undefined) }));
 
 
@@ -128,6 +130,32 @@ describe('machineAuth', () => {
       },
       want: { ok: false, code: 'KEY_DIVERGED' },
     },
+    {
+      name: 'verify: non-ASCII signature decodes short → flat BAD_SIGNATURE, never a throw (C1)',
+      make: {},
+      input: {
+        // 64 UTF-16 code units of 'é' are 128 UTF-8 bytes; the old string-length
+        // guard passed this to timingSafeEqual, which throws on unequal byte
+        // lengths. Hex-decoding truncates it → flat rejection.
+        sig: 'é'.repeat(64),
+      },
+      want: { ok: false, code: 'BAD_SIGNATURE' },
+    },
+    {
+      name: 'verify: uppercase stored hash still cross-checks equal (M7 case-normalized)',
+      make: {},
+      input: {
+        // The row's own digest, written in uppercase hex: case is not entropy.
+        secretHash: sha256Hex(Buffer.from(KEY)).toUpperCase(),
+      },
+      want: { ok: true },
+    },
+    {
+      name: 'verify: garbage (non-hex) stored hash truncates → KEY_DIVERGED fail-closed',
+      make: {},
+      input: { secretHash: 'zz'.repeat(32) },
+      want: { ok: false, code: 'KEY_DIVERGED' },
+    },
   ];
 
   for (const { name, make, input, want } of rows) {
@@ -135,11 +163,12 @@ describe('machineAuth', () => {
       // The client (sign side) signs over the *make* view; the server (verify
       // side) sees *make* UNLESS *input* deliberately diverges — so a row
       // differs from the happy path in exactly the tampering it describes.
+      // `input.sig` wins when a row submits a raw Authorization of its own.
       expect(verifyMachineSignature({
         ...BASE,
         ...make,
         ...input,
-        sig: sign({ ...BASE, ...make }),
+        sig: input?.sig ?? sign({ ...BASE, ...make }),
       })).toEqual(want);
     });
   }
@@ -198,7 +227,7 @@ function stubRes(): Response & { body?: unknown; statusCode: number; locals: Rec
   return res as Response & { body?: unknown; statusCode: number; locals: Record<string, unknown> };
 }
 
-const NEXT = vi.fn(() => undefined) as unknown as NextFunction & { isMockFunction: true };
+const NEXT = vi.fn((): void => {}) as unknown as NextFunction;
 
 function makeCfg(opts: {
   actorId: string;
@@ -222,6 +251,12 @@ const signedReq = (tsMs = Date.now(), sig = 'wrong-Hex-digest'): Request =>
   stubReq({ 'X-Proxy-Timestamp': String(tsMs), Authorization: `Bearer ${sig}` }, '/api/proxy-agent/poll');
 
 describe('createMachineKeyAuth', () => {
+  beforeEach(() => {
+    // Order independence: shared spies cleared before every factory row.
+    NEXT.mockClear();
+    vi.mocked(audit).mockClear();
+  });
+
   it('factory: loadActor null → 401 shaped as today, flag recorded with authFailedCode', async () => {
     const handler = createMachineKeyAuth(makeCfg({ actorId: 'fact-null', loadActor: async () => null }));
     const res = stubRes();
@@ -262,5 +297,103 @@ describe('createMachineKeyAuth', () => {
     await handler(signedReq(Date.now() - REPLAY_WINDOW_MS - 1, 'whatever-hex'), stale, NEXT);
     expect(stale.locals['machAuthFailed']).toEqual({ actorId, code: 'BAD_TIMESTAMP', attempts: 0 });
     expect(await badSig()).toEqual({ actorId, code: 'BAD_SIGNATURE', attempts: 4 });
+  });
+
+  it('regression (C1): non-ASCII 64-char Authorization rejects flat as BAD_SIGNATURE — never throws', async () => {
+    const handler = createMachineKeyAuth(makeCfg({ actorId: 'c1-actor' }));
+    const res = stubRes();
+    const run = async () => { await handler(signedReq(Date.now(), 'é'.repeat(64)), res, NEXT); return res; };
+    const r = await run(); // completing AT ALL proves no escape
+    expect(r.statusCode).toBe(401);
+    expect(r.body).toEqual({ error: 'Authentication failed', code: 'BAD_SIGNATURE' });
+    expect(r.locals['machAuthFailed']).toEqual({ actorId: 'c1-actor', code: 'BAD_SIGNATURE', attempts: 1 });
+  });
+
+  it('pre-check (I4): a stale timestamp 401s BAD_TIMESTAMP before loadActor ever runs', async () => {
+    const loader = vi.fn(async (): Promise<MachineActor<Ctx>> => {
+      throw new Error('loader must not be reached for a stale timestamp');
+    }) as unknown as MachineAuthConfig<Ctx>['loadActor'];
+    const handler = createMachineKeyAuth(makeCfg({ actorId: 'stale-actor', loadActor: loader }));
+    const res = stubRes();
+    await handler(signedReq(Date.now() - REPLAY_WINDOW_MS - 1, 'someHex'), res, NEXT);
+    expect(loader).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(401);
+    expect(res.body).toEqual({ error: 'Authentication failed', code: 'BAD_TIMESTAMP' });
+    expect(res.locals['machAuthFailed']).toEqual({ actorId: 'stale-actor', code: 'BAD_TIMESTAMP', attempts: 0 });
+  });
+
+  it('success (I3a): next() once and req[cfg.reqKey] = actor.context', async () => {
+    const handler = createMachineKeyAuth(makeCfg({ actorId: 'ok-actor' }));
+    const req = stubReq({
+      'X-Proxy-Timestamp': String(Date.now()),
+      Authorization: `Bearer ${sign({ tsMs: Date.now(), secret: KEY, method: 'POST', path: '/api/proxy-agent/poll' })}`,
+    }, '/api/proxy-agent/poll');
+    const res = stubRes();
+    await handler(req, res, NEXT);
+    expect(NEXT).toHaveBeenCalledTimes(1);
+    expect((req as unknown as { proxy?: Ctx }).proxy ?? undefined).toEqual({ id: 'ok-actor' });
+  });
+
+  it('brute-force (I3b): onBruteForceDisable fires exactly once, ON strike 5; the streak restarts after the reset', async () => {
+    const disable = vi.fn(async () => undefined);
+    const handler = createMachineKeyAuth({ ...makeCfg({ actorId: 'bf-actor' }), onBruteForceDisable: disable as unknown as () => Promise<void> });
+    for (let i = 1; i <= 5; i++) {
+      const res = stubRes();
+      await handler(signedReq(), res, NEXT);
+      expect(res.locals['machAuthFailed']).toEqual({ actorId: 'bf-actor', code: 'BAD_SIGNATURE', attempts: i });
+      expect(disable).toHaveBeenCalledTimes(i === 5 ? 1 : 0);
+    }
+    // The counter was reset at the threshold: the 6th bad signature is strike 1 again.
+    const res = stubRes();
+    await handler(signedReq(), res, NEXT);
+    expect(res.locals['machAuthFailed']).toEqual({ actorId: 'bf-actor', code: 'BAD_SIGNATURE', attempts: 1 });
+    expect(disable).toHaveBeenCalledTimes(1);
+  });
+
+  it('audit gating (I3c/R2): customer-less factory audit fires with the actor org and exact metadata; without it, not at all', async () => {
+    const auditMock = vi.mocked(audit);
+    const withCid = createMachineKeyAuth(makeCfg({
+      actorId: 'aud-with',
+      loadActor: async () => ({ actorId: 'aud-with', context: { id: 'aud-with' }, secret: KEY, customerId: 'org-1' }),
+    }));
+    await withCid(signedReq(), stubRes(), NEXT);
+    expect(auditMock).toHaveBeenCalledTimes(1);
+    const entry = auditMock.mock.calls[0][0];
+    expect(entry.action).toBe('SQUID_AGENT_AUTH_FAILED');
+    expect(entry.performedById).toBe(null);
+    expect(entry.customerId).toBe('org-1');
+    expect(entry.targetId).toBe('aud-with');
+    expect(entry.metadata).toEqual({ reason: 'signature mismatch', ip: '203.0.113.9', attempts: 1 });
+
+    auditMock.mockClear();
+    const noCid = createMachineKeyAuth(makeCfg({ actorId: 'aud-without' }));
+    await noCid(signedReq(), stubRes(), NEXT);
+    expect(auditMock).not.toHaveBeenCalled();
+  });
+
+  it('unusable key (M5/M6): empty-string secret takes the keyMissing path, fail closed', async () => {
+    const handler = createMachineKeyAuth(makeCfg({
+      actorId: 'empty-secret',
+      keyMissingCode: 'WORKER_KEY_NOT_SET',
+      loadActor: async () => ({ actorId: 'empty-secret', context: { id: 'empty-secret' }, secret: '' }),
+    }));
+    const res = stubRes();
+    await handler(signedReq(Date.now()), res, NEXT);
+    expect(res.statusCode).toBe(401);
+    expect(res.body).toEqual({ error: 'Authentication failed', code: 'WORKER_KEY_NOT_SET' });
+    expect(res.locals['machAuthFailed']).toEqual({ actorId: 'empty-secret', code: 'WORKER_KEY_NOT_SET', attempts: 0 });
+  });
+
+  it('containment (I2): a loadActor throw becomes a fail-closed 401, never an escape', async () => {
+    const handler = createMachineKeyAuth(makeCfg({
+      actorId: 'blip-actor',
+      loadActor: async () => { throw new Error('db blip'); },
+    }));
+    const res = stubRes();
+    await handler(signedReq(), res, NEXT);
+    expect(res.statusCode).toBe(401);
+    expect(res.body).toEqual({ error: 'Authentication failed', code: 'PROXY_AUTH_FAILED' });
+    expect(res.locals['machAuthFailed']).toEqual({ actorId: 'blip-actor', code: 'PROXY_AUTH_FAILED', attempts: 0 });
+    expect(NEXT).not.toHaveBeenCalled();
   });
 });

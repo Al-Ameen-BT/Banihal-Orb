@@ -70,17 +70,29 @@ export function verifyMachineSignature(input: {
   }
 
   if (secretHash) {
-    const have = Buffer.from(sha256Hex(Buffer.from(secret, 'utf8')));
-    const want = Buffer.from(secretHash);
-    // Length-check first: timingSafeEqual THROWS on unequal lengths.
+    const have = Buffer.from(sha256Hex(Buffer.from(secret, 'utf8')), 'hex');
+    const want = Buffer.from(secretHash.toLowerCase(), 'hex');
+    // Compare DECODED digests, case-normalized on the stored side so a
+    // lowercase-digest writer and an uppercase-hex DB row cross-check equal;
+    // garbage rows truncate shorter and diverge fail-closed.
+    // Length-check first: timingSafeEqual THROWS on unequal lengths (an
+    // attacker-controllable `want` — a row value — must never crash the handler).
     if (want.length !== have.length || !crypto.timingSafeEqual(want, have)) {
       return { ok: false, code: 'KEY_DIVERGED' };
     }
   }
 
   const canonical = canonicalMachineString(String(tsMs), method, path, sha256Hex(rawBody ?? Buffer.alloc(0)));
-  const expected = crypto.createHmac('sha256', secret).update(canonical).digest('hex');
-  if (expected.length !== sig.length || !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sig))) {
+  const expected = crypto.createHmac('sha256', secret).update(canonical).digest();
+  const sigBuf = Buffer.from(sig, 'hex');
+  // hex-DECODE before comparing: any value that is not exactly the digest's
+  // hex (wrong length, non-ASCII like 64× 'é' whose UTF-8 is 128 bytes,
+  // ordinary garbage) decodes short or unequal and fails flat with
+  // BAD_SIGNATURE — the old string-length guard passed it to
+  // timingSafeEqual, which THROWS on unequal byte lengths. Decoding also
+  // makes the compare case-insensitive on hex digits for the same digest —
+  // strictly a normalization, never a weaker acceptance.
+  if (sigBuf.length !== expected.length || !crypto.timingSafeEqual(sigBuf, expected)) {
     return { ok: false, code: 'BAD_SIGNATURE' };
   }
   return { ok: true };
@@ -141,10 +153,12 @@ export interface MachineActor<TCtx> {
   /**
    * The decrypted raw machine key. Lives here only long enough to reach
    * verifyMachineSignature inside this handler — never logged, never put on
-   * req. `loadActor` returns null instead when the key columns are missing or
-   * undecryptable.
+   * req. OPTIONAL on purpose: a loader whose row exists but carries no usable
+   * key sets `keyMissing` and omits this; an empty string is treated exactly
+   * like an absent one. There is no fabricated key — a missing key can never
+   * verify by accident.
    */
-  secret: string;
+  secret?: string;
   /** sha-256 hex of the raw secret from its hash column, when the table has one. */
   secretHash?: string | null;
   /** True when the row exists but carries no usable key: same generic 401 as null. */
@@ -194,65 +208,75 @@ export interface MachineAuthConfig<TCtx> {
  */
 export function createMachineKeyAuth<TCtx>(cfg: MachineAuthConfig<TCtx>): RequestHandler {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    const actorId = cfg.actorIdOf(req);
-    const ts = Number(req.get(cfg.timestampHeader));
-    const sig = (req.get('Authorization') ?? '').replace(/^Bearer\s+/i, '');
-
-    // The flag is set BEFORE responding so a wrapper can still audit with
-    // richer (org) context on any 401 this factory sends. `attempts` reports
-    // the strike count as of THIS failure — the value the counter just
-    // produced for a bad signature, 0 for every other denial (a stale clock
-    // or diverged key is not a strike, so wrappers see the streak untouched).
+    // `actorId` lives in the enclosing scope so the failure flag can still be
+    // written (with the id known so far) when something downstream throws.
+    let actorId = '';
     const res401 = (code: string, attempts = 0) => {
       res.locals['machAuthFailed'] = { actorId, code, attempts };
       res.status(401).json({ error: 'Authentication failed', code });
     };
+    try {
+      actorId = cfg.actorIdOf(req);
+      const ts = Number(req.get(cfg.timestampHeader));
+      const sig = (req.get('Authorization') ?? '').replace(/^Bearer\s+/i, '');
 
-    if (!actorId || !sig || !Number.isFinite(ts)) { res401(cfg.authFailedCode); return; }
-    const actor = await cfg.loadActor(actorId);
-    if (!actor || actor.keyMissing) { res401(cfg.keyMissingCode ?? cfg.authFailedCode); return; }
+      if (!actorId || !sig || !Number.isFinite(ts)) { res401(cfg.authFailedCode); return; }
+      // Cheap pre-check (semantics identical to the verifier's own window):
+      // a stale clock must never pay for the DB trip + decrypt in loadActor.
+      if (Math.abs(Date.now() - ts) > REPLAY_WINDOW_MS) { res401('BAD_TIMESTAMP'); return; }
 
-    const verdict = verifyMachineSignature({
-      tsMs: ts,
-      sig,
-      secret: actor.secret,
-      secretHash: actor.secretHash,
-      method: req.method,
-      path: req.originalUrl,
-      rawBody: (req as { rawBody?: Buffer }).rawBody,
-    });
+      const actor = await cfg.loadActor(actorId);
+      if (!actor || actor.keyMissing || !actor.secret) { res401(cfg.keyMissingCode ?? cfg.authFailedCode); return; }
 
-    if (!verdict.ok) {
-      // The failure flag reports the strike count the counter produced for
-      // THIS request (bad signature), 0 for any other denial.
-      let attempts = 0;
-      if (verdict.code === 'BAD_SIGNATURE') {
-        // Count only signature mismatches — a stale clock is not an attack
-        // signal. The generic row is written only when the actor carries an
-        // org, because audit() cannot write one without a customerId (schema
-        // NOT NULL); routers auditing on machAuthFailed keep their own richer,
-        // org-aware row regardless.
-        attempts = await badAuthCounter.bump(actorId);
-        if (actor.customerId) {
-          await audit({
-            action: cfg.auditAction,
-            performedById: null,
-            customerId: actor.customerId,
-            targetId: actorId,
-            metadata: { reason: 'signature mismatch', ip: req.ip, attempts },
-          }).catch(() => undefined);
+      const verdict = verifyMachineSignature({
+        tsMs: ts,
+        sig,
+        secret: actor.secret,
+        secretHash: actor.secretHash,
+        method: req.method,
+        path: req.originalUrl,
+        rawBody: (req as { rawBody?: Buffer }).rawBody,
+      });
+
+      if (!verdict.ok) {
+        // The failure flag reports the strike count the counter produced for
+        // THIS request (bad signature), 0 for any other denial.
+        let attempts = 0;
+        if (verdict.code === 'BAD_SIGNATURE') {
+          // Count only signature mismatches — a stale clock is not an attack
+          // signal. The generic row is written only when the actor carries an
+          // org, because audit() cannot write one without a customerId (schema
+          // NOT NULL); routers auditing on machAuthFailed keep their own richer,
+          // org-aware row regardless. Fired, NOT awaited — the deny response
+          // must not wait on a DB write, and a lost row must not lose the 401.
+          attempts = await badAuthCounter.bump(actorId);
+          if (actor.customerId) {
+            void audit({
+              action: cfg.auditAction,
+              performedById: null,
+              customerId: actor.customerId,
+              targetId: actorId,
+              metadata: { reason: 'signature mismatch', ip: req.ip, attempts },
+            }).catch(() => undefined);
+          }
+          if (attempts >= MAX_BAD_AUTH) {
+            await badAuthCounter.reset(actorId);
+            await cfg.onBruteForceDisable(actorId);
+          }
         }
-        if (attempts >= MAX_BAD_AUTH) {
-          await badAuthCounter.reset(actorId);
-          await cfg.onBruteForceDisable(actorId);
-        }
+        res401(verdict.code, attempts);
+        return;
       }
-      res401(verdict.code, attempts);
-      return;
-    }
 
-    await badAuthCounter.reset(actorId);
-    (req as Request & Record<string, unknown>)[cfg.reqKey] = actor.context;
-    next();
+      await badAuthCounter.reset(actorId);
+      (req as Request & Record<string, unknown>)[cfg.reqKey] = actor.context;
+      next();
+    } catch {
+      // Fail CLOSED: a loadActor / onBruteForceDisable / counter blip becomes
+      // a generic 401, never an unhandled rejection and never `next(err)` —
+      // an UNVERIFIED request reaching the route handlers is the one failure
+      // this module must never allow.
+      if (!res.headersSent) res401(cfg.authFailedCode);
+    }
   };
 }
