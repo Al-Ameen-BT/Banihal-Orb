@@ -1,13 +1,12 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import crypto from 'crypto';
 import { prisma } from '../../config/database';
-import { decryptSecret, hashApiKey } from '../../config/slackCrypto';
-import { audit } from '../../lib/audit';
+import { decryptSecret } from '../../config/slackCrypto';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import { requireRole } from '../../middleware/rbac.middleware';
 import { CommandResultSchema, HeartbeatSchema, MessageSchema, ProvisionSchema, RequestSchema, StateSchema } from './botWorker.schema';
 import { provisionWorker, workerHeartbeat, workerMessage } from './botWorker.service';
 import { squidBotCommandResult, squidBotRequest, squidBotState } from '../squid/squidBot.service';
+import { createMachineKeyAuth } from '../../lib/machineAuth';
 
 // ─── Host-worker control API (ADR-002 reverse control plane) ────────────────
 // A host worker on client infrastructure talks ONLY to these routes, and only
@@ -28,15 +27,11 @@ import { squidBotCommandResult, squidBotRequest, squidBotState } from '../squid/
 
 const router = Router();
 
-// In-memory consecutive-failure counter → auto-disable the bot on abuse. Same
-// policy as the proxy agent (per-process memory; a PG counter could make the
-// decision survive a restart).
-const badAuthCount = new Map<string, number>();
-const MAX_BAD_AUTH = 5;
-
-function sha256(buf: Buffer): string {
-  return crypto.createHash('sha256').update(buf).digest('hex');
-}
+// The HMAC verification, replay window, bad-auth streak counter and the generic
+// bad-auth audit row live in the shared lib/machineAuth (ADR-003) — the very
+// extract that retired this file's inline `badAuthCount`/`sha256` copies. Only
+// what is genuinely the router's own is configured below: WHICH actor is
+// loaded and what being disabled costs.
 
 interface WorkerBot {
   id: string;
@@ -47,61 +42,50 @@ interface WorkerBot {
 }
 
 /** Verify the wrk_ key + request signature; attach the authenticated bot to req. */
-export async function workerAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const botId = req.params['botId'] ?? '';
-  const ts = Number(req.get('X-Worker-Timestamp'));
-  const sig = (req.get('Authorization') ?? '').replace(/^Bearer\s+/i, '');
-  const res401 = (code = 'WORKER_AUTH_FAILED') => { res.status(401).json({ error: 'Authentication failed', code }); };
-
-  if (!botId || !sig || !Number.isFinite(ts) || Math.abs(Date.now() - ts) > 300_000) {
-    res401();
-    return;
-  }
-  const bot = await prisma.slackBot.findUnique({
-    where: { id: botId },
-    select: { id: true, name: true, enabled: true, executionOwner: true, workerMode: true, workerKeyHash: true, workerKeyEnc: true },
-  });
-  if (!bot?.workerKeyEnc || !bot.workerKeyHash) { res401('WORKER_KEY_NOT_SET'); return; }
-
-  let raw: string;
-  try { raw = decryptSecret(bot.workerKeyEnc); } catch { res401(); return; }
-
-  // The decrypted raw key must still match the stored hash (constant-time) —
-  // guards against the two columns ever diverging (one cleared, one not).
-  const haveHash = Buffer.from(hashApiKey(raw));
-  const wantHash = Buffer.from(bot.workerKeyHash);
-  if (wantHash.length !== haveHash.length || !crypto.timingSafeEqual(wantHash, haveHash)) {
-    res401();
-    return;
-  }
-
-  const canonical = `${ts}\n${req.method}\n${req.originalUrl}\n${sha256((req as { rawBody?: Buffer }).rawBody ?? Buffer.alloc(0))}`;
-  const expected = crypto.createHmac('sha256', raw).update(canonical).digest('hex');
-  const ok = expected.length === sig.length && crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sig));
-  if (!ok) {
-    const n = (badAuthCount.get(botId) ?? 0) + 1;
-    badAuthCount.set(botId, n);
+export const workerAuth = createMachineKeyAuth<WorkerBot>({
+  actorIdOf: (req) => req.params['botId'] ?? '',
+  timestampHeader: 'X-Worker-Timestamp',
+  loadActor: async (botId) => {
+    const bot = await prisma.slackBot.findUnique({
+      where: { id: botId },
+      select: { id: true, name: true, enabled: true, executionOwner: true, workerMode: true, workerKeyHash: true, workerKeyEnc: true },
+    });
+    // No key columns → "cannot even try to verify": the factory 401s with
+    // WORKER_KEY_NOT_SET (pinned by tests/bot-worker.test.ts), work
+    // unprovisioned and a nonexistent bot becoming indistinguishable, as before.
+    if (!bot?.workerKeyEnc || !bot.workerKeyHash) return null;
+    // A key that fails to decrypt rethrows on purpose: the factory's fail-closed
+    // containment answers 401 WORKER_AUTH_FAILED, today's exact behavior.
+    const raw = decryptSecret(bot.workerKeyEnc);
+    // The decrypted raw key must still match the stored hash — guards against
+    // the two columns ever diverging (one cleared, one not). This check now
+    // happens inside the shared verifier: divergence 401s KEY_DIVERGED.
+    // The org link is fetched here too (R4): a present customerId makes the
+    // FACTORY write the single org-scoped WORKER_AUTH_FAILED audit row on a bad
+    // signature — exactly the row this file's inline block used to emit. When
+    // the bot has no org link, no row is written, same as the inline skip.
     const org = await prisma.slackBotOrg.findFirst({ where: { botId }, select: { customerId: true } });
-    if (org) {
-      await audit({
-        action: 'WORKER_AUTH_FAILED', performedById: null, customerId: org.customerId, targetId: botId,
-        metadata: { reason: 'signature mismatch', ip: req.ip, attempts: n },
-      }).catch(() => undefined);
-    }
-    if (n >= MAX_BAD_AUTH) {
-      badAuthCount.delete(botId);
-      await prisma.slackBot.update({ where: { id: botId }, data: { enabled: false } });
-    }
-    res401();
-    return;
-  }
-
-  badAuthCount.delete(botId);
-  (req as Request & { workerBot: WorkerBot }).workerBot = {
-    id: bot.id, name: bot.name, enabled: bot.enabled, executionOwner: bot.executionOwner, workerMode: bot.workerMode,
-  };
-  next();
-}
+    return {
+      actorId: botId,
+      context: {
+        id: bot.id, name: bot.name, enabled: bot.enabled, executionOwner: bot.executionOwner, workerMode: bot.workerMode,
+      },
+      secret: raw,
+      secretHash: bot.workerKeyHash,
+      customerId: org?.customerId,
+    };
+  },
+  reqKey: 'workerBot',
+  authFailedCode: 'WORKER_AUTH_FAILED',
+  keyMissingCode: 'WORKER_KEY_NOT_SET',
+  auditAction: 'WORKER_AUTH_FAILED',
+  // Consecutive bad signatures force-disable the bot, exactly as the local
+  // counter did when its streak hit MAX_BAD_AUTH (the shared counter semantics
+  // are identical: consecutive failures, cleared on a successful auth).
+  onBruteForceDisable: async (botId) => {
+    await prisma.slackBot.update({ where: { id: botId }, data: { enabled: false } });
+  },
+});
 
 /**
  * Mode gate (risk: `workerMode` misuse opening the wrong dialect). SLACK_THIN
