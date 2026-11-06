@@ -9,10 +9,14 @@ import { slackManager } from './modules/slack-bots/slackManager';
 import { isPushConfigured } from './lib/webpush';
 import { startExpiryReminders } from './services/expiryReminders';
 import { startSquidBotRetention } from './services/squidBotRetention';
+import { startSquidOverloadGuard } from './modules/squid/squidAutomation';
 
 const PORT = env.PORT;
 
 async function main() {
+  if (env.NODE_ENV === 'production' && (!env.REDIS_URL || !env.SQUID_SIGNING_PRIVATE_KEY)) {
+    throw new Error('Production Squid control requires REDIS_URL and SQUID_SIGNING_PRIVATE_KEY');
+  }
   // Verify all three database connections (main / chat / ticketing)
   await prisma.$connect();
   console.log('✅ Main database connected (b2b)');
@@ -28,7 +32,7 @@ async function main() {
     console.warn('⚠️  Web Push disabled: VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY are not set');
   }
 
-  app.listen(PORT, () => {
+  app.listen(PORT, env.BIND_HOST, () => {
     console.log(`🚀 Server running on http://localhost:${PORT} [${env.NODE_ENV}]`);
   });
 
@@ -40,6 +44,7 @@ async function main() {
 
   // D12: 90-day trim of terminal bot commands + unseen mirrored rules.
   startSquidBotRetention();
+  if (env.NODE_ENV === 'production') startSquidOverloadGuard();
 }
 
 main().catch((err) => {

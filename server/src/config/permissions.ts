@@ -91,6 +91,7 @@ export const PERMISSIONS = [
   // hold both, and the roles matrix decides which employee/intern-tier staff do.
   { key: 'squid.view',               group: 'Squid Proxy', label: 'View all organizations’ squid proxies' },
   { key: 'squid.manage',             group: 'Squid Proxy', label: 'Edit rules, reload & rotate agent keys (any org)' },
+  { key: 'squid.pause.global',       group: 'Squid Proxy', label: 'Pause or resume proxy automation for all clients' },
 
   // External ticketing API — machine credentials consumers use to reach the
   // /api/external surface. Issuing a key prints a raw secret exactly once, and

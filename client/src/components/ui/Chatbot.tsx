@@ -115,7 +115,7 @@ function pickReply(text: string, fallbackIdx: number): string {
     return "For account access issues, please contact your Org Admin. If they're unavailable, open a ticket marked HIGH priority and our platform team can assist.";
   }
   if (/(hello|hi|hey|good (morning|afternoon|evening))/.test(t)) {
-    return "Hi! I'm the Tech IT assistant. Tell me what's broken — printer, AD sign-in, proxy, VPN, email — or ask about your services and tickets. What's going on?";
+    return "Hi! I'm the BanihalOrb IT assistant. Tell me what's broken — printer, AD sign-in, proxy, VPN, email — or ask about your services and tickets. What's going on?";
   }
   if (/(thank|thanks|appreciate)/.test(t)) {
     return "You're welcome! Anything else I can help with?";
@@ -441,7 +441,7 @@ export default function Chatbot({ onUserMessage, initialMessages, onNewChat, use
   const greeting = useMemo(() => {
     const who = userName ? `, ${userName.split(' ')[0]}` : '';
     const where = orgName ? ` at ${orgName}` : '';
-    return `Hi${who}! I'm the Tech IT assistant${where}. Tell me what's broken — printer, AD sign-in, proxy, VPN, email — or ask about your services and tickets. What can I help you with?`;
+    return `Hi${who}! I'm the BanihalOrb IT assistant${where}. Tell me what's broken — printer, AD sign-in, proxy, VPN, email — or ask about your services and tickets. What can I help you with?`;
   }, [userName, orgName]);
 
   const [messages, setMessages] = useState<Message[]>(() => {
@@ -746,7 +746,7 @@ export default function Chatbot({ onUserMessage, initialMessages, onNewChat, use
       <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-100 flex-shrink-0">
         <BotAvatar size="md" />
         <div className="flex-1 min-w-0">
-          <h3 className="text-base font-semibold text-slate-900 leading-tight">Tech Assistant</h3>
+          <h3 className="text-base font-semibold text-slate-900 leading-tight">BanihalOrb Assistant</h3>
           <p className="text-xs text-slate-500">IT support &amp; quick answers · responds instantly</p>
         </div>
         {onNewChat && inConversation && (

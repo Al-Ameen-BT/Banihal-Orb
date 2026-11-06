@@ -46,7 +46,7 @@ export async function notifyBotWebhook(webhookUrlEnc: string, n: BotTicketNotifi
         type: 'section' as const,
         fields: detailFields.slice(i * 10, i * 10 + 10),
       })),
-      { type: 'context', elements: [{ type: 'mrkdwn', text: `Submitted via the B2B platform ticket form · ${new Date().toISOString()}` }] },
+      { type: 'context', elements: [{ type: 'mrkdwn', text: `Submitted via the BanihalOrb ticket form · ${new Date().toISOString()}` }] },
     ],
   };
 

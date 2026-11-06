@@ -76,6 +76,15 @@ export const VerifyTokenSchema = z.object({
   token: z.string().trim().min(1).max(300),
 });
 
+export const BotChangeRequestSchema = z.object({
+  requestKey: z.string().uuid().optional(),
+  action: z.enum(['allow', 'deny', 'extend', 'full-net', 'lock-net']),
+  ip: z.string().trim().min(1).max(64),
+  domain: z.string().trim().max(255).optional(),
+  hours: z.number().positive().max(8760).optional(),
+  reason: z.string().trim().min(3).max(500),
+}).strict().superRefine((value, ctx) => { refineBotChange(value, ctx); });
+
 export const AgentResultSchema = z.object({
   seq: z.coerce.number().int().min(0),
   ok: z.boolean(),

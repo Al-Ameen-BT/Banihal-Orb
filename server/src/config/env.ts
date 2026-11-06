@@ -25,6 +25,7 @@ const EnvSchema = z.object({
   JWT_REFRESH_EXPIRES_IN: z.string().regex(/^\d+[smhd]$/, 'Use a duration like 7d, 12h, 30m').default('7d'),
   IMPERSONATION_SECRET: z.string().min(32),
   PORT: z.coerce.number().default(3001),
+  BIND_HOST: z.string().default('127.0.0.1'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   ALLOWED_ORIGINS: z.string().default('http://localhost:3000'),
   // Public URL of the frontend — used to build links in emails (password reset).
@@ -75,7 +76,7 @@ const EnvSchema = z.object({
   // Ed25519 seed (64 hex chars) that signs squid config bundles for the agents.
   // Optional: derived from SLACK_TOKEN_SECRET in dev/test, but every prod
   // deployment must set its own and pin signingPublicKeyPem() into the agents.
-  SQUID_SIGNING_PRIVATE_KEY: z.string().length(64).optional(),
+  SQUID_SIGNING_PRIVATE_KEY: z.string().regex(/^[a-fA-F0-9]{64}$/, 'Use a 32-byte Ed25519 seed as 64 hex digits').optional(),
   // Pepper for the password-reuse fingerprint (HMAC-SHA256). Keep it OUT of the database
   // and back it up: change it and every stored fingerprint stops matching, so reuse
   // detection silently degrades until users next set a password. Falls back to
@@ -99,6 +100,11 @@ const EnvSchema = z.object({
   // Webhook HMAC secret for ticket approval callbacks (from external ticketing system).
   // Must be set in production; falls back to JWT_ACCESS_SECRET in dev.
   WEBHOOK_HMAC_SECRET: z.string().optional(),
+  // Orb communication secret - used to encrypt/decrypt Orb API keys (AES-256-GCM)
+  // Falls back to JWT_ACCESS_SECRET in dev; must be set separately in production
+  ORB_TOKEN_SECRET: z.string().optional(),
+  // Controls whether Orb key rotation is required annually (set to true to enforce)
+  ORB_KEY_ROTATE_ANNUALLY: z.boolean().default(false),
   // Organization approval: the code a staff member reads to a new org's admin.
   // The TTL is short by design — it is handed over during a live conversation, and
   // the org admin can request a fresh one (subject to the cooldown) if the call runs
@@ -159,7 +165,7 @@ if (!result.success) {
  * value of JWT_ACCESS_SECRET, or already-encrypted Slack tokens will not decrypt.
  */
 if (result.data.NODE_ENV === 'production') {
-  const missing = (['SLACK_TOKEN_SECRET', 'PASSWORD_PEPPER', 'WEBHOOK_HMAC_SECRET'] as const).filter((k) => !result.data[k]);
+  const missing = (['SLACK_TOKEN_SECRET', 'PASSWORD_PEPPER', 'WEBHOOK_HMAC_SECRET', 'ORB_TOKEN_SECRET'] as const).filter((k) => !result.data[k]);
   if (missing.length) {
     console.error(
       `❌ ${missing.join(' and ')} must be set in production — they must not fall back to JWT_ACCESS_SECRET.\n` +
@@ -182,4 +188,9 @@ export const env = {
   JWT_REFRESH_EXPIRES_MS: durationMs(result.data.JWT_REFRESH_EXPIRES_IN),
   /** HMAC secret for webhook signature verification. Falls back to JWT_ACCESS_SECRET in dev. */
   WEBHOOK_HMAC_SECRET: result.data.WEBHOOK_HMAC_SECRET ?? result.data.JWT_ACCESS_SECRET,
+  /** Orb communication secret - encrypts Orb API keys via AES-256-GCM. Falls back to
+   *  JWT_ACCESS_SECRET in dev; must be set separately in production. */
+  ORB_TOKEN_SECRET: result.data.ORB_TOKEN_SECRET ?? result.data.JWT_ACCESS_SECRET,
+  /** When true, Orb keys must be rotated annually. Default false for backwards compat. */
+  ORB_KEY_ROTATE_ANNUALLY: result.data.ORB_KEY_ROTATE_ANNUALLY,
 };

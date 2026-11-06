@@ -1,0 +1,22 @@
+[Unit]
+Description=Squid outbound platform agent
+After=network-online.target squid.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=squid-webui
+Group=squid-webui
+WorkingDirectory=/opt/squid-webgui
+Environment=PYTHONPATH=/opt/squid-agent:/opt/squid-webgui
+ExecStart=/opt/squid-webgui/.venv/bin/python /opt/squid-agent/agent.py --config /etc/squid-agent/config.json
+Restart=on-failure
+RestartSec=15
+UMask=0077
+PrivateTmp=true
+ProtectHome=true
+# Match the WebUI's existing narrowly allowlisted parse/reconfigure privilege
+# model. Do not add broad sudo grants or run the transport as root.
+
+[Install]
+WantedBy=multi-user.target

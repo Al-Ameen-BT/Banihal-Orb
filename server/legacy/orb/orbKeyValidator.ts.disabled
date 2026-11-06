@@ -1,0 +1,120 @@
+import { Request, Response, NextFunction } from 'express';
+import { z } from 'zod';
+
+const OrbKeySchema = z.object({
+  value: z.string().regex(
+    /^ort_[A-Fa-f0-9]{16}_[A-Za-z0-9]{32}$/,
+    'Orb key must be format: ort_<16-hex-prefix>_<32-alpha-secret>'
+  ),
+});
+
+const ProxyKeySchema = z.object({
+  value: z.string().regex(
+    /^btp_[A-Fa-f0-9]{12}_[A-Za-z0-9]{43}$/,
+    'Proxy key must be format: btp_<12-hex-prefix>_<43-alpha-secret>'
+  ),
+});
+
+export async function orbKeyValidator(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    let orbKey: string | undefined;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      orbKey = authHeader.slice(7).trim();
+    } else {
+      orbKey = req.headers['x-orb-key'] as string | undefined;
+    }
+    if (!orbKey) {
+      res.status(401).json({
+        error: 'Provide an Orb API key: "Authorization: Bearer <orb-key>" or "X-Orb-Key: <orb-key>".',
+        code: 'MISSING_ORB_KEY',
+      });
+      return;
+    }
+    const result = OrbKeySchema.safeParse({ value: orbKey });
+    if (!result.success) {
+      res.status(401).json({
+        error: result.error.errors[0]?.message || 'Malformed Orb API key.',
+        code: 'MALFORMED_ORB_KEY',
+      });
+      return;
+    }
+    const prefixMatch = orbKey.match(/^ort_([A-Fa-f0-9]{16})_/);
+    if (!prefixMatch) {
+      res.status(401).json({
+        error: 'Invalid Orb key prefix.',
+        code: 'INVALID_ORB_PREFIX',
+      });
+      return;
+    }
+    const orbPrefix = prefixMatch[1];
+    ;(req as any).orbKey = { type: 'orb', prefix: orbPrefix };
+    next();
+  } catch (e) {
+    console.error('Orb key validation error:', e);
+    res.status(500).json({ error: 'Internal server error during Orb key validation', code: 'ORB_VALIDATION_ERROR' });
+  }
+}
+
+export async function proxyKeyValidator(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const proxyKey = req.headers['x-proxy-key'] as string | undefined;
+    if (!proxyKey) {
+      res.status(401).json({
+        error: 'Provide a Proxy API key: "X-Proxy-Key: btp_<prefix>_<secret>".',
+        code: 'MISSING_PROXY_KEY',
+      });
+      return;
+    }
+    const result = ProxyKeySchema.safeParse({ value: proxyKey });
+    if (!result.success) {
+      res.status(401).json({
+        error: result.error.errors[0]?.message || 'Malformed Proxy API key.',
+        code: 'MALFORMED_PROXY_KEY',
+      });
+      return;
+    }
+    const prefixMatch = proxyKey.match(/^btp_([A-Fa-f0-9]{12})_/);
+    if (!prefixMatch) {
+      res.status(401).json({
+        error: 'Invalid Proxy key prefix.',
+        code: 'INVALID_PROXY_PREFIX',
+      });
+      return;
+    }
+    const proxyPrefix = prefixMatch[1];
+    ;(req as any).proxyKey = { type: 'proxy', prefix: proxyPrefix };
+    next();
+  } catch (e) {
+    console.error('Proxy key validation error:', e);
+    res.status(500).json({ error: 'Internal server error during Proxy key validation', code: 'PROXY_VALIDATION_ERROR' });
+  }
+}
+
+export async function orgMatchValidator(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const orbKeyInfo = (req as any).orbKey;
+    const proxyKeyInfo = (req as any).proxyKey;
+    if (!orbKeyInfo || !proxyKeyInfo) {
+      res.status(500).json({
+        error: 'Key validation did not attach key info.',
+        code: 'MISSING_KEY_INFO',
+      });
+      return;
+    }
+    const requestedOrgId = 'org-' + proxyKeyInfo.prefix;
+    if (requestedOrgId === 'org-unknown') {
+      res.status(403).json({
+        error: 'Could not determine organization from API keys.',
+        code: 'ORG_UNKNOWN',
+      });
+      return;
+    }
+    ;(req as any).orgId = requestedOrgId;
+    console.info('API request authorized: org=' + requestedOrgId + ', orbPrefix=' + orbKeyInfo.prefix + ', proxyPrefix=' + proxyKeyInfo.prefix);
+    next();
+  } catch (e) {
+    console.error('Org match validation error:', e);
+    res.status(500).json({ error: 'Internal server error during org matching', code: 'ORG_MATCH_ERROR' });
+  }
+}

@@ -1,6 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  env: {
+    NEXT_PUBLIC_PRODUCT_VERSION: require('./package.json').version,
+  },
 
   // next/image serves the file as-is instead of resizing it through
   // /_next/image. Two static local PNGs are the ONLY consumers (the 36 KB

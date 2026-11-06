@@ -5,6 +5,7 @@ import cookieParser from 'cookie-parser';
 
 import { corsOptions } from './config/security';
 import { env } from './config/env';
+import productVersion from './product-version.json';
 import { prisma } from './config/database';
 import { chatPrisma } from './config/chatDatabase';
 import { ticketPrisma, adminTicketPrisma } from './config/ticketDatabase';
@@ -73,6 +74,10 @@ app.use(cookieParser());
 app.use(express.json({ limit: '1mb', verify: (req, _res, buf) => { (req as unknown as { rawBody?: Buffer }).rawBody = buf; } }));
 
 // ─── Public routes (no auth required) ───────────────────────────────────────
+app.get('/api/version', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ product: productVersion.product, version: productVersion.version });
+});
 app.use('/api/auth', authRoutes);
 // AD-automation machine ingest — authenticated by a per-bot API key (NOT a
 // session), so it is mounted before the cookie auth middleware.
@@ -104,7 +109,7 @@ app.get('/health', async (_req, res) => {
   ]);
   const databases = { main, chat, ticket, ticketAdmin };
   const ok = Object.values(databases).every((s) => s === 'connected');
-  res.status(ok ? 200 : 503).json({ status: ok ? 'ok' : 'degraded', databases });
+  res.status(ok ? 200 : 503).json({ status: ok ? 'ok' : 'degraded', version: productVersion.version, databases });
 });
 
 // ─── Protected routes ────────────────────────────────────────────────────────
@@ -135,6 +140,17 @@ app.use('/api/notifications', withTenant, notificationsRoutes);
 // Org-facing squid proxy management — tenant-scoped; per-route role guards inside.
 app.use('/api/squid', withTenant, squidRoutes);
 
+// Retired Orb prototype — use the scoped BanihalOrb change-request API.
+// No tenant scope injected (the two keys carry org identity independently).
+app.use('/api/orb', (_req, res) => { res.status(410).json({ error: 'Use the scoped Squid change-request API', code: 'API_RETIRED' }); });
+
+// Secure web API for squid proxy configuration (Slack-independent).
+// Cross-tenant access controlled by per-route authorization.
+// The global /api authMiddleware validates JWT; routes use proxyAuth for HMAC
+// (agent workers) or proceed with JWT context for platform/organization admins.
+// No tenant scope is injected — callers must have explicit org authorization.
+app.use('/api/squid-web', (_req, res) => { res.status(410).json({ error: 'Use the scoped Squid change-request API', code: 'API_RETIRED' }); });
+
 // Sadmin / Administrator — platform-level access, no tenant scope
 app.use('/api/saas-admin', requireRole('ADMINISTRATOR'), saasAdminRoutes);
 // Slack bot registry — administrators manage bots cross-tenant (no tenant scope).
@@ -145,7 +161,7 @@ app.use('/api/slack/link', slackLinkRoutes);
 // External ticketing API key/webhook registry — administrators manage machine
 // credentials cross-tenant (no tenant scope; same mount pattern as slack-bots).
 app.use('/api/external-admin', requireRole('ADMINISTRATOR'), externalAdminRoutes);
-// Steam squid management — Administrators view/edit any org's squid config
+// Squid connection management and ticket requests across client organisations
 // cross-tenant (no tenant scope). Guarded per-route by squid.view / squid.manage.
 app.use('/api/saas-admin/squid', requireRole('ADMINISTRATOR'), squidAdminRoutes);
 

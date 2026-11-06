@@ -31,33 +31,12 @@ export async function listChangeRequests(req: Request, res: Response, next: Next
 
 export async function createChangeRequest(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { refineBotChange } = await import('./squid.schema');
+    const { BotChangeRequestSchema } = await import('./squid.schema');
     const { requestProxyChange } = await import('./squidBot.service');
-    const body = (req.body ?? {}) as { action: string; ip: string; domain?: string; hours?: number };
-    const rawAction = String(body.action ?? '');
-    const norm = rawAction.replace(/^BOT_/i, '').replace(/_/g, '-').toLowerCase();
-    const issues: { message: string; path?: (string | number)[] }[] = [];
-    refineBotChange(
-      { action: norm, ip: body.ip ?? '', domain: body.domain, hours: body.hours },
-      { addIssue: (i: { code: 'custom'; message: string; path?: (string | number)[] }) => { issues.push(i); } },
-    );
-    if (issues.length) {
-      res.status(400).json({ error: issues[0]!.message, code: 'VALIDATION_ERROR', issues });
-      return;
-    }
-    const actionMap: Record<string, 'allow' | 'deny' | 'extend' | 'full-net' | 'lock-net'> = {
-      'allow': 'allow', 'deny': 'deny', 'extend': 'extend',
-      'full-net': 'full-net', 'lock-net': 'lock-net',
-    };
-    const action = actionMap[norm];
-    if (!action) {
-      res.status(400).json({ error: `Unknown action: ${rawAction}`, code: 'VALIDATION_ERROR' });
-      return;
-    }
+    const body = BotChangeRequestSchema.parse(req.body);
     const result = await requestProxyChange(
       req.params['proxyId']!,
-      { id: req.user.userId!, customerId: req.user.customerId! },
-      { action, ip: body.ip, domain: body.domain, hours: body.hours },
+      { id: req.user.userId!, customerId: req.user.customerId! }, body,
     );
     res.status(201).json(result);
   } catch (e) { next(e); }

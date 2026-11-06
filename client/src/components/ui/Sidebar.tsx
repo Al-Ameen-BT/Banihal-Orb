@@ -119,28 +119,13 @@ export default function Sidebar() {
         {showServices && <NavItem href="/services" label="Services" icon={icons.services} active={path === '/services'} />}
         {(isOrgAdmin || (isStaff && can('squid.view'))) && (
           <>
-            <NavItem 
-              href="/squid" 
-              label="Squid Proxy" 
-              icon={icons.squid} 
-              active={path === '/squid' || (path.startsWith('/squid/') && path.split('/').length < 3)} 
+            <NavItem
+              href="/squid"
+              label="Proxy connections"
+              icon={icons.squid}
+              active={path === '/squid' || (path.startsWith('/squid/') && path.split('/').length < 3)}
             />
-            {path.startsWith('/squid/') && (() => {
-              const parts = path.split('/');
-              if (parts.length >= 3) {
-                const proxyId = parts[2];
-                return (
-                  <div className="ml-9 border-l-2 border-slate-100 pl-2 py-0.5 space-y-0.5 my-1 mr-2">
-                    <Link href={`/squid/${proxyId}/dashboard`} className={`block text-[13px] py-1.5 px-3 rounded-lg transition-colors ${path.includes('/dashboard') ? 'bg-brand-50 text-brand-700 font-semibold' : 'text-slate-500 font-medium hover:text-slate-900 hover:bg-slate-100'}`}>Dashboard</Link>
-                    <Link href={`/squid/${proxyId}/branches`} className={`block text-[13px] py-1.5 px-3 rounded-lg transition-colors ${path.includes('/branches') ? 'bg-brand-50 text-brand-700 font-semibold' : 'text-slate-500 font-medium hover:text-slate-900 hover:bg-slate-100'}`}>Branches (ACL)</Link>
-                    <Link href={`/squid/${proxyId}/ports`} className={`block text-[13px] py-1.5 px-3 rounded-lg transition-colors ${path.includes('/ports') ? 'bg-brand-50 text-brand-700 font-semibold' : 'text-slate-500 font-medium hover:text-slate-900 hover:bg-slate-100'}`}>Ports & Access</Link>
-                    <Link href={`/squid/${proxyId}/history`} className={`block text-[13px] py-1.5 px-3 rounded-lg transition-colors ${path.includes('/history') ? 'bg-brand-50 text-brand-700 font-semibold' : 'text-slate-500 font-medium hover:text-slate-900 hover:bg-slate-100'}`}>Change Log</Link>
-                    <Link href={`/squid/${proxyId}/settings`} className={`block text-[13px] py-1.5 px-3 rounded-lg transition-colors ${path.includes('/settings') ? 'bg-brand-50 text-brand-700 font-semibold' : 'text-slate-500 font-medium hover:text-slate-900 hover:bg-slate-100'}`}>Settings</Link>
-                  </div>
-                );
-              }
-              return null;
-            })()}
+
           </>
         )}
         {showUsers && <NavItem href="/users" label="Users" icon={icons.users} active={path === '/users'} />}
@@ -154,7 +139,7 @@ export default function Sidebar() {
             {platform.customerServices && <NavItem href="/saas-admin/services" label="Customer Services" icon={icons.services} active={path === '/saas-admin/services'} />}
             {platform.catalog && <NavItem href="/saas-admin/catalog" label="Service Catalog" icon={icons.catalog} active={path === '/saas-admin/catalog'} />}
             {platform.bots && <NavItem href="/saas-admin/bots" label="Slack Bots" icon={icons.bots} active={path === '/saas-admin/bots'} />}
-            {platform.squid && <NavItem href="/saas-admin/squid" label="Squid Proxies" icon={icons.squid} active={path === '/saas-admin/squid'} />}
+
             {platform.externalApi && <NavItem href="/saas-admin/api-keys" label="External API" icon={icons.key} active={path === '/saas-admin/api-keys'} />}
             {platform.systemActivity && <NavItem href="/system-activity" label="System Activity" icon={icons.activity} active={path === '/system-activity'} />}
             {platform.systemLogs && <NavItem href="/system-logs" label="System Logs" icon={icons.logs} active={path === '/system-logs'} />}
@@ -204,6 +189,7 @@ export default function Sidebar() {
           </svg>
           Sign out
         </button>
+        <p className="px-3 text-xs text-slate-500" aria-label="Application version">Version {process.env.NEXT_PUBLIC_PRODUCT_VERSION}</p>
       </div>
     </aside>
   );

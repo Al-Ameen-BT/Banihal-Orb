@@ -197,7 +197,7 @@ export async function handleApprovalInteraction(conn: { web: WebClient }, payloa
   try {
     const decider = await resolveDecider(conn, payload.user?.id ?? '');
     if (!decider) {
-      replaceCard(responseUrl, `No platform account found for your Slack identity. Approve/decline ${ticketId.slice(0, 8)}… from the B2B dashboard instead.`);
+      replaceCard(responseUrl, `No platform account found for your Slack identity. Approve/decline ${ticketId.slice(0, 8)}… from the BanihalOrb dashboard instead.`);
       return;
     }
     if (!(await mayDecide(decider, ticketId))) {
@@ -229,6 +229,6 @@ export async function handleApprovalInteraction(conn: { web: WebClient }, payloa
     const status = (err as { status?: number })?.status;
     replaceCard(responseUrl, status === 409
       ? 'This ticket has already been approved or declined.'
-      : 'Something went wrong. Please decide from the B2B dashboard instead.');
+      : 'Something went wrong. Please decide from the BanihalOrb dashboard instead.');
   }
 }

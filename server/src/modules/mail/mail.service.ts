@@ -20,7 +20,7 @@ const transporter = nodemailer.createTransport({
 // Unified White Theme — forces light mode only so mobile + desktop render
 // identical. Uses black, navy, and blue text on solid white for maximum
 // readability and WCAG AAA compliance across all email clients.
-const BRAND_NAME = 'Banihal Technologies';
+const BRAND_NAME = 'BanihalOrb';
 const BRAND_COLOR = '#2563EB';   // accent / section tags / links — vibrant blue
 const INK = '#000000';           // headings — solid black
 const NAVY = '#0F172A';          // body / key values / labels — deep navy

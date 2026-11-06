@@ -1,7 +1,7 @@
 {
-  "name": "b2b-saas-server",
-  "version": "1.0.0",
-  "description": "B2B SaaS multi-tenant API server",
+  "name": "banihalorb-server",
+  "version": "2.0.0-dev.0",
+  "description": "BanihalOrb multi-tenant cybersecurity operations API server",
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
@@ -12,7 +12,7 @@
     "db:generate": "prisma generate && prisma generate --schema prisma/chat.prisma && prisma generate --schema prisma/ticketing.prisma && prisma generate --schema prisma/ticket.prisma",
     "db:provision": "bash db/provision.sh",
     "db:verify": "tsx db/verify.ts",
-    "db:push": "echo 'db:push is deprecated and can wipe data — use db:provision (idempotent SQL DDL)' && npm run db:provision",
+    "db:push": "echo 'db:push is deprecated and can wipe data \u2014 use db:provision (idempotent SQL DDL)' && npm run db:provision",
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
@@ -29,6 +29,7 @@
     "@slack/socket-mode": "^2.0.7",
     "@slack/web-api": "^7.18.0",
     "@types/web-push": "^3.6.4",
+    "base64-js": "^1.5.1",
     "bcryptjs": "^2.4.3",
     "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",

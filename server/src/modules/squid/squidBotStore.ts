@@ -2,6 +2,7 @@ import { prisma } from '../../config/database';
 import { audit } from '../../lib/audit';
 import { Prisma } from '@prisma/client';
 import type { SquidBotCommand, SquidBotCommandType } from '@prisma/client';
+import { automationState, withProxyLease } from './squidAutomation';
 
 // ─── Squid host bot store (workerMode = SQUID_BOT) ───────────────────────────
 // Persistence + exactly-once bookkeeping for the bot that executes per-IP rule
@@ -176,7 +177,15 @@ export async function enqueueBotCommand(cr: {
  * dedupe on commandId). Marks delivery time on first hand-out and bumps the
  * attempts counter.
  */
-export async function claimCommandsForDelivery(botId: string, limit = 25): Promise<SquidBotCommand[]> {
+export async function claimCommandsForDelivery(botId: string, limit = 1): Promise<SquidBotCommand[]> {
+  const scope = await resolveBotScope(botId);
+  return withProxyLease(scope.proxyId, async () => {
+    if ((await automationState(scope.proxyId, scope.customerId)).paused) return [];
+    return claimCommandsLocked(botId, Math.min(limit, 1));
+  });
+}
+
+async function claimCommandsLocked(botId: string, limit: number): Promise<SquidBotCommand[]> {
   const cmds = await prisma.squidBotCommand.findMany({
     where: { botId, status: { in: ['PENDING', 'DISPATCHED'] } },
     orderBy: { createdAt: 'asc' },

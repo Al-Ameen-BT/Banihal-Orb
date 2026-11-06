@@ -215,7 +215,7 @@ async function resolveWorkerBlockAction(input: MessageInput): Promise<string> {
       where: { slackId: input.user },
       select: { id: true, customerId: true, role: true },
     });
-    if (!user) return 'No platform account found for your Slack identity. Approve/decline from the B2B dashboard instead.';
+    if (!user) return 'No platform account found for your Slack identity. Approve/decline from the BanihalOrb dashboard instead.';
     if (user.role === 'USER') return notAllowed;
     if (user.role === 'ORG_ADMIN') {
       if (!user.customerId) return notAllowed;
@@ -246,7 +246,7 @@ async function resolveWorkerBlockAction(input: MessageInput): Promise<string> {
     const status = (err as { status?: number })?.status;
     return status === 409
       ? 'This ticket has already been approved or declined.'
-      : 'Something went wrong. Please decide from the B2B dashboard instead.';
+      : 'Something went wrong. Please decide from the BanihalOrb dashboard instead.';
   }
 }
 

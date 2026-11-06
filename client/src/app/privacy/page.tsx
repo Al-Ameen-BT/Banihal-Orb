@@ -1,8 +1,8 @@
 import LegalDoc from '@/components/LegalDoc';
 
 export const metadata = {
-  title: 'Privacy Policy · Banihal Technologies',
-  description: 'Privacy Policy for the Banihal Technologies platform.',
+  title: 'Privacy Policy · BanihalOrb',
+  description: 'Privacy Policy for the BanihalOrb platform.',
 };
 
 export default function PrivacyPage() {

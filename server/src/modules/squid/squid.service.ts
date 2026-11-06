@@ -1,7 +1,11 @@
+import { admitProxyChange, assertAutomationRunning, automationState, withProxyLease, setAutomationPause } from './squidAutomation';
+import { botActionOf, enqueueBotCommand } from './squidBotStore';
+import { isDeepStrictEqual } from 'node:util';
 import crypto from 'crypto';
 import express from 'express';
 import { prisma } from '../../config/database';
 import type { Prisma } from '@prisma/client';
+type SquidTransaction = Omit<typeof prisma, '$extends' | '$transaction' | '$disconnect' | '$connect' | '$on' | '$use'>;
 import { encryptSecret, decryptSecret, hashApiKey, maskToken } from '../../config/slackCrypto';
 import { audit } from '../../lib/audit';
 import { renderProxyConfig, classifyEntry, validateSource, validatePortSpec, validBranchName } from './aclEngine';
@@ -10,6 +14,7 @@ import { scanDependencies } from './depFinder';
 import { notify } from '../notifications/notifications.service';
 import { createTicket as createTicketingTicket } from '../ticketing/ticketing.service';
 import { getTicketDb, runWithTicketDb } from '../../config/ticketDatabase';
+import { registerOnTicketApproved } from '../ticketing/ticketing.service';
 import type {
   CreateProxyInput, UpdateProxyInput, ListProxiesInput,
   CreateBranchInput, UpdateBranchInput, SetBranchListsInput,
@@ -73,7 +78,8 @@ export function broadcastChangeRequestUpdate(proxyId: string, changeRequest: {
 // The `locked` guard is the ONE place that enforces read-only enforcement: every
 // mutation routes through assertUnlocked(). Locked means explicitly disabled OR
 // the governing subscription expired — checked reactively, no cron needed.
-function assertUnlocked(proxy: { locked: boolean; customerService?: { endDate: Date } | null }): void {
+async function assertUnlocked(proxy: { id: string; customerId: string; locked: boolean; customerService?: { endDate: Date } | null }): Promise<void> {
+  await assertAutomationRunning(proxy.id, proxy.customerId);
   const expired = proxy.customerService && proxy.customerService.endDate.getTime() < Date.now();
   if (proxy.locked || expired) {
     throw err(423, 'SQUID_LOCKED', 'This proxy is locked (disabled or expired subscription) — read-only.');
@@ -107,7 +113,7 @@ export function generateRegistrationKey(): { raw: string; hint: string; hash: st
 export async function rotateAgentKey(proxyId: string, actorId: string, customerId: string): Promise<{ hint: string; raw: string }> {
   const proxy = await prisma.squidProxy.findUnique({ where: { id: proxyId }, include: { customerService: { select: { endDate: true } } } });
   if (!proxy) throw err(404, 'NOT_FOUND', 'Proxy not found');
-  assertUnlocked(proxy);
+  await assertUnlocked(proxy);
   const k = generateRegistrationKey();
   await prisma.squidProxy.update({ where: { id: proxyId }, data: { regKeyHash: k.hash, regKeyEncrypted: k.encrypted, registrationHint: k.hint } });
   await audit({ action: 'SQUID_PROXY_KEY_GENERATED', performedById: actorId, customerId, targetId: proxyId, metadata: { hint: k.hint } });
@@ -138,11 +144,15 @@ export async function verifyRegistrationToken(proxyId: string, actorId: string, 
 export async function linkExternalApiKey(proxyId: string, actorId: string, customerId: string, externalApiKeyId: string) {
   const proxy = await prisma.squidProxy.findUnique({ where: { id: proxyId }, include: { customerService: { select: { endDate: true } } } });
   if (!proxy) throw err(404, 'NOT_FOUND', 'Proxy not found');
-  assertUnlocked(proxy);
+  await assertUnlocked(proxy);
   
   const extKey = await prisma.externalApiKey.findUnique({ where: { id: externalApiKeyId } });
   if (!extKey) throw err(404, 'NOT_FOUND', 'External API key not found');
   if (!extKey.enabled) throw err(400, 'KEY_DISABLED', 'External API key is disabled');
+  const keyClients = extKey.customerIds as string[];
+  if (!Array.isArray(keyClients) || keyClients.length !== 1 || keyClients[0] !== proxy.customerId) {
+    throw err(400, 'KEY_CUSTOMER_MISMATCH', 'Use a ticketing key restricted to this proxy organisation');
+  }
   
   // Verify the key has the required scopes for ticketing
   const scopes = (extKey.scopes as string[]) ?? [];
@@ -168,7 +178,7 @@ export async function linkExternalApiKey(proxyId: string, actorId: string, custo
 export async function unlinkExternalApiKey(proxyId: string, actorId: string, customerId: string) {
   const proxy = await prisma.squidProxy.findUnique({ where: { id: proxyId }, include: { customerService: { select: { endDate: true } } } });
   if (!proxy) throw err(404, 'NOT_FOUND', 'Proxy not found');
-  assertUnlocked(proxy);
+  await assertUnlocked(proxy);
   
   await prisma.squidProxy.update({
     where: { id: proxyId },
@@ -195,25 +205,11 @@ export async function listProxies(input: ListProxiesInput) {
         id: true, name: true, description: true, status: true, lastSeenAt: true, lastError: true,
         revision: true, appliedSeq: true, locked: true, createdAt: true,
         customerService: { select: { id: true, name: true, endDate: true } },
-        _count: { select: { branches: true } },
       },
     }),
     prisma.squidProxy.count(),
   ]);
-  // Latest snapshot per proxy for the dashboard's Slack-bot chip. First match per
-  // proxyId wins (rows are desc by observedAt). ponytail: take-cap discards the
-  // oldest snapshots only; a very hot proxy could crowd another's latest out of
-  // the 2000-row window — pull per-proxy separately if fleets get large.
-  const snaps = proxies.length ? await prisma.squidTelemetry.findMany({
-    where: { proxyId: { in: proxies.map((p) => p.id) } },
-    orderBy: { observedAt: 'desc' as const },
-    select: { proxyId: true, slackBot: true },
-    take: 2000,
-  }) : [];
-  const latestBot = new Map<string, unknown>();
-  for (const s of snaps) if (!latestBot.has(s.proxyId)) latestBot.set(s.proxyId, s.slackBot as unknown);
-  const aug = proxies.map((p) => ({ ...p, slackBot: (latestBot.get(p.id) ?? null) as { table?: string; state?: string; lastError?: string } | null }));
-  return { proxies: aug, total, page: input.page, limit: input.limit, pages: Math.ceil(total / input.limit) };
+  return { proxies, total, page: input.page, limit: input.limit, pages: Math.ceil(total / input.limit) };
 }
 
 const proxyDetailSelect = {
@@ -251,7 +247,7 @@ export async function createProxy(customerId: string, input: CreateProxyInput) {
 export async function updateProxy(proxyId: string, input: UpdateProxyInput) {
   const proxy = await prisma.squidProxy.findUnique({ where: { id: proxyId }, include: { customerService: { select: { endDate: true } } } });
   if (!proxy) throw err(404, 'NOT_FOUND', 'Proxy not found');
-  assertUnlocked(proxy);
+  await assertUnlocked(proxy);
   if (input.name) {
     const clash = await prisma.squidProxy.findFirst({ where: { name: input.name, id: { not: proxyId } } });
     if (clash) throw err(409, 'NAME_TAKEN', 'A proxy with this name already exists');
@@ -285,19 +281,41 @@ export async function bumpRevision(proxyId: string) {
 
 /** Auto-ticket: record each requested config change so it is attributable,
  *  whether it came from the web dashboard or a Slack/API bot surface. */
-export async function createChangeRequest(input: {
+export async function createChangeRequest(input: Parameters<typeof createChangeRequestRecord>[0]) {
+  if (input.bypassApproval) throw err(403, 'SQUID_APPROVAL_REQUIRED', 'Squid changes require an approval ticket');
+  return withProxyLease(input.proxyId, async () => {
+    await assertAutomationRunning(input.proxyId, input.customerId);
+    const proxy = await loadProxy(input.proxyId);
+    if (proxy.customerId !== input.customerId) throw err(404, 'NOT_FOUND', 'Proxy not found');
+    if (input.idempotencyKey) {
+      const existing = await prisma.squidChangeRequest.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
+      if (existing) {
+        if (existing.proxyId !== input.proxyId || existing.customerId !== input.customerId || existing.action !== input.action || !isDeepStrictEqual(existing.details, JSON.parse(JSON.stringify(input.details ?? {})))) {
+          throw err(409, 'IDEMPOTENCY_CONFLICT', 'Request key was already used for a different change');
+        }
+        if (!existing.ticketId) await createSquidApprovalTicket(existing.id, input.proxyId, input.customerId, input.action, input.summary, input.details);
+        return prisma.squidChangeRequest.findUniqueOrThrow({ where: { id: existing.id } });
+      }
+    }
+    await admitProxyChange(input.proxyId, input.customerId);
+    return createChangeRequestRecord(input);
+  });
+}
+
+async function createChangeRequestRecord(input: {
   proxyId: string; customerId: string; actorId: string | null;
   source?: 'WEB' | 'SLACK' | 'API'; action: string; summary: string; details?: Record<string, unknown>;
   createTicket?: boolean;
   bypassApproval?: boolean;
+  idempotencyKey?: string;
 }) {
-  const status = input.bypassApproval ? 'APPROVED' : 'PENDING_APPROVAL';
+  const status = 'PENDING_APPROVAL';
   const changeRequest = await prisma.squidChangeRequest.create({
     data: {
       proxyId: input.proxyId, customerId: input.customerId,
       actorId: input.actorId ?? null, source: input.source ?? 'WEB',
       action: input.action, summary: input.summary, details: input.details ?? {},
-      status,
+      status, idempotencyKey: input.idempotencyKey,
     },
   });
 
@@ -306,22 +324,12 @@ export async function createChangeRequest(input: {
     try {
       await createSquidApprovalTicket(changeRequest.id, input.proxyId, input.customerId, input.action, input.summary, input.details);
     } catch (e) {
-      // Ticket creation failed — log but don't block the change request
-      console.error('Failed to create approval ticket:', e);
+      await prisma.squidChangeRequest.update({ where: { id: changeRequest.id }, data: { error: 'Ticket creation failed; retry the same request key.' } });
+      throw err(503, 'SQUID_TICKET_UNAVAILABLE', 'Approval ticket could not be created; retry with the same request key');
     }
   }
 
-  // If bypassed, auto-apply immediately
-  if (input.bypassApproval) {
-    applyChangeRequest(changeRequest.id, input.actorId || 'system').catch(async (e) => {
-      await prisma.squidChangeRequest.update({
-        where: { id: changeRequest.id },
-        data: { status: 'FAILED', error: e.message },
-      });
-    });
-  }
-
-  return changeRequest;
+  return prisma.squidChangeRequest.findUniqueOrThrow({ where: { id: changeRequest.id } });
 }
 
 /** Create an external ticket for squid config approval. */
@@ -350,12 +358,14 @@ async function createSquidApprovalTicket(
     status: 'todo' as const,
     projectId: project.id,
     assigneeId: botUserId,
-    labels: ['squid-proxy', 'config-change', `proxy-${proxyId}`, 'pending:approval'],
+    labels: ['squid-proxy', 'config-change', 'squid:config-change', `squid-cr:${changeRequestId}`, `proxy-${proxyId}`, 'pending:approval'],
     orgCustomerId: customerId,
   };
 
   // Run in default ticket store scope
   const dto = await runWithTicketDb('default', async () => {
+    const previous = await getTicketDb().tickets.findFirst({ where: { labels: { has: `squid-cr:${changeRequestId}` } } });
+    if (previous) return { id: previous.id };
     return createTicketingTicket(botUserId, ticketInput, customerId, 'ADMINISTRATOR');
   });
 
@@ -364,7 +374,8 @@ async function createSquidApprovalTicket(
     where: { id: changeRequestId },
     data: {
       ticketId: dto.id,
-      ticketUrl: `/tickets/${dto.id}`,
+      ticketUrl: `/ticketing?ticketId=${dto.id}`,
+      error: null,
     },
   });
 
@@ -419,43 +430,66 @@ export async function listChangeRequests(proxyId: string, limit = 100) {
 
 /** Apply a previously approved change request. Called from ticket approval webhook. */
 export async function applyChangeRequest(changeRequestId: string, approverId: string) {
+  const target = await prisma.squidChangeRequest.findUnique({ where: { id: changeRequestId } });
+  if (!target) throw err(404, 'NOT_FOUND', 'Change request not found');
+  return withProxyLease(target.proxyId, () => applyChangeRequestLocked(changeRequestId, approverId));
+}
+
+async function applyChangeRequestLocked(changeRequestId: string, approverId: string) {
   const cr = await prisma.squidChangeRequest.findUnique({ where: { id: changeRequestId } });
   if (!cr) throw err(404, 'NOT_FOUND', 'Change request not found');
   if (cr.status !== 'APPROVED') throw err(409, 'INVALID_STATUS', `Change request is ${cr.status}, not APPROVED`);
 
   const proxy = await loadProxy(cr.proxyId);
-  assertUnlocked(proxy);
+  await assertUnlocked(proxy);
+
+  if (proxy.customerId !== cr.customerId) throw err(409, 'SQUID_OWNER_CHANGED', 'Proxy ownership has changed; approval must be recreated');
+  if (botActionOf(cr.action)) {
+    const command = await enqueueBotCommand(cr);
+    return { ok: true, commandId: command.id, status: 'DISPATCHED' };
+  }
+
+  if (await prisma.squidChangeRequest.count({ where: { proxyId: cr.proxyId, status: 'DISPATCHED', targetRevision: { not: null } } })) {
+    throw err(409, 'SQUID_BUSY', 'Wait for the current configuration acknowledgement');
+  }
 
   const details = cr.details as Record<string, unknown>;
+  const dispatch = await prisma.$transaction(async (tx) => {
+  const claimed = await tx.squidChangeRequest.updateMany({ where: { id: cr.id, status: 'APPROVED' }, data: { status: 'DISPATCHED' } });
+  if (claimed.count !== 1) throw err(409, 'SQUID_ALREADY_DISPATCHED', 'Change already claimed by another worker');
   let result: unknown;
 
   switch (cr.action) {
     case 'CREATE_BRANCH':
-      result = await doCreateBranch(cr.proxyId, approverId, cr.customerId, details as CreateBranchInput);
+      result = await doCreateBranch(cr.proxyId, approverId, cr.customerId, details as CreateBranchInput, tx);
       break;
     case 'UPDATE_BRANCH':
-      result = await doUpdateBranch(cr.proxyId, details.branchId as string, approverId, cr.customerId, details as UpdateBranchInput);
+      result = await doUpdateBranch(cr.proxyId, details.branchId as string, approverId, cr.customerId, details as UpdateBranchInput, tx);
       break;
     case 'DELETE_BRANCH':
-      result = await doDeleteBranch(cr.proxyId, details.branchId as string, approverId, cr.customerId);
+      result = await doDeleteBranch(cr.proxyId, details.branchId as string, approverId, cr.customerId, tx);
       break;
     case 'SET_LISTS':
-      result = await doSetBranchLists(cr.proxyId, details.branchId as string, approverId, cr.customerId, details as SetBranchListsInput);
+      result = await doSetBranchLists(cr.proxyId, details.branchId as string, approverId, cr.customerId, details as SetBranchListsInput, tx);
       break;
     case 'SET_PORTS':
-      result = await doSetPorts(cr.proxyId, approverId, cr.customerId, details as SetPortsInput);
+      result = await doSetPorts(cr.proxyId, approverId, cr.customerId, details as SetPortsInput, tx);
       break;
     case 'SET_FULL_ACCESS':
-      result = await doSetFullAccess(cr.proxyId, approverId, cr.customerId, details as SetFullAccessInput);
+      result = await doSetFullAccess(cr.proxyId, approverId, cr.customerId, details as SetFullAccessInput, tx);
       break;
     default:
       throw err(400, 'UNKNOWN_ACTION', `Unknown action: ${cr.action}`);
   }
 
-  await prisma.squidChangeRequest.update({
+  const revision = (await tx.squidProxy.findUniqueOrThrow({ where: { id: cr.proxyId } })).revision;
+  await tx.squidChangeRequest.update({
     where: { id: changeRequestId },
-    data: { status: 'APPLIED', appliedSeq: proxy.revision },
+    data: { status: 'DISPATCHED', targetRevision: revision },
   });
+
+  return { revision, result };
+  }, { timeout: 30_000 });
 
   // Broadcast the update to SSE clients
   const updatedCr = await prisma.squidChangeRequest.findUnique({ where: { id: changeRequestId } });
@@ -474,94 +508,85 @@ export async function applyChangeRequest(changeRequestId: string, approverId: st
   }
 
   await audit({
-    action: 'SQUID_CHANGE_APPLIED', performedById: approverId, customerId: cr.customerId, targetId: changeRequestId,
+    action: 'SQUID_CHANGE_APPROVED', performedById: approverId, customerId: cr.customerId, targetId: changeRequestId,
     metadata: { action: cr.action, proxyId: cr.proxyId, revision: proxy.revision },
   });
 
-  return { ok: true, revision: proxy.revision, result };
+  return { ok: true, revision: dispatch.revision, result: dispatch.result };
 }
 
 /** Internal: actually create branch (called from applyChangeRequest) */
-async function doCreateBranch(proxyId: string, actorId: string, customerId: string, input: CreateBranchInput) {
+async function doCreateBranch(proxyId: string, _actorId: string, customerId: string, input: CreateBranchInput, db: SquidTransaction) {
   const proxy = await loadProxy(proxyId);
-  assertUnlocked(proxy);
+  await assertUnlocked(proxy);
   if (!validBranchName(input.name)) throw err(400, 'VALIDATION_ERROR', 'Invalid branch name');
-  const clash = await prisma.squidBranch.findUnique({ where: { proxyId_name: { proxyId, name: input.name } } });
+  const clash = await db.squidBranch.findUnique({ where: { proxyId_name: { proxyId, name: input.name } } });
   if (clash) throw err(409, 'NAME_TAKEN', 'A branch with this name already exists');
-  const branch = await prisma.squidBranch.create({
+  const branch = await db.squidBranch.create({
     data: { proxyId, customerId, name: input.name, description: input.description ?? null, mode: input.mode },
   });
-  await bumpRevision(proxyId);
-  await audit({ action: 'SQUID_BRANCH_CREATED', performedById: actorId, customerId, targetId: branch.id, metadata: { proxyId, branch: input.name } });
+  await db.squidProxy.update({ where: { id: proxyId }, data: { revision: { increment: 1 } } });
   return branch;
 }
 
 /** Internal: actually update branch */
-async function doUpdateBranch(proxyId: string, branchId: string, actorId: string, customerId: string, input: UpdateBranchInput) {
+async function doUpdateBranch(proxyId: string, branchId: string, _actorId: string, _customerId: string, input: UpdateBranchInput, db: SquidTransaction) {
   const proxy = await loadProxy(proxyId);
-  assertUnlocked(proxy);
-  const branch = await prisma.squidBranch.findUnique({ where: { id: branchId } });
+  await assertUnlocked(proxy);
+  const branch = await db.squidBranch.findUnique({ where: { id: branchId } });
   if (!branch || branch.proxyId !== proxyId) throw err(404, 'NOT_FOUND', 'Branch not found');
   if (input.name && input.name !== branch.name) {
-    const clash = await prisma.squidBranch.findUnique({ where: { proxyId_name: { proxyId, name: input.name } } });
+    const clash = await db.squidBranch.findUnique({ where: { proxyId_name: { proxyId, name: input.name } } });
     if (clash) throw err(409, 'NAME_TAKEN', 'A branch with this name already exists');
   }
-  const updated = await prisma.squidBranch.update({ where: { id: branchId }, data: { name: input.name, description: input.description, mode: input.mode } });
-  await bumpRevision(proxyId);
-  await audit({ action: 'SQUID_BRANCH_UPDATED', performedById: actorId, customerId, targetId: branchId, metadata: { proxyId, changes: input } });
+  const updated = await db.squidBranch.update({ where: { id: branchId }, data: { name: input.name, description: input.description, mode: input.mode } });
+  await db.squidProxy.update({ where: { id: proxyId }, data: { revision: { increment: 1 } } });
   return updated;
 }
 
 /** Internal: actually delete branch */
-async function doDeleteBranch(proxyId: string, branchId: string, actorId: string, customerId: string) {
+async function doDeleteBranch(proxyId: string, branchId: string, _actorId: string, _customerId: string, db: SquidTransaction) {
   const proxy = await loadProxy(proxyId);
-  assertUnlocked(proxy);
-  const branch = await prisma.squidBranch.findUnique({ where: { id: branchId } });
+  await assertUnlocked(proxy);
+  const branch = await db.squidBranch.findUnique({ where: { id: branchId } });
   if (!branch || branch.proxyId !== proxyId) throw err(404, 'NOT_FOUND', 'Branch not found');
-  await prisma.squidBranch.delete({ where: { id: branchId } });
-  await bumpRevision(proxyId);
-  await audit({ action: 'SQUID_BRANCH_DELETED', performedById: actorId, customerId, targetId: branchId, metadata: { proxyId, branch: branch.name } });
+  await db.squidBranch.delete({ where: { id: branchId } });
+  await db.squidProxy.update({ where: { id: proxyId }, data: { revision: { increment: 1 } } });
   return { ok: true };
 }
 
 /** Internal: actually set branch lists */
-async function doSetBranchLists(proxyId: string, branchId: string, actorId: string, customerId: string, input: SetBranchListsInput) {
+async function doSetBranchLists(proxyId: string, branchId: string, _actorId: string, _customerId: string, input: SetBranchListsInput, db: SquidTransaction) {
   const proxy = await loadProxy(proxyId);
-  assertUnlocked(proxy);
-  const branch = await prisma.squidBranch.findUnique({ where: { id: branchId } });
+  await assertUnlocked(proxy);
+  const branch = await db.squidBranch.findUnique({ where: { id: branchId } });
   if (!branch || branch.proxyId !== proxyId) throw err(404, 'NOT_FOUND', 'Branch not found');
   assertValidLists(input);
-  await prisma.squidBranch.update({
+  await db.squidBranch.update({
     where: { id: branchId },
     data: { sources: input.sources, whitelist: input.whitelist, blacklist: input.blacklist },
   });
-  await bumpRevision(proxyId);
-  await audit({
-    action: 'SQUID_LIST_UPDATED', performedById: actorId, customerId, targetId: branchId,
-    metadata: { proxyId, branch: branch.name, sourceCount: input.sources.length, whitelistCount: input.whitelist.length, blacklistCount: input.blacklist.length },
-  });
+  await db.squidProxy.update({ where: { id: proxyId }, data: { revision: { increment: 1 } } });
   return { ok: true };
 }
 
 /** Internal: actually set ports */
-async function doSetPorts(proxyId: string, actorId: string, customerId: string, input: SetPortsInput) {
+async function doSetPorts(proxyId: string, _actorId: string, _customerId: string, input: SetPortsInput, db: SquidTransaction) {
   const proxy = await loadProxy(proxyId);
-  assertUnlocked(proxy);
+  await assertUnlocked(proxy);
   assertValidPorts(input);
-  await prisma.squidProxy.update({ where: { id: proxyId }, data: { safePorts: input.safePorts, sslPorts: input.sslPorts } });
-  await bumpRevision(proxyId);
-  await audit({ action: 'SQUID_NETWORK_UPDATED', performedById: actorId, customerId, targetId: proxyId, metadata: { ports: input } });
+  await db.squidProxy.update({ where: { id: proxyId }, data: { safePorts: input.safePorts, sslPorts: input.sslPorts } });
+  await db.squidProxy.update({ where: { id: proxyId }, data: { revision: { increment: 1 } } });
   return { ok: true };
 }
 
 /** Internal: actually set full access */
-async function doSetFullAccess(proxyId: string, actorId: string, customerId: string, input: SetFullAccessInput) {
+async function doSetFullAccess(proxyId: string, _actorId: string, _customerId: string, input: SetFullAccessInput, db: SquidTransaction) {
   const proxy = await loadProxy(proxyId);
-  assertUnlocked(proxy);
+  await assertUnlocked(proxy);
   input.fullAccess.forEach((f) => validateSource(f.src));
-  await prisma.squidProxy.update({ where: { id: proxyId }, data: { fullAccess: input.fullAccess } });
-  await bumpRevision(proxyId);
-  await audit({ action: 'SQUID_NETWORK_UPDATED', performedById: actorId, customerId, targetId: proxyId, metadata: { fullAccessCount: input.fullAccess.length } });
+  await db.squidProxy.update({ where: { id: proxyId }, data: { fullAccess: input.fullAccess } });
+  await db.squidProxy.update({ where: { id: proxyId }, data: { revision: { increment: 1 } } });
   return { ok: true };
 }
 
@@ -572,7 +597,7 @@ export async function listBranches(proxyId: string) {
 
 export async function createBranch(proxyId: string, actorId: string, customerId: string, input: CreateBranchInput) {
   const proxy = await loadProxy(proxyId);
-  assertUnlocked(proxy);
+  await assertUnlocked(proxy);
   if (!validBranchName(input.name)) throw err(400, 'VALIDATION_ERROR', 'Invalid branch name');
   const clash = await prisma.squidBranch.findUnique({ where: { proxyId_name: { proxyId, name: input.name } } });
   if (clash) throw err(409, 'NAME_TAKEN', 'A branch with this name already exists');
@@ -591,7 +616,7 @@ export async function createBranch(proxyId: string, actorId: string, customerId:
 
 export async function updateBranch(proxyId: string, branchId: string, actorId: string, customerId: string, input: UpdateBranchInput) {
   const proxy = await loadProxy(proxyId);
-  assertUnlocked(proxy);
+  await assertUnlocked(proxy);
   const branch = await prisma.squidBranch.findUnique({ where: { id: branchId } });
   if (!branch || branch.proxyId !== proxyId) throw err(404, 'NOT_FOUND', 'Branch not found');
   if (input.name && input.name !== branch.name) {
@@ -613,7 +638,7 @@ export async function updateBranch(proxyId: string, branchId: string, actorId: s
 
 export async function deleteBranch(proxyId: string, branchId: string, actorId: string, customerId: string) {
   const proxy = await loadProxy(proxyId);
-  assertUnlocked(proxy);
+  await assertUnlocked(proxy);
   const branch = await prisma.squidBranch.findUnique({ where: { id: branchId } });
   if (!branch || branch.proxyId !== proxyId) throw err(404, 'NOT_FOUND', 'Branch not found');
 
@@ -630,7 +655,7 @@ export async function deleteBranch(proxyId: string, branchId: string, actorId: s
 
 export async function setBranchLists(proxyId: string, branchId: string, actorId: string, customerId: string, input: SetBranchListsInput) {
   const proxy = await loadProxy(proxyId);
-  assertUnlocked(proxy);
+  await assertUnlocked(proxy);
   const branch = await prisma.squidBranch.findUnique({ where: { id: branchId } });
   if (!branch || branch.proxyId !== proxyId) throw err(404, 'NOT_FOUND', 'Branch not found');
   assertValidLists(input);
@@ -649,7 +674,7 @@ export async function setBranchLists(proxyId: string, branchId: string, actorId:
 
 export async function setPorts(proxyId: string, actorId: string, customerId: string, input: SetPortsInput) {
   const proxy = await loadProxy(proxyId);
-  assertUnlocked(proxy);
+  await assertUnlocked(proxy);
   assertValidPorts(input);
 
   const cr = await createChangeRequest({
@@ -666,7 +691,7 @@ export async function setPorts(proxyId: string, actorId: string, customerId: str
 
 export async function setFullAccess(proxyId: string, actorId: string, customerId: string, input: SetFullAccessInput) {
   const proxy = await loadProxy(proxyId);
-  assertUnlocked(proxy);
+  await assertUnlocked(proxy);
   input.fullAccess.forEach((f) => validateSource(f.src));
 
   const cr = await createChangeRequest({
@@ -701,8 +726,8 @@ export async function renderBundle(proxyId: string) {
   return { proxy, bundle: files };
 }
 
-export function buildSignedBundle(files: Array<{ path: string; content: string }>, seq: number) {
-  return { collection: 'squid-conf', seq, files, signature: signBundle(seq, files) };
+export function buildSignedBundle(files: Array<{ path: string; content: string }>, seq: number, proxyId?: string) {
+  return { collection: 'squid-conf', ...(proxyId ? { protocol: 2, proxyId } : {}), seq, files, signature: signBundle(seq, files, proxyId) };
 }
 
 export const agentBundlePublicKey = () => signingPublicKeyPem();
@@ -712,9 +737,9 @@ export async function provisionSquidProxy(customerId: string, customerServiceId:
   const k = generateRegistrationKey();
   const proxy = await prisma.squidProxy.create({
     data: {
-      customerId, name: `proxy-${name.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 32)}`,
+      customerId, name: `proxy-${name.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 26)}`,
       description: `Provisioned from service “${name}”`,
-      status: 'PENDING', customerServiceId,
+      status: 'PENDING', customerServiceId: customerServiceId || null,
       regKeyHash: k.hash, regKeyEncrypted: k.encrypted, registrationHint: k.hint,
     },
   });
@@ -738,7 +763,16 @@ export async function notifyAdminsOfProxy(customerId: string, message: string): 
 }
 
 // ─── Agent runtime surface ───────────────────────────────────────────────────
-export async function agentPoll(proxyId: string) {
+export async function agentPoll(proxyId: string, protocolVersion = 1) {
+  const ready = await prisma.squidChangeRequest.findFirst({ where: { proxyId, status: 'APPROVED', NOT: { action: { startsWith: 'BOT_' } } }, orderBy: { createdAt: 'asc' } });
+  if (ready) {
+    try { await applyChangeRequest(ready.id, ready.actorId ?? 'system'); }
+    catch { /* Approved work remains queued until pause, capacity or ownership is resolved. */ }
+  }
+  return withProxyLease(proxyId, () => agentPollLocked(proxyId, protocolVersion));
+}
+
+async function agentPollLocked(proxyId: string, protocolVersion: number) {
   const proxy = await prisma.squidProxy.findUnique({
     where: { id: proxyId },
     include: { customerService: { select: { endDate: true } } },
@@ -771,20 +805,37 @@ export async function agentPoll(proxyId: string) {
     await notifyAdminsOfProxy(proxy.customerId, `Proxy “${proxy.name}” auto-suspended (subscription expired) — its config is locked deny-all.`).catch(() => {});
   }
 
+  const automation = await automationState(proxyId, proxy.customerId);
+  if (automation.paused) return { pending: null, appliedSeq: proxy.appliedSeq, revision, automation };
+
   if (revision <= proxy.appliedSeq) return { pending: null, appliedSeq: proxy.appliedSeq, revision };
+
+  if (!suspended) await prisma.squidChangeRequest.updateMany({
+    where: { proxyId, status: 'DISPATCHED', targetRevision: { not: null, lte: revision } },
+    data: { targetRevision: revision },
+  });
 
   const bundle = suspended
     ? renderProxyConfig({ safePorts: [], sslPorts: [], fullAccess: [] }, [], revision)
     : (await renderBundle(proxyId)).bundle;
-  return { pending: buildSignedBundle(bundle.files, revision), appliedSeq: proxy.appliedSeq, revision };
+  return { pending: buildSignedBundle(bundle.files, revision, protocolVersion === 2 ? proxyId : undefined), appliedSeq: proxy.appliedSeq, revision };
 }
 
 /** Agent reports the outcome of applying a rendered revision. */
 export async function agentResult(proxyId: string, actorId: string | null, customerId: string, input: AgentResultInput) {
+  return withProxyLease(proxyId, () => agentResultLocked(proxyId, actorId, customerId, input));
+}
+
+async function agentResultLocked(proxyId: string, actorId: string | null, customerId: string, input: AgentResultInput) {
   const proxy = await prisma.squidProxy.findUnique({ where: { id: proxyId } });
   if (!proxy) throw err(404, 'NOT_FOUND', 'Proxy not found');
+  if (proxy.customerId !== customerId || input.seq > proxy.revision) throw err(409, 'SQUID_ACK_MISMATCH', 'Unknown configuration revision');
+  if (!input.ok) {
+    await prisma.squidChangeRequest.updateMany({ where: { proxyId, status: 'DISPATCHED', targetRevision: input.seq }, data: { status: 'FAILED', error: input.error ?? 'Host apply failed' } });
+    await setAutomationPause(`proxy:${proxyId}`, true, 'Host apply failed; inspect the host before resuming automation', 'system:apply');
+  }
   const data: Record<string, unknown> = { lastSeenAt: new Date(), lastError: input.ok ? null : (input.error ?? 'apply failed') };
-  if (input.ok) data.appliedSeq = Math.max(proxy.appliedSeq, input.seq); // only forward progress monotonic ack
+  if (input.ok) await prisma.squidProxy.updateMany({ where: { id: proxyId, appliedSeq: { lt: input.seq } }, data: { appliedSeq: input.seq } });
   await prisma.squidProxy.update({ where: { id: proxyId }, data });
   await audit({ action: 'SQUID_APPLY_RESULT', performedById: actorId, customerId, targetId: proxyId, metadata: { seq: input.seq, ok: input.ok, error: input.ok ? undefined : input.error } });
 
@@ -794,7 +845,8 @@ export async function agentResult(proxyId: string, actorId: string | null, custo
     const pendingCr = await prisma.squidChangeRequest.findMany({
       where: {
         proxyId,
-        status: 'APPROVED',
+        status: 'DISPATCHED',
+        targetRevision: input.seq,
         appliedSeq: null,
       },
     });
@@ -1001,7 +1053,7 @@ export async function dependencyScan(proxyId: string, actorId: string, customerI
 /** Trigger agent to reload config (squid -k reconfigure) via revision bump */
 export async function reloadProxyConfig(proxyId: string, actorId: string, customerId: string) {
   const proxy = await loadProxy(proxyId);
-  assertUnlocked(proxy);
+  await assertUnlocked(proxy);
   
   // Bump revision to trigger agent poll
   await bumpRevision(proxyId);
@@ -1017,7 +1069,7 @@ export async function reloadProxyConfig(proxyId: string, actorId: string, custom
 /** Trigger full proxy restart (agent will restart squid process) */
 export async function restartProxy(proxyId: string, actorId: string, customerId: string) {
   const proxy = await loadProxy(proxyId);
-  assertUnlocked(proxy);
+  await assertUnlocked(proxy);
   
   await bumpRevision(proxyId);
   
@@ -1032,7 +1084,7 @@ export async function restartProxy(proxyId: string, actorId: string, customerId:
 /** Trigger ACL file rescan (agent re-reads config files from disk) */
 export async function rescanProxyAcl(proxyId: string, actorId: string, customerId: string) {
   const proxy = await loadProxy(proxyId);
-  assertUnlocked(proxy);
+  await assertUnlocked(proxy);
   
   await bumpRevision(proxyId);
   
@@ -1142,7 +1194,7 @@ export async function generateCa(proxyId: string, actorId: string, customerId: s
   validityYears: number;
 }) {
   const proxy = await loadProxy(proxyId);
-  assertUnlocked(proxy);
+  await assertUnlocked(proxy);
   
   // This triggers the agent to generate CA via a special config flag
   await bumpRevision(proxyId);
@@ -1163,7 +1215,7 @@ export async function importCertificate(proxyId: string, actorId: string, custom
   chain?: string;
 }) {
   const proxy = await loadProxy(proxyId);
-  assertUnlocked(proxy);
+  await assertUnlocked(proxy);
   
   await bumpRevision(proxyId);
   
@@ -1185,7 +1237,7 @@ export async function generateCsr(proxyId: string, actorId: string, customerId: 
   san: string[];
 }) {
   const proxy = await loadProxy(proxyId);
-  assertUnlocked(proxy);
+  await assertUnlocked(proxy);
   
   await bumpRevision(proxyId);
   
@@ -1205,7 +1257,7 @@ export async function createBackup(proxyId: string, actorId: string, customerId:
   emailResults?: boolean;
 }) {
   const proxy = await loadProxy(proxyId);
-  assertUnlocked(proxy);
+  await assertUnlocked(proxy);
   
   await bumpRevision(proxyId);
   
@@ -1232,7 +1284,7 @@ export async function restoreBackup(proxyId: string, actorId: string, customerId
   validateOnly?: boolean;
 }) {
   const proxy = await loadProxy(proxyId);
-  assertUnlocked(proxy);
+  await assertUnlocked(proxy);
   
   await bumpRevision(proxyId);
   
@@ -1248,7 +1300,7 @@ export async function restoreBackup(proxyId: string, actorId: string, customerId
 /** Factory reset - wipe ACLs but keep squid.conf */
 export async function factoryReset(proxyId: string, actorId: string, customerId: string) {
   const proxy = await loadProxy(proxyId);
-  assertUnlocked(proxy);
+  await assertUnlocked(proxy);
   
   // Delete all branches and reset proxy config
   await prisma.squidBranch.deleteMany({ where: { proxyId } });
@@ -1290,3 +1342,18 @@ export async function getPackageStatus(proxyId: string) {
     updateAvailable: false, // Would check against repo
   };
 }
+
+// Ticket approval changes desired state; only the host acknowledgement completes it.
+registerOnTicketApproved(async (ticket) => {
+  if (!ticket.labels.includes('squid:config-change')) return;
+  const requests = await prisma.squidChangeRequest.findMany({ where: { ticketId: ticket.id, status: { in: ['PENDING_APPROVAL', 'APPROVED'] } } });
+  for (const cr of requests) {
+    if (!ticket.labels.includes(`squid-cr:${cr.id}`)) continue;
+    await prisma.squidChangeRequest.updateMany({ where: { id: cr.id, status: 'PENDING_APPROVAL' }, data: { status: 'APPROVED' } });
+    try { await applyChangeRequest(cr.id, cr.actorId ?? 'system'); }
+    catch (error) {
+      // A pause or busy host keeps its approval; polling retries after recovery.
+      await prisma.squidChangeRequest.updateMany({ where: { id: cr.id, status: 'APPROVED' }, data: { error: error instanceof Error ? error.message : 'Dispatch unavailable' } });
+    }
+  }
+});

@@ -61,6 +61,7 @@ export const CreateTicketSchema = z.object({
   // is created unassigned in the org store, then auto-escalated to the platform
   // administrators' store. Enforced server-side in the controller.
   escalateToAdministrators: z.boolean().optional(),
+
 });
 
 // Comments previously read a bare req.body.content with no schema at all. `mentions`

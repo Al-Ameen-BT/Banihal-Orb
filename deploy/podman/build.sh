@@ -133,6 +133,10 @@ command -v openssl >/dev/null || { echo "❌ openssl is not installed (needed to
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
+# Container-only hosts need no host Node installation; do not relabel the checkout.
+podman run --rm --network none --read-only --security-opt label=disable \
+    --volume "$ROOT:/repo:ro" --workdir /repo \
+    docker.io/library/node:20-bookworm-slim node scripts/version.mjs check
 
 [ -f /etc/containers/systemd/b2b-api.container ] || {
     echo "❌ Quadlet units are not installed. Run this first:"
