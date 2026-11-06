@@ -3,16 +3,15 @@ import { prisma } from '../../config/database';
 import { decryptSecret } from '../../config/slackCrypto';
 import { agentPoll, agentResult, agentBundlePublicKey, ingestTelemetry, getOrCreateSquidProject, getOrCreateSquidBotUser } from './squid.service';
 import { AgentResultSchema, TelemetryIngestSchema } from './squid.schema';
-import { notify } from '../notifications/notifications.service';
 import { createMachineKeyAuth } from '../../lib/machineAuth';
+import { audit } from '../../lib/audit';
 
 // ─── Agent control API ───────────────────────────────────────────────────────
 // The per-host squid agent talks ONLY to these routes, and only with its own
 // proxy id + request signature. Each request is HMAC-SHA256 over
 // `${ts}\n${METHOD}\n${path}\n${sha256(rawBody)}` using the per-proxy raw
 // registration key (the encrypted copy lives in squidProxies.regKeyEncrypted).
-// The 5-minute timestamp window makes a signed request un-replayable for
-// anything meaningful, and the app is idempotent by revision/seq beyond that.
+// V2 nonces reject replay; timestamps alone only bound signature age.
 // The signature verification, bad-auth streak counter and bad-auth audit row
 // live in the shared lib/machineAuth (ADR-003); only what is the router's own
 // — WHICH actor is loaded and WHAT disable costs — is configured below.
@@ -32,18 +31,9 @@ interface AuthedProxy {
   customer: { name: string | null } | null;
 }
 
-async function autoDisable(proxyId: string): Promise<void> {
-  const proxy = await prisma.squidProxy.findUnique({ where: { id: proxyId }, select: { customerId: true, name: true } });
-  if (!proxy) return;
-  await prisma.squidProxy.update({ where: { id: proxyId }, data: { status: 'DISABLED', locked: true } });
-  const admins = await prisma.user.findMany({ where: { customerId: proxy.customerId, role: 'ORG_ADMIN' }, select: { id: true } });
-  for (const a of admins) {
-    await notify({ userId: a.id, customerId: proxy.customerId, kind: 'squid_proxy', title: `Proxy “${proxy.name}” auto-disabled after repeated bad-auth attempts.`, url: '/squid' }).catch(() => {});
-  }
-}
-
 /** Verify the request signature; attach the authenticated proxy to req. */
 export const agentAuth = createMachineKeyAuth<AuthedProxy>({
+  actorKind: 'proxy',
   actorIdOf: (req) => req.get('X-Proxy-Id') ?? '',
   timestampHeader: 'X-Proxy-Timestamp',
   loadActor: async (proxyId) => {
@@ -51,7 +41,7 @@ export const agentAuth = createMachineKeyAuth<AuthedProxy>({
       where: { id: proxyId },
       include: { customer: { select: { name: true } } },
     });
-    if (!proxy?.regKeyEncrypted) return null;
+    if (!proxy?.regKeyEncrypted || !proxy.regKeyHash || proxy.status === 'DISABLED') return null;
     let secret: string;
     try { secret = decryptSecret(proxy.regKeyEncrypted); } catch { return null; }
     return {
@@ -61,13 +51,12 @@ export const agentAuth = createMachineKeyAuth<AuthedProxy>({
       },
       secret,
       customerId: proxy.customerId, // factory writes the single bad-auth audit row (R2)
-      // regKeyHash deliberately withheld: hash cross-check is Task 4's scope.
+      secretHash: proxy.regKeyHash,
     };
   },
   reqKey: 'proxy',
   authFailedCode: 'PROXY_AUTH_FAILED',
   auditAction: 'SQUID_AGENT_AUTH_FAILED',
-  onBruteForceDisable: (proxyId) => autoDisable(proxyId),
 });
 
 // The public key agents pin at bootstrap — public material, no authentication.
@@ -77,7 +66,7 @@ router.get('/public-key', (_req, res) => {
 
 // Agent polls for configuration; the poll doubles as its heartbeat.
 router.get('/poll', agentAuth, async (req, res, next) => {
-  try { res.json(await agentPoll((req as Request & { proxy: AuthedProxy }).proxy.id)); }
+  try { res.json(await agentPoll((req as Request & { proxy: AuthedProxy }).proxy.id, Number(req.get('X-Machine-Version') ?? '1'))); }
   catch (e) { next(e); }
 });
 
@@ -142,6 +131,12 @@ router.get('/ticketing-config', agentAuth, async (req, res, next) => {
     
     // customerIds is Json — cast to string array
     const customerIds = (extKey.customerIds as string[]) ?? [];
+    if (customerIds.length !== 1 || customerIds[0] !== proxy.customerId) {
+      res.status(403).json({ error: 'Ticketing key must be restricted to this organisation', code: 'KEY_CUSTOMER_MISMATCH' });
+      return;
+    }
+    await audit({ action: 'SQUID_TOKEN_VERIFIED', performedById: null, customerId: proxy.customerId, targetId: proxy.id, metadata: { ticketingCredentialsFetched: true } });
+    res.setHeader('Cache-Control', 'no-store');
     
     // Resolve project and assignee IDs so the bot can fetch its tickets
     const project = await getOrCreateSquidProject();

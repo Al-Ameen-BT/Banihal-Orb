@@ -1,6 +1,10 @@
-# 🛡️ Tech — Managed Cybersecurity SaaS Platform
+# 🛡️ BanihalOrb — Managed Cybersecurity SaaS Platform
 
-Tech is a production-style, multi-tenant **B2B SaaS** platform for selling and managing **managed cybersecurity services** (SIEM, SOC, EDR, Zero Trust, DLP, and more). It pairs a hardened **Express + Prisma** API with a **Next.js 14** console, serving three audiences from one codebase: end users at client organizations, their organization admins, and the platform provider's administrators (a separate Control Plane).
+Product version: see [VERSION](VERSION). See [versioning and releases](docs/versioning.md) and the [changelog](CHANGELOG.md). Run `node scripts/version.mjs check` to verify synchronized metadata.
+
+Before pushing, review the [complete feature/update inventory and known limits](docs/pre-push/2026-11-06-feature-inventory.md).
+
+BanihalOrb is a production-style, multi-tenant **B2B SaaS** platform for selling and managing **managed cybersecurity services** (SIEM, SOC, EDR, Zero Trust, DLP, and more). It pairs a hardened **Express + Prisma** API with a **Next.js 14** console, serving three audiences from one codebase: end users at client organizations, their organization admins, and the platform provider's administrators (a separate Control Plane).
 
 ---
 
@@ -49,7 +53,7 @@ Tech is a production-style, multi-tenant **B2B SaaS** platform for selling and m
 ## 📁 Project Directory Structure
 
 ```
-B2B-Site/
+Banihal-Orb/
 ├── client/                 # Next.js 14 Web Console
 │   ├── public/             # Branding + logo assets
 │   ├── src/
@@ -148,3 +152,5 @@ Ensure you have **Node.js (v18+)** and **npm** installed, plus a running **Postg
 *   **Token Hashing**: refresh, reset, verification and trusted-device tokens are 32-64 CSPRNG bytes stored SHA-256 hashed, so redemption is an O(1) indexed lookup. Only passwords use bcrypt. Never store a generated token with a salted KDF — it forces a scan of every row to find one.
 *   **Secrets at Rest**: Slack bot tokens/webhooks and delivered AD credentials are encrypted with AES-256-GCM (`SLACK_TOKEN_SECRET`); JWT and impersonation secrets are validated (≥32 chars) at startup.
 *   **Robust Gitignores**: Environment files (`.env`, `.env*.local`), TLS keys (`*.pem`, `*.key`), Slack token files (`xapp-*`, `xoxb-*`), and local databases are excluded to prevent credential exposure.
+
+Squid WebUI integration: [API and host architecture](docs/squid-webui-api-architecture.md).

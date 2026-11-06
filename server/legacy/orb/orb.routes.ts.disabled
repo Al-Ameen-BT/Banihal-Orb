@@ -1,0 +1,141 @@
+import { Router, type Request, type Response } from 'express';
+import { z } from 'zod';
+import { ticketPrisma } from '../../config/ticketDatabase';
+
+const ActionEnum = z.enum(['allow', 'deny', 'extend', 'full-net', 'lock-net']);
+const TargetEnum = z.enum(['domain', 'ip', 'subnet']);
+
+const SquidChangeRequestSchema = z.object({
+  action: ActionEnum,
+  target: TargetEnum,
+  value: z.array(z.string().trim().min(1).max(255)).max(100),
+  reason: z.string().trim().max(2000).optional(),
+  executionPath: z.enum(['bundle', 'agent-command']),
+  assigneeId: z.string().regex(/^wrk_[A-Za-z0-9]+$/, 'Invalid squid bot assignee ID'),
+  requesterId: z.string().regex(/^usr_[A-Za-z0-9]+$/, 'Invalid requester ID'),
+});
+
+const router = Router();
+
+router.post(
+  '/squid/apply-change',
+  async (req: Request, res: Response): Promise<void> => {
+    'use strict';
+    try {
+      // Validate Orb key
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({
+          error: 'Provide an Orb API key: "Authorization: Bearer <orb-key>".',
+          code: 'MISSING_ORB_KEY',
+        });
+      }
+      const orbKey = authHeader.slice(7).trim();
+      const orbKeyMatch = orbKey.match(/^ort_([A-Fa-f0-9]{16})_([A-Za-z0-9]{32})$/);
+      if (!orbKeyMatch) {
+        return res.status(401).json({
+          error: 'Malformed Orb API key.',
+          code: 'MALFORMED_ORB_KEY',
+        });
+      }
+      const orbPrefix = orbKeyMatch[1];
+
+      // Validate Proxy key
+      const proxyKey = req.headers['x-proxy-key'] as string | undefined;
+      if (!proxyKey) {
+        return res.status(401).json({
+          error: 'Provide a Proxy API key: "X-Proxy-Key: btp_<prefix>_<secret>".',
+          code: 'MISSING_PROXY_KEY',
+        });
+      }
+      const proxyKeyMatch = proxyKey.match(/^btp_([A-Fa-f0-9]{12})_([A-Za-z0-9]{43})$/);
+      if (!proxyKeyMatch) {
+        return res.status(401).json({
+          error: 'Malformed Proxy API key.',
+          code: 'MALFORMED_PROXY_KEY',
+        });
+      }
+      const proxyPrefix = proxyKeyMatch[1];
+
+      // org matching: use proxy prefix as org identifier
+      const orgId = 'org-' + proxyPrefix;
+
+      if (!orgId || orgId === 'org-unknown') {
+        return res.status(403).json({
+          error: 'Organization could not be determined from API keys.',
+          code: 'ORG_UNKNOWN',
+        });
+      }
+
+      // Validate request body
+      const result = SquidChangeRequestSchema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({
+          error: 'Validation failed',
+          code: 'VALIDATION_ERROR',
+          details: result.error.errors.map((e: any) => ({
+            path: e.path.join('.'),
+            message: e.message,
+          })),
+        });
+      }
+
+      const body = result.data;
+      const { action, target, value, reason } = body;
+
+      // Create ticket
+      let createdTicket: any;
+      try {
+        createdTicket = await ticketPrisma.tickets.create({
+          data: {
+            title: 'Squid config change: ' + action + ' ' + target + ' ' + value.join(', '),
+            description: reason || 'Banihal orb requested ' + action + ' of ' + target + ' ' + value.join(', ') + ' for squid proxy',
+            type: 'squid-config-change' as const,
+            status: 'todo',
+            priority: 'medium',
+            assigneeId: body.assigneeId,
+            labels: ['pending:approval', 'squid:config-change'],
+            projectId: 'proj-proxy-management',
+            customerId: orgId,
+          },
+        });
+
+        await ticketPrisma.tickets.update({
+          where: { id: createdTicket.id },
+          data: {
+            labels: {
+              push: 'squid:config-change',
+            },
+          },
+        });
+      } catch (ticketError: any) {
+        return res.status(500).json({
+          error: 'Failed to create ticket in ticketing system.',
+          code: 'TICKET_CREATION_FAILED',
+          details: ticketError.message || String(ticketError),
+        });
+      }
+
+      const ticketStatus: string = createdTicket?.status || 'todo';
+      const response = {
+        ticketId: createdTicket?.id,
+        ticketNumber: createdTicket?.ticketNumber,
+        status: ticketStatus,
+        changeRequestId: createdTicket?.id,
+        orbStatus: 'pending_approval',
+        message: 'Change request created. Ticket pending approval.',
+      };
+
+      return res.status(201).json(response);
+    } catch (error: any) {
+      console.error('Orb squid apply-change handler fatal error:', error);
+      return res.status(500).json({
+        error: 'Internal server error',
+        code: 'INTERNAL_ERROR',
+        details: error.message || String(error),
+      });
+    }
+  }
+);
+
+export default router;

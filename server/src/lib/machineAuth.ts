@@ -23,6 +23,7 @@ import type { Request, RequestHandler, Response, NextFunction } from 'express';
 import { redis } from './redis';
 import { audit } from './audit';
 import type { AuditAction } from '../config/auditActions';
+import { canonicalMachineV2, machineIdentity, NONCE_RE, reserveNonce } from './machineProtocol';
 
 /** Consecutive bad-auth attempts after which the actor is force-disabled. */
 export const MAX_BAD_AUTH = 5;
@@ -59,6 +60,7 @@ export function verifyMachineSignature(input: {
   path: string; // req.originalUrl
   rawBody?: Buffer; // undefined for an empty/GET body
   nowMs?: number; // injectable clock for tests (defaults Date.now())
+  v2?: { actor: string; nonce: string };
 }): { ok: true } | { ok: false; code: 'BAD_TIMESTAMP' | 'BAD_SIGNATURE' | 'KEY_DIVERGED' } {
   const { tsMs, sig, secret, secretHash, method, path, rawBody, nowMs = Date.now() } = input;
 
@@ -82,7 +84,10 @@ export function verifyMachineSignature(input: {
     }
   }
 
-  const canonical = canonicalMachineString(String(tsMs), method, path, sha256Hex(rawBody ?? Buffer.alloc(0)));
+  const hash = sha256Hex(rawBody ?? Buffer.alloc(0));
+  const canonical = input.v2
+    ? canonicalMachineV2(input.v2.actor, String(tsMs), input.v2.nonce, method, path, hash)
+    : canonicalMachineString(String(tsMs), method, path, hash);
   const expected = crypto.createHmac('sha256', secret).update(canonical).digest();
   const sigBuf = Buffer.from(sig, 'hex');
   // hex-DECODE before comparing: any value that is not exactly the digest's
@@ -174,6 +179,8 @@ export interface MachineActor<TCtx> {
 }
 
 export interface MachineAuthConfig<TCtx> {
+  /** Enables certificate enrolment and version enforcement for real machine routers. */
+  actorKind?: 'proxy' | 'worker';
   actorIdOf: (req: Request) => string;
   /** 'X-Proxy-Timestamp' | 'X-Worker-Timestamp' — the factory reads and parses it (NaN-safe). */
   timestampHeader: string;
@@ -197,7 +204,7 @@ export interface MachineAuthConfig<TCtx> {
    */
   auditAction: AuditAction;
   /** Disable the actor after MAX_BAD_AUTH consecutive bad signatures. */
-  onBruteForceDisable: (actorId: string) => Promise<void>;
+  onBruteForceDisable?: (actorId: string) => Promise<void>;
 }
 
 /**
@@ -228,6 +235,15 @@ export function createMachineKeyAuth<TCtx>(cfg: MachineAuthConfig<TCtx>): Reques
       const actor = await cfg.loadActor(actorId);
       if (!actor || actor.keyMissing || !actor.secret) { res401(cfg.keyMissingCode ?? cfg.authFailedCode); return; }
 
+      const identity = cfg.actorKind ? await machineIdentity(req, `${cfg.actorKind}:${actorId}`) : { minVersion: 1 };
+      if (!identity) { res401(cfg.authFailedCode); return; }
+      const version = req.get('X-Machine-Version') ?? '1';
+      const nonce = req.get('X-Machine-Nonce') ?? '';
+      if (!['1', '2'].includes(version) || Number(version) < identity.minVersion ||
+          (version === '2' && (!cfg.actorKind || !NONCE_RE.test(nonce)))) {
+        res401(cfg.authFailedCode); return;
+      }
+
       const verdict = verifyMachineSignature({
         tsMs: ts,
         sig,
@@ -236,6 +252,7 @@ export function createMachineKeyAuth<TCtx>(cfg: MachineAuthConfig<TCtx>): Reques
         method: req.method,
         path: req.originalUrl,
         rawBody: (req as { rawBody?: Buffer }).rawBody,
+        v2: version === '2' ? { actor: `${cfg.actorKind}:${actorId}`, nonce } : undefined,
       });
 
       if (!verdict.ok) {
@@ -259,7 +276,8 @@ export function createMachineKeyAuth<TCtx>(cfg: MachineAuthConfig<TCtx>): Reques
               metadata: { reason: 'signature mismatch', ip: req.ip, attempts },
             }).catch(() => undefined);
           }
-          if (attempts >= MAX_BAD_AUTH) {
+          // A forged actor ID must never let unauthenticated traffic disable a real host.
+          if (!cfg.actorKind && cfg.onBruteForceDisable && attempts >= MAX_BAD_AUTH) {
             await badAuthCounter.reset(actorId);
             await cfg.onBruteForceDisable(actorId);
           }
@@ -268,7 +286,18 @@ export function createMachineKeyAuth<TCtx>(cfg: MachineAuthConfig<TCtx>): Reques
         return;
       }
 
+      if (version === '2') {
+        try {
+          if (!await reserveNonce(`${cfg.actorKind}:${actorId}`, nonce)) { res401('REPLAY_REJECTED'); return; }
+        } catch {
+          res.setHeader('Retry-After', '30');
+          res.status(503).json({ error: 'Replay protection unavailable', code: 'MACHINE_SECURITY_UNAVAILABLE' });
+          return;
+        }
+      }
+
       await badAuthCounter.reset(actorId);
+      res.setHeader('Cache-Control', 'no-store');
       (req as Request & Record<string, unknown>)[cfg.reqKey] = actor.context;
       next();
     } catch {

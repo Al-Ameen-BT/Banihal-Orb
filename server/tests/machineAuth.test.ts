@@ -222,6 +222,7 @@ function stubReq(headers: Record<string, string | undefined>, url: string, metho
 
 function stubRes(): Response & { body?: unknown; statusCode: number; locals: Record<string, unknown> } {
   const res = { locals: {} as Record<string, unknown>, statusCode: 0, body: undefined as unknown };
+  (res as any).setHeader = vi.fn();
   (res as { status: (c: number) => unknown }).status = (c: number) => { res.statusCode = c; return res; };
   (res as { json: (x: unknown) => unknown }).json = (x: unknown) => { res.body = x; return res; };
   return res as Response & { body?: unknown; statusCode: number; locals: Record<string, unknown> };

@@ -2,7 +2,8 @@ name: CI/CD
 
 on:
   push:
-    branches: [main]
+    branches: [main, "dev/**"]
+    tags: ['v*']
   pull_request:
     branches: [main]
 
@@ -12,10 +13,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  version-check:
+    name: Product version consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Check version metadata and release tag
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$REF_TYPE" = tag ]; then
+            node scripts/version.mjs check --tag "$REF_NAME"
+          else
+            node scripts/version.mjs check
+          fi
+      - name: Version tooling tests
+        run: node scripts/version.test.mjs
   # ──────────────────────────────────────────────────────────────────────────
   # Server — TypeScript type-check + unit tests
   # ──────────────────────────────────────────────────────────────────────────
   server-check:
+    needs: version-check
     name: Server — typecheck & test
     runs-on: ubuntu-latest
 
@@ -53,7 +75,7 @@ jobs:
       # and let the DB-dependent failures turn the pipeline permanently red —
       # a red pipeline nobody trusts is worse than a narrow green one.
       - name: Unit tests
-        run: npx vitest run tests/cache.test.ts tests/dashboard-aggregate.test.ts tests/agent-signing.test.ts tests/uploads.test.ts tests/permissions.test.ts tests/security-headers.test.ts
+        run: npx vitest run tests/cache.test.ts tests/dashboard-aggregate.test.ts tests/agent-signing.test.ts tests/uploads.test.ts tests/permissions.test.ts tests/security-headers.test.ts tests/machine-protocol-v2.test.ts tests/machineAuth.test.ts tests/squid-agent-hmac.test.ts tests/squid-automation.test.ts tests/squid-control-routes.test.ts tests/squid-dispatch-safety.test.ts tests/squid-human-surface.test.ts tests/squid-acl-engine.test.ts
         # config/env.ts validates the whole environment at IMPORT and calls
         # process.exit(1) when it fails. `.env` is gitignored, so on a runner every
         # test file that transitively imports it dies before a single assertion
@@ -105,31 +127,16 @@ jobs:
           # real value is inlined at image build time from /etc/b2b/client.env.
           NEXT_PUBLIC_API_URL: http://localhost:3001
 
-  # ──────────────────────────────────────────────────────────────────────────
-  # Squid — D7 layered-config seam: installer + precedence fixture (C1/C2)
-  # ──────────────────────────────────────────────────────────────────────────
-  # The seam decides which config layer wins (first match in squid.conf):
-  # platform acls → bot conf.d → the ONE host deny-all. A regression here can
-  # silently open the proxy, so the fixture builds the whole stack, runs the
-  # real installer twice (idempotence + legacy-glob absorption), and parses
-  # it with a real squid binary. FORCE_SQUID_PARSE=1 makes a missing squid a
-  # failure instead of a silent skip.
-  squid-seam:
-    name: Squid seam — installer fixture
+  squid-host:
+    name: Squid host package — safety tests
     runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: squid/squid-bot
-
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install squid (real `squid -k parse` gate)
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends squid
-
-      - name: Precedence fixture (install-seam + parse + idempotence)
-        run: FORCE_SQUID_PARSE=1 bash tests/precedence-fixture.sh
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install cryptography flask
+      - run: python -m unittest discover -s deploy/squid -p 'test_*.py' -v
 
   # ──────────────────────────────────────────────────────────────────────────
   # Images — prove the Containerfiles still build
@@ -140,7 +147,7 @@ jobs:
   images:
     name: Container images — build
     runs-on: ubuntu-latest
-    needs: [server-check, client-check]
+    needs: [server-check, client-check, squid-host]
 
     steps:
       - uses: actions/checkout@v4

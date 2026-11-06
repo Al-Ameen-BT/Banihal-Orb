@@ -199,7 +199,7 @@ function ChatPageInner() {
           {/* Header */}
           <div className="px-8 pt-8 pb-4 flex-shrink-0">
             <div className="max-w-[1600px] mx-auto w-full">
-              <PageHeader eyebrow="AI Assistant" title="Tech Assistant" icon={icons.chat}
+              <PageHeader eyebrow="AI Assistant" title="BanihalOrb Assistant" icon={icons.chat}
                 subtitle={resumeId
                   ? 'Resuming a saved conversation — your messages continue to be saved to history.'
                   : 'Describe an IT issue — printer, AD, proxy, VPN — or ask anything; conversations are saved to your history.'} />

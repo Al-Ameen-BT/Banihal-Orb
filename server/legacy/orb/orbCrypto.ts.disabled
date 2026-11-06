@@ -1,0 +1,83 @@
+import { env } from './env';
+import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
+
+// ─── Orb Key Format ──────────────────────────────────────────────────────────
+// Orb keys are: ort_<16-hex-prefix>_<32-char-secret>
+// The 16-char hex prefix is PUBLIC — used to identify which org/orb deployment this key belongs to.
+// The 32-char secret is a shared secret between platform and orb.
+// The secret itself is NOT encrypted at presentation time; it is a shared secret.
+// Encryption (AES-256-GCM) is only for storage in the DB via ORB_TOKEN_SECRET.
+
+// The format of the full Orb key presented by the orb:
+//   Authorization: Bearer ort_<16hex>_<32alpha>
+//   or  X-Orb-Key: ort_<16hex>_<32alpha>
+
+// ─── Utility: base64 encode/decode using Node.js Buffer ───────────────────────
+// We use Node.js Buffer instead of the base64-js module to avoid type issues.
+// Node's Buffer.toString('base64') and Buffer.from() provide the same functionality.
+
+function b64Encode(input: string | Buffer): string {
+  if (typeof input === 'string') {
+    return Buffer.from(input, 'utf8').toString('base64');
+  }
+  return input.toString('base64');
+}
+
+function b64Decode(input: string): Buffer {
+  return Buffer.from(input, 'base64');
+}
+
+// ─── Generate a new Orb key pair ────────────────────────────────────────────
+// Generates a 16-char hex prefix + 32-char alphanumeric secret.
+// The secret is the shared secret; the prefix identifies the org deployment.
+// The full key format: ort_<16hex>_<32alpha>
+// The secret is encrypted via AES-256-GCM using ORB_TOKEN_SECRET for DB storage.
+
+function generateAlphanumeric(len: number): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let result = '';
+  for (let i = 0; i < len; i++) {
+    result += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return result;
+}
+
+export function generateOrbKey(): { plaintext: string; prefix: string } {
+  const prefix = randomBytes(8).toString('hex'); // 16 hex chars
+  const secret = generateAlphanumeric(32); // 32 alphanumeric chars
+  const plaintext = `ort_${prefix}_${secret}`;
+  return { plaintext, prefix };
+}
+
+// ─── Decrypt an Orb key's secret (called when platform receives the key) ─────
+// The presented key has format: ort_<16hex>_<32alpha>
+// The 32alpha is the PLAINTEXT secret (shared between platform and orb).
+// No decryption needed - we just validate the format and use the secret directly.
+// The "decryption" in the original design was for AES-256-GCM storage, but the
+// presented key contains the plaintext secret for shared-secret authentication.
+
+export function validateOrbKeyFormat(orbKey: string): { success: boolean; prefix?: string; secret?: string } {
+  const match = orbKey.match(/^ort_([A-Fa-f0-9]{16})_([A-Za-z0-9]{32})$/);
+  if (!match) {
+    return { success: false };
+  }
+  return {
+    success: true,
+    prefix: match[1],
+    secret: match[2],
+  };
+}
+
+// ─── Verify the presented secret matches the org's stored secret ────────────
+// The org stores the plaintext 32-char secret (same format as presented).
+// We compare the presented secret with the stored one for that org.
+// This is a shared-secret proof, not public-key crypto.
+
+export function verifyOrbSecret(presentedSecret: string, storedSecret: string): boolean {
+  if (!presentedSecret || !storedSecret) return false;
+  if (presentedSecret.length !== 32 || storedSecret.length !== 32) return false;
+  // Constant-time comparison to prevent timing attacks
+  if (presentedSecret === storedSecret) return true;
+  // Also try case-insensitive compare as fallback
+  return presentedSecret.toLowerCase() === storedSecret.toLowerCase();
+}

@@ -186,52 +186,36 @@ export const adSecretsApi = {
   reveal: (id: string) => api.post(`/ad-secrets/${id}/reveal`),
 };
 
-// Squid outbound proxies — ORG-facing (this org's proxies + their ACL config).
-// All writes bump the bundle revision; a pull-based agent applies it on next poll.
+// Squid connections and approval-ticket requests; no human configuration API.
 export const squidApi = {
+  requestChange: (id: string, data: unknown) => api.post(`/squid/${id}/change-requests`, data),
+  automation: (id: string) => api.get(`/squid/${id}/automation`),
+  pauseAutomation: (id: string, paused: boolean, reason: string) => api.post(`/squid/${id}/automation`, { paused, reason }),
   list: (params?: Record<string, unknown>) => api.get('/squid', { params }),
-  create: (data: { name: string; description?: string; transport?: string }) => api.post('/squid', data),
-  get: (id: string) => api.get(`/squid/${id}`),
-  update: (id: string, data: unknown) => api.patch(`/squid/${id}`, data),
-  remove: (id: string) => api.delete(`/squid/${id}`),
   rotateKey: (id: string) => api.post(`/squid/${id}/rotate-key`),
   verifyToken: (id: string, token: string) => api.post(`/squid/${id}/verify-token`, { token }),
   bundlePublicKey: () => api.get('/squid/bundle-key'),
-  listBranches: (id: string) => api.get(`/squid/${id}/branches`),
-  createBranch: (id: string, data: { name: string; description?: string; mode?: string }) => api.post(`/squid/${id}/branches`, data),
-  updateBranch: (id: string, branchId: string, data: unknown) => api.patch(`/squid/${id}/branches/${branchId}`, data),
-  deleteBranch: (id: string, branchId: string) => api.delete(`/squid/${id}/branches/${branchId}`),
-  setBranchLists: (id: string, branchId: string, data: { sources: string[]; whitelist: { value: string; subdomain: boolean }[]; blacklist: { value: string; subdomain: boolean }[] }) =>
-    api.put(`/squid/${id}/branches/${branchId}/lists`, data),
-  setPorts: (id: string, data: { safePorts?: string[]; sslPorts?: string[]; fullAccess?: unknown[] }) => api.put(`/squid/${id}/ports`, data),
-  setFullAccess: (id: string, data: unknown) => api.put(`/squid/${id}/full-access`, data),
   listChangeRequests: (id: string) => api.get(`/squid/${id}/change-requests`),
-  telemetry: (id: string) => api.get(`/squid/${id}/telemetry`),
-  activity: (id: string, params?: Record<string, unknown>) => api.get(`/squid/${id}/activity`, { params }),
-  reportUrl: (id: string, days = 7) => `/api/squid/${id}/report.csv?days=${days}`,
-  report: (id: string, days = 7) => api.get(`/squid/${id}/report.csv`, { params: { days }, responseType: 'text' }),
-  dependencyScan: (id: string, data: { url: string; branchId?: string }) => api.post(`/squid/${id}/dependency-scan`, data),
 };
 
 // Squid proxies — STAFF console (cross-tenant read/manage).
 export const squidAdminApi = {
+  clients: () => api.get('/saas-admin/squid/clients'),
+  requestChange: (id: string, data: unknown) => api.post(`/saas-admin/squid/${id}/change-requests`, data),
+  automation: (id: string) => api.get(`/saas-admin/squid/${id}/automation`),
+  pauseAutomation: (id: string, paused: boolean, reason: string) => api.post(`/saas-admin/squid/${id}/automation`, { paused, reason }),
+  pauseClient: (id: string, paused: boolean, reason: string) => api.post(`/saas-admin/squid/clients/${id}/automation`, { paused, reason }),
+  pauseGlobal: (paused: boolean, reason: string) => api.post('/saas-admin/squid/automation/global', { paused, reason }),
+  enroll: (id: string, certificateSha256: string, enabled = true) => api.post(`/saas-admin/squid/${id}/machine-identity`, { certificateSha256, enabled }),
   list: (params?: Record<string, unknown>) => api.get('/saas-admin/squid', { params }),
-  get: (id: string) => api.get(`/saas-admin/squid/${id}`),
   rotateKey: (id: string) => api.post(`/saas-admin/squid/${id}/rotate-key`),
-  lock: (id: string) => api.post(`/saas-admin/squid/${id}/lock`),
   enable: (id: string) => api.post(`/saas-admin/squid/${id}/enable`),
   provision: (data: { customerId: string; name: string; customerServiceId?: string }) => api.post('/saas-admin/squid/provision', data),
-  reassign: (id: string, customerId: string) => api.post(`/saas-admin/squid/${id}/reassign`, { customerId }),
   disable: (id: string, reason?: string) => api.post(`/saas-admin/squid/${id}/disable`, { reason }),
   delete: (id: string) => api.delete(`/saas-admin/squid/${id}`),
-  reload: (id: string) => api.post(`/saas-admin/squid/${id}/reload`),
-  restart: (id: string) => api.post(`/saas-admin/squid/${id}/restart`),
-  rescan: (id: string) => api.post(`/saas-admin/squid/${id}/rescan`),
-  telemetry: (id: string) => api.get(`/saas-admin/squid/${id}/telemetry`),
   changeRequests: (id: string) => api.get(`/saas-admin/squid/${id}/change-requests`),
-  bandwidth: (id: string, minutes?: number) => api.get(`/saas-admin/squid/${id}/bandwidth`, { params: { minutes } }),
-  certificates: (id: string) => api.get(`/saas-admin/squid/${id}/certificates`),
 };
+
 
 // External ticketing API — ADMINISTRATOR registry: machine keys + delivery webhooks.
 // Key secrets and webhook secrets come back EXACTLY ONCE on creation (no read path).

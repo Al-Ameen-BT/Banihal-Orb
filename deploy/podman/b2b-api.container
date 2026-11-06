@@ -17,6 +17,7 @@ Pod=b2b-app.pod
 EnvironmentFile=/etc/b2b/server.env
 Environment=NODE_ENV=production
 Environment=PORT=3001
+Environment=BIND_HOST=0.0.0.0
 
 # Hostnames resolved by aardvark-dns on the b2b network. Set the matching
 # DATABASE_URL / REDIS_URL in /etc/b2b/server.env, e.g.

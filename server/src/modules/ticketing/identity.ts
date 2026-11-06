@@ -4,7 +4,7 @@ import { getTicketDb, getTicketDbScope } from '../../config/ticketDatabase';
 import { BOT_EMAIL_DOMAIN } from './ticketing.client';
 
 // ─── Identity bridge ─────────────────────────────────────────────────────────
-// The B2B-Site login is the source of truth. The full ticketing schema has its
+// The BanihalOrb login is the source of truth. The full ticketing schema has its
 // OWN Users table (admin/manager/developer/tester) referenced by reporterId /
 // assigneeId / createdBy / Activities.userId. We lazily upsert a ticketing Users
 // row for each B2B user (keyed by email) and map the platform role onto a
@@ -41,7 +41,7 @@ export interface TicketActor {
 }
 
 /**
- * Resolve (and lazily provision) the ticketing Users row for a B2B-Site user.
+ * Resolve (and lazily provision) the ticketing Users row for a BanihalOrb user.
  * Returns the ticketing user id + mapped staff role.
  */
 export async function resolveTicketActor(b2bUserId: string, platformRole: Role): Promise<TicketActor> {
@@ -72,8 +72,8 @@ export async function resolveTicketActor(b2bUserId: string, platformRole: Role):
   return { id: row.id, role };
 }
 
-// ─── Reverse bridge: ticketing Users.id → B2B-Site account ───────────────────
-// Web Push is addressed to a B2B-Site account (userId + tenantId), but ticketing
+// ─── Reverse bridge: ticketing Users.id → BanihalOrb account ───────────────────
+// Web Push is addressed to a BanihalOrb account (userId + tenantId), but ticketing
 // only ever knows its own Users.id. Map back through email — the same key the
 // forward bridge above uses. Rows with no human behind them (Slack bots, staff
 // created natively in the ticketing system) simply resolve to null.

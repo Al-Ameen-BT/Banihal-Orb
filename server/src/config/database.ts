@@ -38,7 +38,7 @@ function buildPrisma() {
           // credentials, same rule.
           const globalModels = ['FeatureFlag', 'Customer', 'RefreshToken', 'Announcement', 'TicketNumberSetting', 'SlackBot', 'SlackBotFormField', 'TrustedDevice', 'PushSubscription', 'PlatformRole', 'ExternalApiKey', 'ExternalWebhook'];
 
-          if (store?.customerId && scopedOps.includes(operation) && !globalModels.includes(model)) {
+          if (store?.customerId && scopedOps.includes(operation) && !globalModels.includes(model) && !['MachineIdentity', 'SquidAutomationControl'].includes(model)) {
             const existingWhere = (args['where'] as Record<string, unknown>) ?? {};
             args = { ...args, where: { ...existingWhere, customerId: store.customerId } };
           }

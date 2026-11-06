@@ -83,6 +83,7 @@ export default function ClientsPage() {
 
             <PageHeader eyebrow="Platform" title="Clients" icon={icons.clients}
               subtitle="Everyone in your client organizations, grouped by company." />
+            {can('squid.view') && <Link href="/squid" className="inline-flex text-sm font-semibold text-brand underline underline-offset-4">Manage client proxies and Squid tickets</Link>}
 
             {!canManageUsers ? (
               // RoleGuard admits any ADMINISTRATOR; the roster needs its own key,
@@ -145,6 +146,7 @@ export default function ClientsPage() {
                                 <span className="ml-1.5 font-normal text-slate-400">→</span>
                               </Link>
                               <span className="text-[11px] text-slate-400 tabular-nums flex-shrink-0">
+                                {can('squid.view') && <Link href={`/squid?clientId=${encodeURIComponent(org.id)}`} className="mr-3 text-brand underline underline-offset-4">Proxies & tickets</Link>}
                                 {users.length} {users.length === 1 ? 'person' : 'people'}
                               </span>
                             </header>

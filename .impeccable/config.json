@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          "client/src/components/ui/Sidebar.tsx"
+        ],
+        "createdAt": "2026-11-06T09:00:18.709Z",
+        "reason": "Codex review: the existing sign-out button pairs hover:bg-red-50 with hover:text-red-600; default slate text is on a neutral surface."
+      }
+    ]
+  }
+}

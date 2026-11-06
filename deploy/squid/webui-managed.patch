@@ -1,0 +1,52 @@
+--- a/app.py
++++ b/app.py
+@@ -1179,6 +1179,8 @@
+ 
+ 
+ def generate_conf():
++    if os.environ.get("PLATFORM_MANAGED") == "true":
++        return  # The platform writer owns the generated include in managed mode.
+     """Write the single squid include file with all GUI-managed rules.
+ 
+     ORDERING GUARANTEE (security-critical): rules are emitted most-specific
+@@ -1416,6 +1418,8 @@
+ 
+ 
+ def heal_branches(data):
++    if os.environ.get("PLATFORM_MANAGED") == "true":
++        return data  # Read-only pages must not rewrite platform-owned ACLs.
+     """Ensure every branch has valid whitelist/blacklist paths. Persists fixes."""
+     changed = False
+     for name in phantom_gen_branches(data):
+@@ -3855,6 +3859,9 @@
+ _api_v1.init_deps(_ApiDeps())
+ app.register_blueprint(_api_v1.bp)
+ 
++import managed_mode as _managed_mode
++_managed_mode.install(app)
++
+ 
+ def _api_high_risk_guard():
+     """Refuse to start with a high-risk scope in the key table if the
+@@ -3877,8 +3884,9 @@
+ 
+ 
+ try:
+-    scheduler.start(app, load_settings, _scheduled_backup_job, _daily_checks,
+-                    run_dr_sync=lambda: dr_push("periodic"))
++    if os.environ.get("PLATFORM_MANAGED") != "true":
++        scheduler.start(app, load_settings, _scheduled_backup_job, _daily_checks,
++                        run_dr_sync=lambda: dr_push("periodic"))
+ except Exception as e:
+     print(f"[warn] scheduler did not start: {e}")
+ 
+--- a/config.py
++++ b/config.py
+@@ -147,3 +147,7 @@
+ APP_SUBTITLE = "proxy control panel"
+ SETTINGS_FILE = os.path.join(BASE_DIR, "settings.json")
+ DEPLIST_DIR   = os.path.join(BASE_DIR, "deplists")  # dependency-finder category lists
++
++# Platform-managed hosts expose no public WebUI backend listener.
++if os.environ.get("PLATFORM_MANAGED") == "true":
++    LISTEN_HOST = "127.0.0.1"

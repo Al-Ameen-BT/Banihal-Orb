@@ -1217,7 +1217,7 @@ export default function AdminTicketing() {
   return (
     <div className="p-6 sm:p-8 max-w-[1600px] mx-auto space-y-6">
       {user?.role === 'ADMINISTRATOR' ? (
-        <PageHeader eyebrow="Ticketing · Banihal Orb" title="Ticketing of Banihaltechnologies"
+        <PageHeader eyebrow="Ticketing · BanihalOrb" title="BanihalOrb Ticketing"
           subtitle="Manage escalations from client organizations plus tickets." icon={Icons.board({ className: 'w-6 h-6' })} />
       ) : (
         <PageHeader eyebrow="Ticketing · Control System" title="Ticketing Dashboard"

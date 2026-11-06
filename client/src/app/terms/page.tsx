@@ -1,8 +1,8 @@
 import LegalDoc from '@/components/LegalDoc';
 
 export const metadata = {
-  title: 'Terms and Conditions · Banihal Technologies',
-  description: 'Terms and Conditions for the Banihal Technologies platform.',
+  title: 'Terms and Conditions · BanihalOrb',
+  description: 'Terms and Conditions for the BanihalOrb platform.',
 };
 
 export default function TermsPage() {

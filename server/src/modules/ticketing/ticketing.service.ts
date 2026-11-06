@@ -15,6 +15,38 @@ import type { z } from 'zod';
 import type { CreateTicketSchema, UpdateTicketSchema, CreateProjectSchema, UpdateProjectSchema, CreateSlaSchema } from './ticketing.schema';
 import type { TicketDTO, ProjectDTO, SlaDTO, TicketFilters, TicketPriority } from './ticketing.types';
 
+// ─── Lifecycle hook registry for ticket approval ────────────────────────────
+// Registered modules can hook into ticket approval to execute side effects.
+// The executor from the squid module is registered at bootstrap.
+let onTicketApprovedHandlers: ((ticket: TicketDTO) => Promise<void>)[] = [];
+
+/**
+ * Register a handler that runs after a ticket with labels
+ * `['pending:approval', 'squid:config-change']` is approved.
+ * The handler receives the full TicketDTO and should execute the change,
+ * and must wait for a matching host acknowledgement before reporting execution.
+ */
+export function registerOnTicketApproved(handler: (ticket: TicketDTO) => Promise<void>): void {
+  onTicketApprovedHandlers.push(handler);
+}
+
+/**
+ * Execute all registered on-approved handlers for a ticket.
+ * Called after a successful approveTicket transition.
+ * Consumers claim their own durable change records; approval is not execution.
+ */
+async function executeOnTicketApproved(ticket: TicketDTO): Promise<void> {
+  // Run all registered handlers
+  for (const handler of onTicketApprovedHandlers) {
+    try {
+      await handler(ticket);
+    } catch (err) {
+      console.error(`On-approved handler failed for ticket ${ticket.id}:`, err);
+      // Continue running other handlers even if one fails
+    }
+  }
+}
+
 // Tenant-scoping guards for the ticket store (close the cross-org IDOR).
 export { ticketAccessScope, assertTicketAccess, assertAttachmentAccess } from './access';
 
@@ -236,7 +268,11 @@ export async function approveTicket(ticketId: string, actorTicketUserId: string)
     { status: 409, code: 'TICKET_ALREADY_DECIDED' },
   );
   await db.writeActivity({ type: 'status_changed', ticketId, userId: actorTicketUserId, field: 'status', oldValue: 'todo', newValue: 'in_progress' });
-  return (await db.getTicketById(ticketId))!;
+  // Execute on-approved handlers (e.g., squid config change execution from Orb API)
+  const ticket = await db.getTicketById(ticketId);
+  if (!ticket) throw notFound('Ticket');
+  await executeOnTicketApproved(ticket);
+  return ticket;
 }
 
 export async function declineTicket(ticketId: string, actorTicketUserId: string, reason: string | null): Promise<TicketDTO> {
@@ -448,7 +484,7 @@ async function deliverMentions(args: {
   mentions: string[]; actorB2bUserId: string;
 }): Promise<void> {
   try {
-    // GUARD 1 — PLATFORM USERS ONLY. Mentions address B2B-Site accounts, so the
+    // GUARD 1 — PLATFORM USERS ONLY. Mentions address BanihalOrb accounts, so the
     // candidate must resolve to one. `resolveB2bIdentity` joins the ticket-store
     // user to the platform users list BY EMAIL and returns null for bots and for
     // ticketing staff without a B2B account — those simply cannot be mentioned.

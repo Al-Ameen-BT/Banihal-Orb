@@ -10,6 +10,7 @@ import { env } from '../../config/env';
 // frame so crypto.createPrivateKey accepts it.
 function seed(): Buffer {
   const raw = env.SQUID_SIGNING_PRIVATE_KEY;
+  if (env.NODE_ENV === 'production' && !raw) throw new Error('SQUID_SIGNING_PRIVATE_KEY is required in production');
   const hex = raw ?? crypto.createHash('sha256').update(env.SLACK_TOKEN_SECRET ?? env.JWT_ACCESS_SECRET).digest('hex');
   if (!raw && env.NODE_ENV !== 'test') {
     // Deterministic-from-env fallback: fine for a dev box, wrong for prod. The
@@ -26,17 +27,17 @@ function signingKey(): crypto.KeyObject {
 }
 
 /** Deterministic canonical form of a bundle → the bytes that get signed. */
-export function canonicalBundle(seq: number, files: Array<{ path: string; content: string }>): string {
-  return JSON.stringify({ seq, files });
+export function canonicalBundle(seq: number, files: Array<{ path: string; content: string }>, proxyId?: string): string {
+  return JSON.stringify(proxyId ? { protocol: 2, proxyId, seq, files } : { seq, files });
 }
 
-export function signBundle(seq: number, files: Array<{ path: string; content: string }>): string {
-  return crypto.sign(null, Buffer.from(canonicalBundle(seq, files), 'utf8'), signingKey()).toString('base64');
+export function signBundle(seq: number, files: Array<{ path: string; content: string }>, proxyId?: string): string {
+  return crypto.sign(null, Buffer.from(canonicalBundle(seq, files, proxyId), 'utf8'), signingKey()).toString('base64');
 }
 
-export function verifyBundle(seq: number, files: Array<{ path: string; content: string }>, signature: string, publicKeyPem: string): boolean {
+export function verifyBundle(seq: number, files: Array<{ path: string; content: string }>, signature: string, publicKeyPem: string, proxyId?: string): boolean {
   try {
-    return crypto.verify(null, Buffer.from(canonicalBundle(seq, files), 'utf8'), crypto.createPublicKey(publicKeyPem), Buffer.from(signature, 'base64'));
+    return crypto.verify(null, Buffer.from(canonicalBundle(seq, files, proxyId), 'utf8'), crypto.createPublicKey(publicKeyPem), Buffer.from(signature, 'base64'));
   } catch {
     return false;
   }

@@ -59,6 +59,7 @@ export type MessageInput = z.infer<typeof MessageSchema>;
 export const BOT_COMMAND_TYPES = ['allow', 'deny', 'extend', 'full-net', 'lock-net'] as const;
 
 export const RequestSchema = z.object({
+  requestKey: z.string().uuid().optional(),
   instanceId: z.string().min(8).max(128).optional(),
   type: z.enum(BOT_COMMAND_TYPES),
   payload: z.object({

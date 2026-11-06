@@ -664,6 +664,26 @@ model BotTicketSubmission {
 // is the SHA-256 constant-time lookup index, regKeyEncrypted holds the raw key
 // (AES-256-GCM) so each request's HMAC signature can be verified; appliedSeq is
 // the agent's monotonic ack watermark.
+model MachineIdentity {
+  id                String   @id
+  certificateSha256 String   @unique
+  minVersion        Int      @default(2)
+  enabled           Boolean  @default(true)
+  updatedAt         DateTime @updatedAt
+
+  @@map("machineIdentities")
+}
+
+model SquidAutomationControl {
+  id        String   @id
+  paused    Boolean  @default(false)
+  reason    String
+  actorId   String
+  updatedAt DateTime @updatedAt
+
+  @@map("squidAutomationControls")
+}
+
 model SquidProxy {
   id                   String           @id @default(cuid())
   customerId           String
@@ -770,6 +790,8 @@ model SquidChangeRequest {
   ticketUrl     String?
   status        SquidChangeStatus   @default(PENDING_APPROVAL)
   appliedSeq    Int?
+  targetRevision Int?
+  idempotencyKey String? @unique
   error         String?
   createdAt     DateTime            @default(now())
   updatedAt     DateTime            @updatedAt

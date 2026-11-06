@@ -17,3 +17,9 @@ backup/
 .agents
 # Only ignore the bot folder, not the server module directory
 squid/squid-bot/
+
+# SDD scratch workspaces
+.superpowers/
+# Host package Python bytecode is generated locally by validation.
+__pycache__/
+*.pyc

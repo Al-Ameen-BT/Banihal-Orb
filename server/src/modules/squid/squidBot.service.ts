@@ -1,3 +1,4 @@
+import { automationState, setAutomationPause } from './squidAutomation';
 import { isIP } from 'net';
 import { prisma } from '../../config/database';
 import { audit } from '../../lib/audit';
@@ -101,10 +102,11 @@ async function submitChange(args: {
   action: BotChangeAction;
   payload: Payload;
   reason?: string | undefined;
+  requestKey?: string;
   requester: Requester;
 }): Promise<{ id: string; ticketId: string | null; ticketUrl: string | null; status: string }> {
   const proxy = await loadProxy(args.proxyId); // 404 + tenant-scoped
-  assertUnlocked(proxy);                       // 423 read-only while locked
+  await assertUnlocked(proxy);                       // 423 read-only while locked
 
   // A `domain` that parses as an IP is the bot's destination-IP form — the bot
   // derives this itself (is_destination_ip), we just mirror it back on the wire.
@@ -119,6 +121,7 @@ async function submitChange(args: {
     source: args.source,
     action,
     summary,
+    idempotencyKey: args.requestKey ? `${args.actorId ?? `slack:${args.proxyId}:${args.requester.slackUserId}`}:${args.requestKey}` : undefined,
     details: {
       ...args.payload,
       isDestIp,
@@ -184,6 +187,7 @@ export async function squidBotRequest(botId: string, input: RequestInput): Promi
     source: 'SLACK',
     via: 'slack-host-worker',
     action: input.type,
+    requestKey: input.requestKey,
     payload: input.payload,
     requester: {
       kind: 'slack',
@@ -200,7 +204,7 @@ export async function squidBotRequest(botId: string, input: RequestInput): Promi
 export async function requestProxyChange(
   proxyId: string,
   actor: { id: string; customerId: string },
-  input: BotChangeBodyInput,
+  input: BotChangeBodyInput & { requestKey?: string },
 ): Promise<ChangeReceipt> {
   // Ownership check like streamChangeRequests — an ORG_ADMIN must not be able
   // to aim a request at another org's proxy even with a valid session.
@@ -221,6 +225,7 @@ export async function requestProxyChange(
     action: input.action,
     payload: { ip: input.ip, domain: input.domain, hours: input.hours },
     reason: input.reason,
+    requestKey: input.requestKey,
     requester: { kind: 'web', userId: actor.id, name: user?.name, email: user?.email },
   });
   return receipt(cr);
@@ -491,14 +496,15 @@ export async function squidBotState(botId: string, input: StateInput): Promise<S
     }).catch(() => undefined);
   }
 
-  if (scope) {
+  const automation = scope ? await automationState(scope.proxyId, scope.customerId) : { paused: true };
+  if (scope && !automation.paused) {
     await syncBotChangeRequests({ customerId: scope.customerId })
       .catch((e) => console.error('⚠️  Squid bot sync pass failed:', e instanceof Error ? e.message : e));
     await timeoutStaleCommands(botId, scope)
       .catch((e) => console.error('⚠️  Squid bot timeout pass failed:', e instanceof Error ? e.message : e));
   }
 
-  const deliverable = await claimCommandsForDelivery(botId);
+  const deliverable = automation.paused ? [] : await claimCommandsForDelivery(botId, 1);
   return {
     ok: true,
     command: null,
@@ -542,6 +548,7 @@ export async function squidBotCommandResult(botId: string, input: CommandResultI
       );
     }
     if (!input.ok) {
+      await setAutomationPause(`proxy:${outcome.command.proxyId}`, true, 'Host bot apply failed; inspect the host before resuming', 'system:apply');
       await notifyAdminsOfProxy(
         outcome.command.customerId,
         `❌ Squid host bot failed a ${wire} command — operator attention needed.`,

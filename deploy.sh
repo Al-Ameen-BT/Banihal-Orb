@@ -93,6 +93,8 @@ run_as_owner() {
 }
 
 # --- 6. Application Preparation & Compilation ---
+echo "🔎 Checking product version consistency..."
+run_as_owner "node scripts/version.mjs check" "$PROJECT_DIR"
 echo "📦 Preparing backend application..."
 run_as_owner "npm ci || npm install" "$SERVER_DIR"
 run_as_owner "npm run db:generate" "$SERVER_DIR"

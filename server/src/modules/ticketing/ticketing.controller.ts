@@ -21,7 +21,7 @@ import { emitOrgTicketEvent } from '../external-api/external-webhooks';
 import type { TicketDTO } from './ticketing.types';
 import type { AuditAction } from '../../config/auditActions';
 
-// Bridge the B2B-Site user to a ticketing staff Users row (id + mapped role).
+// Bridge the BanihalOrb user to a ticketing staff Users row (id + mapped role).
 const actor = (req: Request) => resolveTicketActor(req.user.userId, req.user.role);
 const notFound = (what: string) => Object.assign(new Error(`${what} not found`), { status: 404, code: 'NOT_FOUND' });
 

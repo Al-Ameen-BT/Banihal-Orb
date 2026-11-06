@@ -13,7 +13,7 @@ import { createMachineKeyAuth } from '../../lib/machineAuth';
 // with its own bot's `wrk_` worker key. Each request is HMAC-SHA256 over
 // `${ts}\n${METHOD}\n${path}\n${sha256(rawBody)}` keyed with the raw wrk_ key
 // (encrypted copy lives in slackBots.workerKeyEnc). The 5-minute timestamp
-// window makes a signed request un-replayable; the one-time provisioning gate
+// window bounds signature age; v2 nonces reject replay. The provisioning gate
 // and the instanceId lease make a second host impossible.
 //
 // Mounted BEFORE the cookie auth wall (app.ts) — a machine, not a session. The
@@ -43,6 +43,7 @@ interface WorkerBot {
 
 /** Verify the wrk_ key + request signature; attach the authenticated bot to req. */
 export const workerAuth = createMachineKeyAuth<WorkerBot>({
+  actorKind: 'worker',
   actorIdOf: (req) => req.params['botId'] ?? '',
   timestampHeader: 'X-Worker-Timestamp',
   loadActor: async (botId) => {
@@ -53,7 +54,7 @@ export const workerAuth = createMachineKeyAuth<WorkerBot>({
     // No key columns → "cannot even try to verify": the factory 401s with
     // WORKER_KEY_NOT_SET (pinned by tests/bot-worker.test.ts), work
     // unprovisioned and a nonexistent bot becoming indistinguishable, as before.
-    if (!bot?.workerKeyEnc || !bot.workerKeyHash) return null;
+    if (!bot?.workerKeyEnc || !bot.workerKeyHash || !bot.enabled) return null;
     // A key that fails to decrypt rethrows on purpose: the factory's fail-closed
     // containment answers 401 WORKER_AUTH_FAILED, today's exact behavior.
     const raw = decryptSecret(bot.workerKeyEnc);
@@ -79,12 +80,7 @@ export const workerAuth = createMachineKeyAuth<WorkerBot>({
   authFailedCode: 'WORKER_AUTH_FAILED',
   keyMissingCode: 'WORKER_KEY_NOT_SET',
   auditAction: 'WORKER_AUTH_FAILED',
-  // Consecutive bad signatures force-disable the bot, exactly as the local
-  // counter did when its streak hit MAX_BAD_AUTH (the shared counter semantics
-  // are identical: consecutive failures, cleared on a successful auth).
-  onBruteForceDisable: async (botId) => {
-    await prisma.slackBot.update({ where: { id: botId }, data: { enabled: false } });
-  },
+
 });
 
 /**
